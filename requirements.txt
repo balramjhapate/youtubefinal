@@ -1,6 +1,20 @@
 Django>=4.2,<5.0
 django-jazzmin>=2.6.0
+djangorestframework>=3.14.0
+django-cors-headers>=4.3.0
 deep-translator>=1.11.4
 requests>=2.31.0
 openai-whisper>=20231117
 ffmpeg-python>=0.2.0
+
+# NeuTTS Air Voice Cloning dependencies (REQUIRES Python 3.10+)
+# Note: neucodec package requires Python 3.10 or higher
+# If you're on Python 3.9 or lower, voice synthesis will not be available
+librosa>=0.10.0
+neucodec>=0.0.4  # Requires Python 3.10+
+numpy>=1.24.0
+phonemizer>=3.3.0
+soundfile>=0.12.0
+torch>=2.0.0
+transformers>=4.30.0
+resemble-perth>=1.0.0
