@@ -51,6 +51,9 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
+# Note: The unload permissions policy violation warning from Django admin's RelatedObjectLookups.js
+# is a harmless browser warning and doesn't affect functionality. It's suppressed via meta tag in templates.
+
 ROOT_URLCONF = 'rednote_project.urls'
 
 TEMPLATES = [
