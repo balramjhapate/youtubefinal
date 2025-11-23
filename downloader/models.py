@@ -17,9 +17,23 @@ class VideoDownload(models.Model):
         ('requests', 'Direct Requests'),
     ]
     
+    AI_PROCESSING_STATUS_CHOICES = [
+        ('not_processed', 'Not Processed'),
+        ('processing', 'Processing'),
+        ('processed', 'Processed'),
+        ('failed', 'Failed'),
+    ]
+    
+    TRANSCRIPTION_STATUS_CHOICES = [
+        ('not_transcribed', 'Not Transcribed'),
+        ('transcribing', 'Transcribing'),
+        ('transcribed', 'Transcribed'),
+        ('failed', 'Failed'),
+    ]
+    
     # Core fields
     url = models.URLField(max_length=500, help_text="Original Xiaohongshu URL")
-    video_id = models.CharField(max_length=100, blank=True, unique=True, help_text="Unique Video ID from XHS")
+    video_id = models.CharField(max_length=100, blank=True, null=True, unique=True, help_text="Unique Video ID from XHS")
     
     # Content
     title = models.CharField(max_length=500, blank=True, help_text="English Title (Translated)")
@@ -49,6 +63,31 @@ class VideoDownload(models.Model):
     )
     error_message = models.TextField(blank=True, help_text="Error message if failed")
     
+    # AI Processing
+    ai_processing_status = models.CharField(
+        max_length=20,
+        choices=AI_PROCESSING_STATUS_CHOICES,
+        default='not_processed',
+        help_text="AI processing status"
+    )
+    ai_processed_at = models.DateTimeField(blank=True, null=True, help_text="When AI processing was completed")
+    ai_summary = models.TextField(blank=True, help_text="AI-generated summary or analysis")
+    ai_tags = models.CharField(max_length=500, blank=True, help_text="AI-generated tags (comma-separated)")
+    ai_error_message = models.TextField(blank=True, help_text="AI processing error message if failed")
+    
+    # Transcription
+    transcription_status = models.CharField(
+        max_length=20,
+        choices=TRANSCRIPTION_STATUS_CHOICES,
+        default='not_transcribed',
+        help_text="Transcription status"
+    )
+    transcript = models.TextField(blank=True, help_text="Full transcript of video speech/audio")
+    transcript_language = models.CharField(max_length=10, blank=True, help_text="Detected language of transcript")
+    transcript_started_at = models.DateTimeField(blank=True, null=True, help_text="When transcription started")
+    transcript_processed_at = models.DateTimeField(blank=True, null=True, help_text="When transcription was completed")
+    transcript_error_message = models.TextField(blank=True, help_text="Transcription error message if failed")
+    
     # Timestamps
     created_at = models.DateTimeField(default=timezone.now, help_text="When the download was requested")
     updated_at = models.DateTimeField(auto_now=True, help_text="Last update time")
@@ -65,3 +104,8 @@ class VideoDownload(models.Model):
     def is_successful(self):
         """Check if extraction was successful"""
         return self.status == 'success'
+    
+    @property
+    def is_ai_processed(self):
+        """Check if AI processing is completed"""
+        return self.ai_processing_status == 'processed'

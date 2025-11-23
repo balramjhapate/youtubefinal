@@ -3,8 +3,11 @@ import os
 import json
 import requests
 import subprocess
+import tempfile
 from urllib.parse import urlparse
+from pathlib import Path
 from django.core.files.base import ContentFile
+from django.conf import settings
 from deep_translator import GoogleTranslator
 
 def extract_video_id(url):
@@ -203,3 +206,376 @@ def download_file(url):
     except Exception as e:
         print(f"Download error: {e}")
         return None
+
+def process_video_with_ai(video_download):
+    """
+    Process video with AI to generate summary, tags, and insights
+    
+    This function:
+    - Uses existing transcript if available (doesn't transcribe again)
+    - Generates summary and tags based on transcript and metadata
+    
+    Args:
+        video_download: VideoDownload model instance
+        
+    Returns:
+        dict: {
+            'summary': str,
+            'tags': list,
+            'status': str ('success' or 'failed'),
+            'error': str (if failed)
+        }
+    """
+    try:
+        transcript_text = ''
+        transcript_language = ''
+        
+        # Step 1: Use existing transcript if available, don't transcribe again
+        if video_download.transcript and video_download.transcription_status == 'transcribed':
+            transcript_text = video_download.transcript
+            transcript_language = video_download.transcript_language or ''
+            print(f"Using existing transcript. Language: {transcript_language}, Length: {len(transcript_text)} chars")
+        else:
+            print("No existing transcript found. AI processing will use metadata only.")
+        
+        # Step 2: Extract available information for summary
+        title = video_download.title or video_download.original_title or ""
+        description = video_download.description or video_download.original_description or ""
+        
+        # Combine all available content
+        all_content_parts = []
+        if title:
+            all_content_parts.append(title)
+        if description:
+            all_content_parts.append(description)
+        if transcript_text:
+            all_content_parts.append(transcript_text)
+        
+        content = " ".join(all_content_parts).strip()
+        
+        if not content:
+            return {
+                'summary': 'No content available for AI processing.',
+                'tags': [],
+                'transcript': '',
+                'transcript_language': '',
+                'status': 'failed',
+                'error': 'No title, description, or transcript available'
+            }
+        
+        # Step 3: Generate summary
+        summary_parts = []
+        
+        if transcript_text:
+            # Use transcript as primary source for summary
+            # Take first 300 characters or first sentence
+            if len(transcript_text) > 300:
+                # Find first sentence break near 300 chars
+                truncate_pos = 300
+                for punct in ['. ', '。', '! ', '！', '? ', '？']:
+                    pos = transcript_text.find(punct, 200, 300)
+                    if pos != -1:
+                        truncate_pos = pos + len(punct)
+                        break
+                summary_parts.append(f"Transcript: {transcript_text[:truncate_pos].strip()}...")
+            else:
+                summary_parts.append(f"Transcript: {transcript_text}")
+        else:
+            # Fallback to title and description
+            if title:
+                summary_parts.append(f"This video is about: {title}")
+            if description:
+                desc_summary = description.split('.')[0] if '.' in description else description[:200]
+                summary_parts.append(f"Description: {desc_summary}")
+        
+        ai_summary = " | ".join(summary_parts) if summary_parts else "AI analysis completed."
+        
+        # Step 4: Generate tags based on transcript and metadata
+        tags = []
+        
+        # Extract keywords from transcript (more accurate than just title)
+        text_for_tags = transcript_text if transcript_text else f"{title} {description}"
+        
+        if text_for_tags:
+            # Simple keyword extraction (can be enhanced with NLP)
+            words = re.findall(r'\b\w{4,}\b', text_for_tags.lower())  # Words with 4+ characters
+            
+            # Filter common stop words (Chinese and English)
+            stop_words = {
+                'the', 'this', 'that', 'with', 'from', 'have', 'been', 'they', 'what', 
+                'your', 'some', 'will', 'very', 'just', 'like', 'them', 'then', 'than',
+                'the', 'this', 'that', 'and', 'are', 'but', 'not', 'you', 'all', 'can',
+                'her', 'was', 'one', 'our', 'out', 'day', 'get', 'has', 'him', 'his',
+                'how', 'man', 'new', 'now', 'old', 'see', 'two', 'way', 'who', 'its'
+            }
+            
+            # Count word frequency
+            word_count = {}
+            for word in words:
+                if word not in stop_words and len(word) > 3:
+                    word_count[word] = word_count.get(word, 0) + 1
+            
+            # Get top keywords
+            sorted_words = sorted(word_count.items(), key=lambda x: x[1], reverse=True)
+            tags.extend([word for word, count in sorted_words[:8]])
+        
+        # Add metadata-based tags
+        if transcript_language:
+            if transcript_language.startswith('zh'):
+                tags.append('chinese-content')
+            elif transcript_language.startswith('en'):
+                tags.append('english-content')
+        
+        if len(transcript_text) > 500:
+            tags.append('long-form')
+        
+        # Ensure we have at least some tags
+        if not tags:
+            tags = ['content', 'social-media', 'video']
+        
+        return {
+            'summary': ai_summary,
+            'tags': tags[:10],  # Limit to 10 tags
+            'status': 'success',
+            'error': None
+        }
+        
+    except Exception as e:
+        error_msg = str(e)
+        print(f"Error in process_video_with_ai: {error_msg}")
+        return {
+            'summary': '',
+            'tags': [],
+            'status': 'failed',
+            'error': error_msg
+        }
+
+def extract_audio_from_video(video_path, output_audio_path=None):
+    """
+    Extract audio from video file using ffmpeg
+    
+    Args:
+        video_path: Path to video file
+        output_audio_path: Optional output path for audio file. If None, creates temp file.
+        
+    Returns:
+        str: Path to extracted audio file, or None if failed
+    """
+    try:
+        if output_audio_path is None:
+            # Create temporary audio file
+            temp_dir = tempfile.gettempdir()
+            output_audio_path = os.path.join(temp_dir, f"audio_{os.path.basename(video_path)}.wav")
+        
+        # Use ffmpeg to extract audio (convert to WAV format for Whisper)
+        cmd = [
+            'ffmpeg',
+            '-i', video_path,
+            '-vn',  # No video
+            '-acodec', 'pcm_s16le',  # PCM 16-bit
+            '-ar', '16000',  # Sample rate 16kHz (good for Whisper)
+            '-ac', '1',  # Mono channel
+            '-y',  # Overwrite output file
+            output_audio_path
+        ]
+        
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=300  # 5 minute timeout
+        )
+        
+        if result.returncode != 0:
+            print(f"FFmpeg error: {result.stderr}")
+            return None
+        
+        if os.path.exists(output_audio_path) and os.path.getsize(output_audio_path) > 0:
+            return output_audio_path
+        else:
+            print("Audio file was not created or is empty")
+            return None
+            
+    except subprocess.TimeoutExpired:
+        print("FFmpeg extraction timed out")
+        return None
+    except Exception as e:
+        print(f"Error extracting audio: {e}")
+        return None
+
+def transcribe_audio_local(audio_path, language=None, model_size='base'):
+    """
+    Transcribe audio file locally using OpenAI Whisper
+    
+    Args:
+        audio_path: Path to audio file
+        language: Optional language code (e.g., 'zh', 'en', 'auto'). If None, auto-detect
+        model_size: Whisper model size ('tiny', 'base', 'small', 'medium', 'large')
+                    Smaller = faster, less accurate. Larger = slower, more accurate.
+                    'base' is a good balance.
+        
+    Returns:
+        dict: {
+            'text': str (full transcript),
+            'language': str (detected language code),
+            'status': 'success' or 'failed',
+            'error': str (if failed)
+        }
+    """
+    try:
+        # Import whisper (lazy import to avoid errors if not installed)
+        try:
+            import whisper
+        except ImportError:
+            return {
+                'text': '',
+                'language': '',
+                'status': 'failed',
+                'error': 'Whisper library not installed. Please install: pip install openai-whisper'
+            }
+        
+        if not os.path.exists(audio_path):
+            return {
+                'text': '',
+                'language': '',
+                'status': 'failed',
+                'error': f'Audio file not found: {audio_path}'
+            }
+        
+        print(f"Loading Whisper model: {model_size}")
+        # Load Whisper model (will download on first use)
+        model = whisper.load_model(model_size)
+        
+        print(f"Transcribing audio: {audio_path}")
+        # Transcribe with optional language specification
+        transcribe_options = {}
+        if language and language != 'auto':
+            transcribe_options['language'] = language
+        
+        result = model.transcribe(
+            audio_path,
+            **transcribe_options,
+            task='transcribe'  # Can also use 'translate' to translate to English
+        )
+        
+        # Extract transcript text
+        transcript_text = result.get('text', '').strip()
+        detected_language = result.get('language', 'unknown')
+        
+        print(f"Transcription completed. Language: {detected_language}, Length: {len(transcript_text)} chars")
+        
+        return {
+            'text': transcript_text,
+            'language': detected_language,
+            'status': 'success',
+            'error': None
+        }
+        
+    except Exception as e:
+        error_msg = str(e)
+        print(f"Transcription error: {error_msg}")
+        return {
+            'text': '',
+            'language': '',
+            'status': 'failed',
+            'error': error_msg
+        }
+
+def transcribe_video(video_download):
+    """
+    Transcribe video by extracting audio and using Whisper
+    
+    Args:
+        video_download: VideoDownload model instance
+        
+    Returns:
+        dict: {
+            'text': str (full transcript),
+            'language': str (detected language code),
+            'status': 'success' or 'failed',
+            'error': str (if failed)
+        }
+    """
+    try:
+        # Check if video is downloaded locally
+        if not video_download.is_downloaded or not video_download.local_file:
+            # Try to download video first if we have video_url
+            if video_download.video_url:
+                print(f"Video not downloaded locally. Downloading from: {video_download.video_url}")
+                file_content = download_file(video_download.video_url)
+                if file_content:
+                    filename = f"{video_download.video_id or 'video'}_{video_download.pk}.mp4"
+                    video_download.local_file.save(filename, file_content, save=True)
+                    video_download.is_downloaded = True
+                    video_download.save()
+                else:
+                    return {
+                        'text': '',
+                        'language': '',
+                        'status': 'failed',
+                        'error': 'Could not download video for transcription'
+                    }
+            else:
+                return {
+                    'text': '',
+                    'language': '',
+                    'status': 'failed',
+                    'error': 'No video file or video URL available for transcription'
+                }
+        
+        # Get path to local video file
+        video_path = video_download.local_file.path
+        
+        if not os.path.exists(video_path):
+            return {
+                'text': '',
+                'language': '',
+                'status': 'failed',
+                'error': f'Video file not found at: {video_path}'
+            }
+        
+        print(f"Extracting audio from video: {video_path}")
+        # Extract audio from video
+        temp_audio_path = None
+        try:
+            audio_path = extract_audio_from_video(video_path)
+            
+            if not audio_path:
+                return {
+                    'text': '',
+                    'language': '',
+                    'status': 'failed',
+                    'error': 'Failed to extract audio from video. Make sure ffmpeg is installed.'
+                }
+            
+            temp_audio_path = audio_path
+            
+            # Transcribe audio
+            print(f"Starting transcription...")
+            # Auto-detect language for Chinese/English videos
+            transcript_result = transcribe_audio_local(
+                audio_path,
+                language=None,  # Auto-detect (will detect Chinese, English, etc.)
+                model_size='base'  # Good balance of speed and accuracy
+            )
+            
+            return transcript_result
+            
+        finally:
+            # Clean up temporary audio file
+            if temp_audio_path and os.path.exists(temp_audio_path):
+                try:
+                    os.remove(temp_audio_path)
+                    print(f"Cleaned up temporary audio file: {temp_audio_path}")
+                except Exception as e:
+                    print(f"Warning: Could not delete temp audio file: {e}")
+                    
+    except Exception as e:
+        error_msg = str(e)
+        print(f"Error in transcribe_video: {error_msg}")
+        return {
+            'text': '',
+            'language': '',
+            'status': 'failed',
+            'error': error_msg
+        }

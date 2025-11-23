@@ -25,21 +25,44 @@ def extract_video(request):
         video_id = extract_video_id(url)
         if video_id:
             existing = VideoDownload.objects.filter(video_id=video_id).first()
-            if existing and existing.status == 'success':
-                return JsonResponse({
-                    "video_url": existing.video_url,
-                    "title": existing.title,
-                    "cover_url": existing.cover_url,
-                    "method": existing.extraction_method,
-                    "cached": True
-                })
+            if existing:
+                if existing.status == 'success':
+                    return JsonResponse({
+                        "video_url": existing.video_url,
+                        "title": existing.title,
+                        "cover_url": existing.cover_url,
+                        "method": existing.extraction_method,
+                        "cached": True
+                    })
+                else:
+                    # Video exists but extraction failed, return error
+                    return JsonResponse({
+                        "error": f"Video with ID '{video_id}' already exists but extraction failed."
+                    }, status=400)
+        
+        # Check if video_id already exists before creating (race condition protection)
+        if video_id and VideoDownload.objects.filter(video_id=video_id).exists():
+            return JsonResponse({
+                "error": f"Video with ID '{video_id}' already exists."
+            }, status=400)
         
         # Create a pending download record
-        download = VideoDownload.objects.create(
-            url=url,
-            video_id=video_id,
-            status='pending'
-        )
+        try:
+            download = VideoDownload.objects.create(
+                url=url,
+                video_id=video_id,  # Can be None now
+                status='pending'
+            )
+        except Exception as e:
+            if 'video_id' in str(e) or 'UNIQUE constraint' in str(e):
+                # Duplicate detected (race condition)
+                if video_id:
+                    existing = VideoDownload.objects.filter(video_id=video_id).first()
+                    if existing:
+                        return JsonResponse({
+                            "error": f"Video with ID '{video_id}' already exists."
+                        }, status=400)
+            raise
         
         # Try extraction
         video_data = perform_extraction(url)
