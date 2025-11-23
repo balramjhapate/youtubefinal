@@ -10,6 +10,22 @@ document.addEventListener('DOMContentLoaded', () => {
     const downloadLink = document.getElementById('download-link');
     const errorMessage = document.getElementById('error-message');
 
+    // Helper function to get CSRF token from cookies
+    function getCookie(name) {
+        let cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+            const cookies = document.cookie.split(';');
+            for (let i = 0; i < cookies.length; i++) {
+                const cookie = cookies[i].trim();
+                if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                    cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                    break;
+                }
+            }
+        }
+        return cookieValue;
+    }
+
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
         const url = urlInput.value.trim();
@@ -24,10 +40,12 @@ document.addEventListener('DOMContentLoaded', () => {
         videoPlayer.src = '';
 
         try {
-            const response = await fetch('/api/extract', {
+            const csrftoken = getCookie('csrftoken');
+            const response = await fetch('/api/extract/', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
+                    'X-CSRFToken': csrftoken,
                 },
                 body: JSON.stringify({ url: url })
             });

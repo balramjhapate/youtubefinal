@@ -25,6 +25,7 @@
 
         <div class="card glass-panel">
             <form id="download-form">
+                {% csrf_token %}
                 <div class="input-group">
                     <input type="url" id="url-input" placeholder="Paste Xiaohongshu/RedNote link here..." required>
                     <button type="submit" id="submit-btn">
