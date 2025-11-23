@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 """
 
 from pathlib import Path
+import os
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -130,6 +131,17 @@ MEDIA_ROOT = BASE_DIR / 'media'
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# NCA Toolkit API Configuration
+# Configure these settings to use the No-Code Architects Toolkit API
+# for fast media processing (transcription, captioning, video editing, etc.)
+# Documentation: https://github.com/stephengpope/no-code-architects-toolkit
+NCA_API_URL = os.environ.get('NCA_API_URL', 'http://localhost:8080')  # Base URL of NCA Toolkit API
+NCA_API_KEY = os.environ.get('NCA_API_KEY', '')  # API key for authentication
+NCA_API_TIMEOUT = int(os.environ.get('NCA_API_TIMEOUT', '600'))  # Request timeout in seconds (10 minutes)
+NCA_API_ENABLED = os.environ.get('NCA_API_ENABLED', 'false').lower() == 'true'  # Enable/disable NCA API
+
+# If NCA_API_ENABLED is False, will fallback to local processing (Whisper, ffmpeg)
 
 # Jazzmin Settings
 JAZZMIN_SETTINGS = {

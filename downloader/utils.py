@@ -9,6 +9,7 @@ from pathlib import Path
 from django.core.files.base import ContentFile
 from django.conf import settings
 from deep_translator import GoogleTranslator
+from .nca_toolkit_client import get_nca_client
 
 def extract_video_id(url):
     """Extract unique video ID from XHS URL"""
@@ -483,7 +484,7 @@ def transcribe_audio_local(audio_path, language=None, model_size='base'):
 
 def transcribe_video(video_download):
     """
-    Transcribe video by extracting audio and using Whisper
+    Transcribe video using NCA Toolkit API (fast) or local Whisper (fallback)
     
     Args:
         video_download: VideoDownload model instance
@@ -496,6 +497,37 @@ def transcribe_video(video_download):
             'error': str (if failed)
         }
     """
+    # Try NCA Toolkit API first (much faster)
+    if getattr(settings, 'NCA_API_ENABLED', False):
+        nca_client = get_nca_client()
+        if nca_client:
+            try:
+                print("Attempting transcription via NCA Toolkit API (fast)...")
+                
+                # Prefer video URL if available (no download needed)
+                if video_download.video_url:
+                    result = nca_client.transcribe_video(video_url=video_download.video_url)
+                    if result['status'] == 'success':
+                        print(f"NCA API transcription successful. Language: {result['language']}, Length: {len(result['text'])} chars")
+                        return result
+                    else:
+                        print(f"NCA API transcription failed: {result.get('error')}. Falling back to local processing.")
+                
+                # Fallback: use local file if available
+                if video_download.is_downloaded and video_download.local_file:
+                    video_path = video_download.local_file.path
+                    if os.path.exists(video_path):
+                        result = nca_client.transcribe_video(video_file_path=video_path)
+                        if result['status'] == 'success':
+                            print(f"NCA API transcription successful. Language: {result['language']}, Length: {len(result['text'])} chars")
+                            return result
+                        else:
+                            print(f"NCA API transcription failed: {result.get('error')}. Falling back to local processing.")
+            except Exception as e:
+                print(f"Error using NCA API: {e}. Falling back to local processing.")
+    
+    # Fallback to local Whisper transcription (slower but works offline)
+    print("Using local Whisper transcription (slower)...")
     try:
         # Check if video is downloaded locally
         if not video_download.is_downloaded or not video_download.local_file:
@@ -551,7 +583,7 @@ def transcribe_video(video_download):
             temp_audio_path = audio_path
             
             # Transcribe audio
-            print(f"Starting transcription...")
+            print(f"Starting local Whisper transcription...")
             # Auto-detect language for Chinese/English videos
             transcript_result = transcribe_audio_local(
                 audio_path,
@@ -572,10 +604,123 @@ def transcribe_video(video_download):
                     
     except Exception as e:
         error_msg = str(e)
-        print(f"Error in transcribe_video: {error_msg}")
+        print(f"Error in local transcription: {error_msg}")
         return {
             'text': '',
             'language': '',
             'status': 'failed',
             'error': error_msg
         }
+
+def add_caption_to_video(video_download, caption_options=None):
+    """
+    Add captions to video using NCA Toolkit API
+    
+    Args:
+        video_download: VideoDownload model instance
+        caption_options: Dict with caption styling options
+    
+    Returns:
+        dict: {
+            'video_url': str (URL of captioned video),
+            'status': 'success' or 'failed',
+            'error': str (if failed)
+        }
+    """
+    if not video_download.transcript:
+        return {
+            'video_url': '',
+            'status': 'failed',
+            'error': 'No transcript available. Please transcribe the video first.'
+        }
+    
+    # Use NCA Toolkit API if enabled
+    if getattr(settings, 'NCA_API_ENABLED', False):
+        nca_client = get_nca_client()
+        if nca_client and video_download.video_url:
+            try:
+                result = nca_client.add_caption(
+                    video_url=video_download.video_url,
+                    transcript=video_download.transcript,
+                    caption_options=caption_options or {}
+                )
+                if result['status'] == 'success':
+                    return result
+            except Exception as e:
+                print(f"Error adding caption via NCA API: {e}")
+    
+    return {
+        'video_url': '',
+        'status': 'failed',
+        'error': 'Captioning requires NCA Toolkit API. Please enable it in settings.'
+    }
+
+def extract_thumbnail_from_video(video_download, timestamp='00:00:01'):
+    """
+    Extract thumbnail from video using NCA Toolkit API
+    
+    Args:
+        video_download: VideoDownload model instance
+        timestamp: Timestamp to extract (format: HH:MM:SS)
+    
+    Returns:
+        dict: {
+            'thumbnail_url': str (URL of thumbnail),
+            'status': 'success' or 'failed',
+            'error': str (if failed)
+        }
+    """
+    if getattr(settings, 'NCA_API_ENABLED', False):
+        nca_client = get_nca_client()
+        if nca_client and video_download.video_url:
+            try:
+                result = nca_client.extract_thumbnail(
+                    video_url=video_download.video_url,
+                    timestamp=timestamp
+                )
+                if result['status'] == 'success':
+                    return result
+            except Exception as e:
+                print(f"Error extracting thumbnail via NCA API: {e}")
+    
+    return {
+        'thumbnail_url': '',
+        'status': 'failed',
+        'error': 'Thumbnail extraction requires NCA Toolkit API. Please enable it in settings.'
+    }
+
+def trim_video_segment(video_download, start_time, end_time):
+    """
+    Trim video segment using NCA Toolkit API
+    
+    Args:
+        video_download: VideoDownload model instance
+        start_time: Start time (format: HH:MM:SS)
+        end_time: End time (format: HH:MM:SS)
+    
+    Returns:
+        dict: {
+            'video_url': str (URL of trimmed video),
+            'status': 'success' or 'failed',
+            'error': str (if failed)
+        }
+    """
+    if getattr(settings, 'NCA_API_ENABLED', False):
+        nca_client = get_nca_client()
+        if nca_client and video_download.video_url:
+            try:
+                result = nca_client.trim_video(
+                    video_url=video_download.video_url,
+                    start_time=start_time,
+                    end_time=end_time
+                )
+                if result['status'] == 'success':
+                    return result
+            except Exception as e:
+                print(f"Error trimming video via NCA API: {e}")
+    
+    return {
+        'video_url': '',
+        'status': 'failed',
+        'error': 'Video trimming requires NCA Toolkit API. Please enable it in settings.'
+    }

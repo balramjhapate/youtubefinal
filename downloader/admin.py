@@ -6,7 +6,11 @@ from django.db import IntegrityError
 from django.utils import timezone
 from django.shortcuts import render, redirect, get_object_or_404
 from .models import VideoDownload
-from .utils import perform_extraction, extract_video_id, translate_text, download_file, process_video_with_ai, transcribe_video
+from .utils import (
+    perform_extraction, extract_video_id, translate_text, download_file, 
+    process_video_with_ai, transcribe_video, add_caption_to_video, 
+    extract_thumbnail_from_video, trim_video_segment
+)
 
 # Unregister default auth models
 admin.site.unregister(User)
@@ -131,7 +135,12 @@ class VideoDownloadAdmin(admin.ModelAdmin):
         }),
     ]
     
-    actions = ['download_video_action', 'transcribe_video_action', 'process_with_ai_action']
+    actions = [
+        'download_video_action', 
+        'transcribe_video_action', 
+        'process_with_ai_action',
+        'add_caption_action'
+    ]
     
     def get_urls(self):
         from django.urls import path
@@ -232,6 +241,17 @@ class VideoDownloadAdmin(admin.ModelAdmin):
             else:
                 obj.status = 'failed'
                 obj.error_message = "Could not extract video metadata"
+                # Ensure required fields have default values even on failure
+                obj.original_title = obj.original_title or ''
+                obj.original_description = obj.original_description or ''
+                obj.title = obj.title or ''
+                obj.description = obj.description or ''
+        
+        # Ensure all required fields have default values before saving
+        obj.original_title = obj.original_title or ''
+        obj.original_description = obj.original_description or ''
+        obj.title = obj.title or ''
+        obj.description = obj.description or ''
         
         # Try to save, catch IntegrityError in case duplicate check missed something (race condition)
         try:
@@ -290,6 +310,45 @@ class VideoDownloadAdmin(admin.ModelAdmin):
         selected_ids = ','.join(str(obj.pk) for obj in queryset)
         return redirect(f'/admin/downloader/videodownload/process-ai/?ids={selected_ids}')
     process_with_ai_action.short_description = "Process Selected Videos with AI"
+    
+    def add_caption_action(self, request, queryset):
+        """Action to add captions to videos (requires transcription first)"""
+        from django.conf import settings
+        if not getattr(settings, 'NCA_API_ENABLED', False):
+            messages.error(request, "Captioning requires NCA Toolkit API. Please enable it in settings.")
+            return
+        
+        success_count = 0
+        failed_count = 0
+        
+        for obj in queryset:
+            if not obj.transcript:
+                failed_count += 1
+                messages.warning(request, f"Video '{obj.title}' has no transcript. Please transcribe first.")
+                continue
+            
+            if not obj.video_url:
+                failed_count += 1
+                messages.warning(request, f"Video '{obj.title}' has no video URL.")
+                continue
+            
+            try:
+                result = add_caption_to_video(obj)
+                if result['status'] == 'success':
+                    success_count += 1
+                    messages.success(request, f"Added captions to: {obj.title}")
+                else:
+                    failed_count += 1
+                    messages.error(request, f"Failed to add captions to '{obj.title}': {result.get('error')}")
+            except Exception as e:
+                failed_count += 1
+                messages.error(request, f"Error adding captions to '{obj.title}': {str(e)}")
+        
+        if success_count > 0:
+            messages.success(request, f"Successfully added captions to {success_count} video(s).")
+        if failed_count > 0:
+            messages.error(request, f"Failed to add captions to {failed_count} video(s).")
+    add_caption_action.short_description = "Add Captions to Videos (NCA API)"
     
     def process_ai_view(self, request, pk):
         """Process a single video with AI"""
