@@ -104,57 +104,34 @@ class NCAToolkitClient:
             }
         """
         if video_url:
-            # Direct URL transcription
+            # Direct URL transcription - use /v1/media/transcribe with response_type='direct'
+            # to avoid needing cloud storage configuration
             payload = {
-                'video_url': video_url
+                'media_url': video_url,
+                'task': 'transcribe',
+                'include_text': True,
+                'include_srt': False,
+                'include_segments': False,
+                'response_type': 'direct'  # Direct response without cloud storage
             }
             if language:
                 payload['language'] = language
             if webhook_url:
                 payload['webhook_url'] = webhook_url
             
-            response = self._make_request('POST', '/v1/video/transcribe', json=payload)
+            response = self._make_request('POST', '/v1/media/transcribe', json=payload)
             
         elif video_file_path:
-            # Upload file for transcription
-            with open(video_file_path, 'rb') as video_file:
-                files = {'video_file': video_file}
-                data = {}
-                if language:
-                    data['language'] = language
-                if webhook_url:
-                    data['webhook_url'] = webhook_url
-                
-                url = f"{self.api_url}/v1/video/transcribe"
-                headers = {'X-API-Key': self.api_key}
-                
-                try:
-                    response_obj = requests.post(
-                        url,
-                        headers=headers,
-                        files=files,
-                        data=data,
-                        timeout=self.timeout
-                    )
-                    
-                    if response_obj.status_code == 200:
-                        response = {
-                            'success': True,
-                            'data': response_obj.json(),
-                            'status_code': response_obj.status_code
-                        }
-                    else:
-                        error_msg = response_obj.json().get('error', response_obj.text) if response_obj.content else response_obj.text
-                        response = {
-                            'success': False,
-                            'error': error_msg,
-                            'status_code': response_obj.status_code
-                        }
-                except Exception as e:
-                    response = {
-                        'success': False,
-                        'error': str(e)
-                    }
+            # For local files, we need to upload them first or use a local server
+            # For now, convert local file to a file upload format
+            # Note: NCA Toolkit expects media_url, so we might need to serve the file
+            # For simplicity, we'll use the URL-based approach if the file is accessible
+            return {
+                'text': '',
+                'language': '',
+                'status': 'failed',
+                'error': 'Local file transcription not yet supported. Please provide a video_url.'
+            }
         else:
             return {
                 'text': '',
@@ -165,12 +142,19 @@ class NCAToolkitClient:
         
         if response.get('success'):
             data = response.get('data', {})
-            # Handle different response formats (transcript or text field)
-            transcript = data.get('transcript') or data.get('text') or ''
-            language = data.get('language') or data.get('lang') or ''
+            # The /v1/media/transcribe endpoint returns nested response structure:
+            # { "code": 200, "response": { "text": "...", ... }, ... }
+            response_data = data.get('response', {})
+            if not response_data and isinstance(data, dict):
+                # Fallback: check if text is directly in data
+                response_data = data
+            
+            transcript = response_data.get('text') or response_data.get('transcript') or ''
+            # Language detection might be in a different field, check response structure
+            detected_language = response_data.get('language') or data.get('language') or language or ''
             return {
                 'text': transcript,
-                'language': language,
+                'language': detected_language,
                 'status': 'success',
                 'error': None
             }

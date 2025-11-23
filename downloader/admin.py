@@ -99,6 +99,7 @@ class VideoDownloadAdmin(admin.ModelAdmin):
         'ai_processed_at',
         'transcription_status',
         'transcript',
+        'transcript_hindi',
         'transcript_language',
         'transcript_started_at',
         'transcript_processed_at',
@@ -127,8 +128,8 @@ class VideoDownloadAdmin(admin.ModelAdmin):
             'fields': ('ai_processing_status', 'ai_summary', 'ai_tags', 'ai_error_message', 'ai_processed_at')
         }),
         ('Transcription', {
-            'fields': ('transcription_status', 'transcript', 'transcript_language', 'transcript_started_at', 'transcript_processed_at', 'transcript_error_message'),
-            'description': 'Full transcript of video speech/audio extracted locally using Whisper'
+            'fields': ('transcription_status', 'transcript', 'transcript_hindi', 'transcript_language', 'transcript_started_at', 'transcript_processed_at', 'transcript_error_message'),
+            'description': 'Full transcript of video speech/audio with Hindi translation'
         }),
         ('Timestamps', {
             'fields': ('created_at', 'updated_at')
@@ -473,6 +474,7 @@ class VideoDownloadAdmin(admin.ModelAdmin):
             if result['status'] == 'success':
                 obj.transcription_status = 'transcribed'
                 obj.transcript = result['text']
+                obj.transcript_hindi = result.get('text_hindi', '')
                 obj.transcript_language = result.get('language', '')
                 obj.transcript_processed_at = timezone.now()
                 obj.transcript_error_message = ''
@@ -522,6 +524,7 @@ class VideoDownloadAdmin(admin.ModelAdmin):
                         if result['status'] == 'success':
                             obj.transcription_status = 'transcribed'
                             obj.transcript = result['text']
+                            obj.transcript_hindi = result.get('text_hindi', '')
                             obj.transcript_language = result.get('language', '')
                             obj.transcript_processed_at = timezone.now()
                             obj.transcript_error_message = ''

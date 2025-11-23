@@ -485,6 +485,7 @@ def transcribe_audio_local(audio_path, language=None, model_size='base'):
 def transcribe_video(video_download):
     """
     Transcribe video using NCA Toolkit API (fast) or local Whisper (fallback)
+    Also translates the transcript to Hindi automatically
     
     Args:
         video_download: VideoDownload model instance
@@ -492,6 +493,7 @@ def transcribe_video(video_download):
     Returns:
         dict: {
             'text': str (full transcript),
+            'text_hindi': str (Hindi translation of transcript),
             'language': str (detected language code),
             'status': 'success' or 'failed',
             'error': str (if failed)
@@ -508,7 +510,13 @@ def transcribe_video(video_download):
                 if video_download.video_url:
                     result = nca_client.transcribe_video(video_url=video_download.video_url)
                     if result['status'] == 'success':
-                        print(f"NCA API transcription successful. Language: {result['language']}, Length: {len(result['text'])} chars")
+                        # Translate to Hindi
+                        transcript_text = result.get('text', '')
+                        if transcript_text:
+                            print(f"Translating transcript to Hindi...")
+                            hindi_translation = translate_text(transcript_text, target='hi')
+                            result['text_hindi'] = hindi_translation
+                            print(f"NCA API transcription successful. Language: {result['language']}, Length: {len(transcript_text)} chars, Hindi: {len(hindi_translation)} chars")
                         return result
                     else:
                         print(f"NCA API transcription failed: {result.get('error')}. Falling back to local processing.")
@@ -519,7 +527,13 @@ def transcribe_video(video_download):
                     if os.path.exists(video_path):
                         result = nca_client.transcribe_video(video_file_path=video_path)
                         if result['status'] == 'success':
-                            print(f"NCA API transcription successful. Language: {result['language']}, Length: {len(result['text'])} chars")
+                            # Translate to Hindi
+                            transcript_text = result.get('text', '')
+                            if transcript_text:
+                                print(f"Translating transcript to Hindi...")
+                                hindi_translation = translate_text(transcript_text, target='hi')
+                                result['text_hindi'] = hindi_translation
+                                print(f"NCA API transcription successful. Language: {result['language']}, Length: {len(transcript_text)} chars, Hindi: {len(hindi_translation)} chars")
                             return result
                         else:
                             print(f"NCA API transcription failed: {result.get('error')}. Falling back to local processing.")
@@ -590,6 +604,14 @@ def transcribe_video(video_download):
                 language=None,  # Auto-detect (will detect Chinese, English, etc.)
                 model_size='base'  # Good balance of speed and accuracy
             )
+            
+            # Translate to Hindi if transcription was successful
+            if transcript_result.get('status') == 'success' and transcript_result.get('text'):
+                transcript_text = transcript_result.get('text', '')
+                print(f"Translating transcript to Hindi...")
+                hindi_translation = translate_text(transcript_text, target='hi')
+                transcript_result['text_hindi'] = hindi_translation
+                print(f"Translation complete. Original: {len(transcript_text)} chars, Hindi: {len(hindi_translation)} chars")
             
             return transcript_result
             

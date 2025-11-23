@@ -83,6 +83,7 @@ class VideoDownload(models.Model):
         help_text="Transcription status"
     )
     transcript = models.TextField(blank=True, help_text="Full transcript of video speech/audio")
+    transcript_hindi = models.TextField(blank=True, help_text="Hindi translation of the transcript")
     transcript_language = models.CharField(max_length=10, blank=True, help_text="Detected language of transcript")
     transcript_started_at = models.DateTimeField(blank=True, null=True, help_text="When transcription started")
     transcript_processed_at = models.DateTimeField(blank=True, null=True, help_text="When transcription was completed")
