@@ -83,16 +83,6 @@ class VideoDownloadAdmin(admin.ModelAdmin):
         'created_at'
     ]
     
-    list_filter = [
-        'status',
-        'transcription_status',
-        'ai_processing_status',
-        'audio_prompt_status',
-        'is_downloaded',
-        'extraction_method', 
-        'created_at'
-    ]
-    
     search_fields = [
         'title', 
         'original_title',
@@ -834,85 +824,91 @@ class VideoDownloadAdmin(admin.ModelAdmin):
         from django.urls import reverse
         buttons = []
         
-        # Download button
+        # Container style for alignment
+        container_start = '<div style="display: flex; gap: 10px; align-items: center;">'
+        container_end = '</div>'
+        
+        # 1. Download / View
         if obj.is_downloaded and obj.local_file:
+            # Show Eye Icon for View
             buttons.append(format_html(
-                '<a class="button" style="background-color: #28a745; color: white; padding: 5px 10px; border-radius: 4px; text-decoration: none; pointer-events: none; opacity: 0.7; margin-right: 5px;">Downloaded</a>'
-                '<a class="button" href="{}" target="_blank" style="background-color: #17a2b8; color: white; padding: 5px 10px; border-radius: 4px; text-decoration: none; margin-right: 5px;">View</a>',
+                '<a href="{}" target="_blank" title="View Video" style="text-decoration: none; font-size: 20px; color: #17a2b8;">👁️</a>',
                 obj.local_file.url
             ))
         elif obj.status == 'success' and obj.video_url:
             download_url = reverse('admin:downloader_videodownload_download', args=[obj.pk])
             buttons.append(format_html(
-                '<a class="button" href="{}" style="background-color: #007bff; color: white; padding: 5px 10px; border-radius: 4px; text-decoration: none; margin-right: 5px;">Download</a>',
+                '<a class="button" href="{}" style="background-color: #007bff; color: white; padding: 3px 8px; border-radius: 4px; text-decoration: none; font-size: 12px;">Download</a>',
                 download_url
             ))
         
-        # Transcription button
+        # 2. Transcription
         if obj.status == 'success':
             transcribe_url = reverse('admin:downloader_videodownload_transcribe', args=[obj.pk])
-            if obj.transcription_status == 'not_transcribed':
+            if obj.transcription_status == 'transcribed':
+                # Show Memo Icon
                 buttons.append(format_html(
-                    '<a class="button" href="{}" style="background-color: #17a2b8; color: white; padding: 5px 10px; border-radius: 4px; text-decoration: none; margin-right: 5px;">📝 Transcribe</a>',
-                    transcribe_url
+                    '<span title="Transcribed" style="font-size: 20px; cursor: help; color: #28a745;">📝</span>'
                 ))
             elif obj.transcription_status == 'transcribing':
                 buttons.append(format_html(
-                    '<a class="button" style="background-color: #ffc107; color: #212529; padding: 5px 10px; border-radius: 4px; text-decoration: none; pointer-events: none; margin-right: 5px;">⟳ Transcribing</a>'
-                ))
-            elif obj.transcription_status == 'transcribed':
-                buttons.append(format_html(
-                    '<a class="button" style="background-color: #28a745; color: white; padding: 5px 10px; border-radius: 4px; text-decoration: none; pointer-events: none; margin-right: 5px;">✓ Transcribed</a>'
+                    '<span title="Transcribing..." style="font-size: 20px; color: #ffc107;">⟳</span>'
                 ))
             elif obj.transcription_status == 'failed':
                 buttons.append(format_html(
-                    '<a class="button" href="{}" style="background-color: #dc3545; color: white; padding: 5px 10px; border-radius: 4px; text-decoration: none; margin-right: 5px;">✗ Retry Transcribe</a>',
+                    '<a class="button" href="{}" style="background-color: #dc3545; color: white; padding: 3px 8px; border-radius: 4px; text-decoration: none; font-size: 12px;">Retry 📝</a>',
+                    transcribe_url
+                ))
+            elif obj.transcription_status == 'not_transcribed':
+                buttons.append(format_html(
+                    '<a class="button" href="{}" style="background-color: #17a2b8; color: white; padding: 3px 8px; border-radius: 4px; text-decoration: none; font-size: 12px;">Transcribe</a>',
                     transcribe_url
                 ))
         
-        # AI Processing button
+        # 3. AI Processing
         if obj.status == 'success':
             ai_url = reverse('admin:downloader_videodownload_process_ai', args=[obj.pk])
-            if obj.ai_processing_status == 'not_processed':
+            if obj.ai_processing_status == 'processed':
+                # Show Robot Icon
                 buttons.append(format_html(
-                    '<a class="button" href="{}" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 5px 10px; border-radius: 4px; text-decoration: none;">🤖 Process AI</a>',
-                    ai_url
+                    '<span title="AI Processed" style="font-size: 20px; cursor: help; color: #667eea;">🤖</span>'
                 ))
             elif obj.ai_processing_status == 'processing':
                 buttons.append(format_html(
-                    '<a class="button" style="background-color: #ffc107; color: #212529; padding: 5px 10px; border-radius: 4px; text-decoration: none; pointer-events: none;">⟳ Processing</a>'
-                ))
-            elif obj.ai_processing_status == 'processed':
-                buttons.append(format_html(
-                    '<a class="button" style="background-color: #28a745; color: white; padding: 5px 10px; border-radius: 4px; text-decoration: none; pointer-events: none;">✓ AI Done</a>'
+                    '<span title="Processing AI..." style="font-size: 20px; color: #ffc107;">⟳</span>'
                 ))
             elif obj.ai_processing_status == 'failed':
                 buttons.append(format_html(
-                    '<a class="button" href="{}" style="background-color: #dc3545; color: white; padding: 5px 10px; border-radius: 4px; text-decoration: none;">✗ Retry AI</a>',
+                    '<a class="button" href="{}" style="background-color: #dc3545; color: white; padding: 3px 8px; border-radius: 4px; text-decoration: none; font-size: 12px;">Retry 🤖</a>',
+                    ai_url
+                ))
+            elif obj.ai_processing_status == 'not_processed':
+                buttons.append(format_html(
+                    '<a class="button" href="{}" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 3px 8px; border-radius: 4px; text-decoration: none; font-size: 12px;">Process AI</a>',
                     ai_url
                 ))
         
-        # Audio Prompt Generation button
+        # 4. Audio Prompt Generation
         if obj.transcription_status == 'transcribed':
-            if obj.audio_prompt_status == 'not_generated':
-                # Create onclick handler for audio prompt generation
+            if obj.audio_prompt_status == 'generated':
+                # Show Music Note Icon
                 buttons.append(format_html(
-                    '<button class="button" onclick="generateAudioPrompt({}, this)" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; padding: 5px 10px; border-radius: 4px; border: none; cursor: pointer; margin-right: 5px;">🎵 Gen Audio Prompt</button>',
-                    obj.pk
+                    '<span title="Audio Prompt Ready" style="font-size: 20px; cursor: help; color: #f5576c;">🎵</span>'
                 ))
             elif obj.audio_prompt_status == 'generating':
                 buttons.append(format_html(
-                    '<a class="button" style="background-color: #ffc107; color: #212529; padding: 5px 10px; border-radius: 4px; text-decoration: none; pointer-events: none; margin-right: 5px;">⟳ Generating</a>'
-                ))
-            elif obj.audio_prompt_status == 'generated':
-                buttons.append(format_html(
-                    '<a class="button" style="background-color: #28a745; color: white; padding: 5px 10px; border-radius: 4px; text-decoration: none; pointer-events: none; margin-right: 5px;">✓ Prompt Ready</a>'
+                    '<span title="Generating Prompt..." style="font-size: 20px; color: #ffc107;">⟳</span>'
                 ))
             elif obj.audio_prompt_status == 'failed':
                 buttons.append(format_html(
-                    '<button class="button" onclick="generateAudioPrompt({}, this)" style="background-color: #dc3545; color: white; padding: 5px 10px; border-radius: 4px; border: none; cursor: pointer; margin-right: 5px;">✗ Retry Gen Prompt</button>',
+                    '<button class="button" onclick="generateAudioPrompt({}, this)" style="background-color: #dc3545; color: white; padding: 3px 8px; border-radius: 4px; border: none; cursor: pointer; font-size: 12px;">Retry 🎵</button>',
+                    obj.pk
+                ))
+            elif obj.audio_prompt_status == 'not_generated':
+                buttons.append(format_html(
+                    '<button class="button" onclick="generateAudioPrompt({}, this)" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; padding: 3px 8px; border-radius: 4px; border: none; cursor: pointer; font-size: 12px;">Gen Audio</button>',
                     obj.pk
                 ))
         
-        return format_html(''.join(buttons)) if buttons else "-"
+        return format_html(container_start + ''.join(buttons) + container_end) if buttons else "-"
     download_button.short_description = "Actions"

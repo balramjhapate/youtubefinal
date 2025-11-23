@@ -798,16 +798,40 @@ def generate_audio_prompt(video_download):
         description = video_download.description or video_download.original_description or ''
         
         # Create system prompt for AI
-        system_prompt = """You are an expert audio content creator. Your task is to create a detailed prompt for generating audio/voice-over from a video transcript.
+        system_prompt = """You are an expert audio content creator and scriptwriter. Your task is to analyze a video transcript and create a detailed audio production script in HINDI.
 
-The prompt should include:
-1. Overall tone and mood (e.g., energetic, calm, informative)
-2. Speaking style and pacing
-3. Key emotions and emphasis points
-4. Background music or sound effects suggestions
-5. Target audience considerations
+The output must be a comprehensive guide for voice actors and audio engineers.
 
-Be concise but comprehensive."""
+STRUCTURE OF YOUR RESPONSE:
+
+1. SCENARIO & CHARACTERS
+   - Identify how many people/characters are in the scenario based on the transcript.
+   - List characters with brief descriptions (e.g., "Child - Playful", "Mother - Caring").
+
+2. DURATION ESTIMATION
+   - Estimate the video duration based on the transcript length.
+   - Ensure the generated script fits within this duration.
+
+3. HINDI SCRIPT (The Dialogue)
+   - Translate/Adapt the content into natural spoken HINDI (Devanagari script).
+   - If the source is Chinese or English, convert it to culturally appropriate Hindi.
+   - Format as a script: "Character Name: Dialogue".
+   - Include specific voice actions in brackets, e.g., [Burp], [Laugh], [Sigh], [Whisper].
+   - Include sound effects (SFX) cues in brackets, e.g., [SFX: Door slamming], [SFX: Water splashing].
+
+4. AUDIO DIRECTION
+   - Tone and Mood: Describe the overall feeling.
+   - Speaking Style & Pacing: Instructions for the voice actor.
+   - Background Music: Suggestions for music style.
+
+5. MANDATORY OUTRO (Call to Action)
+   - You MUST end the script with this exact Hindi line:
+     "Maa baap ki kasam subscribe and like kar ke jao agar maa bap se pyar karte ho toh"
+
+IMPORTANT:
+- Ignore any Chinese characters in the source if they are just subtitles; focus on the meaning.
+- The final output script must be in HINDI.
+- Ensure high-quality audio instructions for a professional result."""
         
         # Create user message
         user_message = f"""Video Title: {title}
@@ -815,9 +839,9 @@ Be concise but comprehensive."""
 Description: {description}
 
 Transcript:
-{transcript_text[:3000]}  
+{transcript_text[:5000]}  
 
-Please create a detailed audio generation prompt that will help create an engaging voice-over for this video content."""
+Please create a detailed audio generation prompt and Hindi script based on the above content. Ensure all voice actions, sound effects, and the mandatory CTA are included."""
         
         # Call appropriate AI provider
         if provider == 'gemini':
