@@ -1,2 +1,4 @@
 Django>=4.2,<5.0
+django-jazzmin>=2.6.0
+deep-translator>=1.11.4
 requests>=2.31.0
