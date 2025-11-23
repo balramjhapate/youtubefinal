@@ -19,9 +19,20 @@ class VideoDownload(models.Model):
     
     # Core fields
     url = models.URLField(max_length=500, help_text="Original Xiaohongshu URL")
-    title = models.CharField(max_length=500, blank=True, help_text="Video title")
+    video_id = models.CharField(max_length=100, blank=True, unique=True, help_text="Unique Video ID from XHS")
+    
+    # Content
+    title = models.CharField(max_length=500, blank=True, help_text="English Title (Translated)")
+    original_title = models.CharField(max_length=500, blank=True, help_text="Original Chinese Title")
+    
+    description = models.TextField(blank=True, help_text="English Description (Translated)")
+    original_description = models.TextField(blank=True, help_text="Original Chinese Description")
+    
+    # Media
     video_url = models.URLField(max_length=1000, blank=True, help_text="Extracted video URL")
     cover_url = models.URLField(max_length=1000, blank=True, help_text="Cover/thumbnail URL")
+    local_file = models.FileField(upload_to='videos/', blank=True, null=True, help_text="Locally downloaded video file")
+    is_downloaded = models.BooleanField(default=False, help_text="Is video saved locally?")
     
     # Metadata
     extraction_method = models.CharField(
@@ -34,7 +45,7 @@ class VideoDownload(models.Model):
         max_length=20, 
         choices=STATUS_CHOICES, 
         default='pending',
-        help_text="Download status"
+        help_text="Extraction status"
     )
     error_message = models.TextField(blank=True, help_text="Error message if failed")
     
@@ -52,5 +63,5 @@ class VideoDownload(models.Model):
     
     @property
     def is_successful(self):
-        """Check if download was successful"""
+        """Check if extraction was successful"""
         return self.status == 'success'
