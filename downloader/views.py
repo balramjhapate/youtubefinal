@@ -4,7 +4,7 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 from .models import VideoDownload
-from .utils import perform_extraction, extract_video_id, translate_text
+from .utils import perform_extraction, extract_video_id, translate_text, generate_audio_prompt
 
 def index(request):
     """Redirect homepage to admin login"""
@@ -138,3 +138,37 @@ def ai_settings(request):
             return JsonResponse({"status": "saved"})
         except Exception as e:
             return JsonResponse({"error": str(e)}, status=400)
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def generate_audio_prompt_view(request):
+    """Generate audio prompt for a video using configured AI provider"""
+    try:
+        data = json.loads(request.body.decode('utf-8'))
+        video_id = data.get('video_id')
+        
+        if not video_id:
+            return JsonResponse({"error": "Video ID is required"}, status=400)
+        
+        try:
+            video = VideoDownload.objects.get(pk=video_id)
+        except VideoDownload.DoesNotExist:
+            return JsonResponse({"error": "Video not found"}, status=404)
+        
+        # Generate prompt
+        result = generate_audio_prompt(video)
+        
+        if result['status'] == 'success':
+            return JsonResponse({
+                "prompt": result['prompt'],
+                "status": "success"
+            })
+        else:
+            return JsonResponse({
+                "error": result.get('error', 'Unknown error'),
+                "status": "failed"
+            }, status=400)
+            
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+

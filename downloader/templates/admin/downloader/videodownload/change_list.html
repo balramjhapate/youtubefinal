@@ -148,5 +148,56 @@
             }
         }
     })();
+    
+    // Audio Prompt Generation function
+    function generateAudioPrompt(videoId) {
+        if (!confirm('Generate audio prompt for this video? This will use your configured AI provider API.')) {
+            return;
+        }
+        
+        const apiUrl = window.location.origin + '/api/generate-audio-prompt/';
+        
+        fetch(apiUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({ video_id: videoId })
+        })
+        .then(response => {
+            if (!response.ok) {
+                return response.json().then(err => Promise.reject(err));
+            }
+            return response.json();
+        })
+        .then(data => {
+            if (data.status === 'success') {
+                alert('Audio prompt generated successfully!');
+                window.location.reload();
+            } else {
+                alert('Error: ' + (data.error || 'Failed to generate audio prompt'));
+            }
+        })
+        .catch(error => {
+            alert('Error: ' + error.message);
+        });
+    }
+    
+    // Helper to get CSRF cookie
+    function getCookie(name) {
+        let cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+            const cookies = document.cookie.split(';');
+            for (let i = 0; i < cookies.length; i++) {
+                const cookie = cookies[i].trim();
+                if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                    cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                    break;
+                }
+            }
+        }
+        return cookieValue;
+    }
     </script>
 {% endblock %}

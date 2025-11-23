@@ -9,7 +9,7 @@ from .models import VideoDownload, AIProviderSettings
 from .utils import (
     perform_extraction, extract_video_id, translate_text, download_file, 
     process_video_with_ai, transcribe_video, add_caption_to_video, 
-    extract_thumbnail_from_video, trim_video_segment
+    extract_thumbnail_from_video, trim_video_segment, generate_audio_prompt
 )
 
 # Unregister default auth models
@@ -77,6 +77,7 @@ class VideoDownloadAdmin(admin.ModelAdmin):
         'status_badge',
         'transcription_status_badge',
         'ai_status_badge',
+        'audio_prompt_status_badge',
         'download_status',
         'download_button',
         'created_at'
@@ -86,6 +87,7 @@ class VideoDownloadAdmin(admin.ModelAdmin):
         'status',
         'transcription_status',
         'ai_processing_status',
+        'audio_prompt_status',
         'is_downloaded',
         'extraction_method', 
         'created_at'
@@ -124,6 +126,10 @@ class VideoDownloadAdmin(admin.ModelAdmin):
         'transcript_started_at',
         'transcript_processed_at',
         'transcript_error_message',
+        'audio_prompt_status',
+        'audio_generation_prompt',
+        'audio_prompt_error',
+        'audio_prompt_generated_at',
         'created_at', 
         'updated_at'
     ]
@@ -151,6 +157,10 @@ class VideoDownloadAdmin(admin.ModelAdmin):
             'fields': ('transcription_status', 'transcript', 'transcript_hindi', 'transcript_language', 'transcript_started_at', 'transcript_processed_at', 'transcript_error_message'),
             'description': 'Full transcript of video speech/audio with Hindi translation'
         }),
+        ('Audio Generation', {
+            'fields': ('audio_prompt_status', 'audio_generation_prompt', 'audio_prompt_error', 'audio_prompt_generated_at'),
+            'description': 'AI-generated prompt for audio generation from transcript'
+        }),
         ('Timestamps', {
             'fields': ('created_at', 'updated_at')
         }),
@@ -160,6 +170,7 @@ class VideoDownloadAdmin(admin.ModelAdmin):
         'download_video_action', 
         'transcribe_video_action', 
         'process_with_ai_action',
+        'generate_audio_prompt_action',
         'add_caption_action'
     ]
     
@@ -370,6 +381,49 @@ class VideoDownloadAdmin(admin.ModelAdmin):
         if failed_count > 0:
             messages.error(request, f"Failed to add captions to {failed_count} video(s).")
     add_caption_action.short_description = "Add Captions to Videos (NCA API)"
+    
+    def generate_audio_prompt_action(self, request, queryset):
+        """Action to generate audio prompts from transcripts"""
+        success_count = 0
+        failed_count = 0
+        
+        for obj in queryset:
+            if not obj.transcript:
+                failed_count += 1
+                messages.warning(request, f"Video '{obj.title}' has no transcript. Please transcribe first.")
+                continue
+            
+            # Set status to generating
+            obj.audio_prompt_status = 'generating'
+            obj.save()
+            
+            try:
+                result = generate_audio_prompt(obj)
+                
+                if result['status'] == 'success':
+                    obj.audio_prompt_status = 'generated'
+                    obj.audio_generation_prompt = result['prompt']
+                    obj.audio_prompt_generated_at = timezone.now()
+                    obj.audio_prompt_error = ''
+                    success_count += 1
+                else:
+                    obj.audio_prompt_status = 'failed'
+                    obj.audio_prompt_error = result.get('error', 'Unknown error')
+                    failed_count += 1
+                
+                obj.save()
+                
+            except Exception as e:
+                obj.audio_prompt_status = 'failed'
+                obj.audio_prompt_error = str(e)
+                obj.save()
+                failed_count += 1
+        
+        if success_count > 0:
+            messages.success(request, f"Successfully generated audio prompts for {success_count} video(s).")
+        if failed_count > 0:
+            messages.error(request, f"Failed to generate audio prompts for {failed_count} video(s).")
+    generate_audio_prompt_action.short_description = "Generate Audio Prompts (AI)"
     
     def process_ai_view(self, request, pk):
         """Process a single video with AI"""
@@ -740,6 +794,36 @@ class VideoDownloadAdmin(admin.ModelAdmin):
         )
     ai_status_badge.short_description = "AI Status"
     
+    def audio_prompt_status_badge(self, obj):
+        colors = {
+            'not_generated': '#6c757d',  # gray
+            'generating': '#ffc107',     # yellow
+            'generated': '#28a745',      # green
+            'failed': '#dc3545'          # red
+        }
+        labels = {
+            'not_generated': 'Not Generated',
+            'generating': 'Generating',
+            'generated': 'Generated',
+            'failed': 'Failed'
+        }
+        status = obj.audio_prompt_status
+        icon = ''
+        if status == 'generated':
+            icon = '🎵 '
+        elif status == 'generating':
+            icon = '⟳ '
+        elif status == 'failed':
+            icon = '✗ '
+        
+        return format_html(
+            '<span style="background-color: {}; color: white; padding: 3px 10px; border-radius: 10px; font-size: 11px; display: inline-block;">{}{}</span>',
+            colors.get(status, '#6c757d'),
+            icon,
+            labels.get(status, status.title())
+        )
+    audio_prompt_status_badge.short_description = "Audio Prompt"
+    
     def download_status(self, obj):
         if obj.is_downloaded:
             return format_html('<span style="color: green;">✔ Saved Locally</span>')
@@ -806,6 +890,28 @@ class VideoDownloadAdmin(admin.ModelAdmin):
                 buttons.append(format_html(
                     '<a class="button" href="{}" style="background-color: #dc3545; color: white; padding: 5px 10px; border-radius: 4px; text-decoration: none;">✗ Retry AI</a>',
                     ai_url
+                ))
+        
+        # Audio Prompt Generation button
+        if obj.transcription_status == 'transcribed':
+            if obj.audio_prompt_status == 'not_generated':
+                # Create onclick handler for audio prompt generation
+                buttons.append(format_html(
+                    '<button class="button" onclick="generateAudioPrompt({})" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; padding: 5px 10px; border-radius: 4px; border: none; cursor: pointer; margin-right: 5px;">🎵 Gen Audio Prompt</button>',
+                    obj.pk
+                ))
+            elif obj.audio_prompt_status == 'generating':
+                buttons.append(format_html(
+                    '<a class="button" style="background-color: #ffc107; color: #212529; padding: 5px 10px; border-radius: 4px; text-decoration: none; pointer-events: none; margin-right: 5px;">⟳ Generating</a>'
+                ))
+            elif obj.audio_prompt_status == 'generated':
+                buttons.append(format_html(
+                    '<a class="button" style="background-color: #28a745; color: white; padding: 5px 10px; border-radius: 4px; text-decoration: none; pointer-events: none; margin-right: 5px;">✓ Prompt Ready</a>'
+                ))
+            elif obj.audio_prompt_status == 'failed':
+                buttons.append(format_html(
+                    '<button class="button" onclick="generateAudioPrompt({})" style="background-color: #dc3545; color: white; padding: 5px 10px; border-radius: 4px; border: none; cursor: pointer; margin-right: 5px;">✗ Retry Gen Prompt</button>',
+                    obj.pk
                 ))
         
         return format_html(''.join(buttons)) if buttons else "-"

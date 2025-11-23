@@ -7,4 +7,5 @@ urlpatterns = [
     path('', views.index, name='index'),
     path('api/extract/', views.extract_video, name='extract'),
     path('api/ai-settings/', views.ai_settings, name='ai_settings'),
+    path('api/generate-audio-prompt/', views.generate_audio_prompt_view, name='generate_audio_prompt'),
 ]

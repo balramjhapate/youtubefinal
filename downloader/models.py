@@ -48,6 +48,13 @@ class VideoDownload(models.Model):
         ('failed', 'Failed'),
     ]
     
+    AUDIO_PROMPT_STATUS_CHOICES = [
+        ('not_generated', 'Not Generated'),
+        ('generating', 'Generating'),
+        ('generated', 'Generated'),
+        ('failed', 'Failed'),
+    ]
+    
     # Core fields
     url = models.URLField(max_length=500, help_text="Original Xiaohongshu URL")
     video_id = models.CharField(max_length=100, blank=True, null=True, unique=True, help_text="Unique Video ID from XHS")
@@ -105,6 +112,17 @@ class VideoDownload(models.Model):
     transcript_started_at = models.DateTimeField(blank=True, null=True, help_text="When transcription started")
     transcript_processed_at = models.DateTimeField(blank=True, null=True, help_text="When transcription was completed")
     transcript_error_message = models.TextField(blank=True, help_text="Transcription error message if failed")
+    
+    # Audio Prompt Generation
+    audio_prompt_status = models.CharField(
+        max_length=20,
+        choices=AUDIO_PROMPT_STATUS_CHOICES,
+        default='not_generated',
+        help_text="Audio prompt generation status"
+    )
+    audio_generation_prompt = models.TextField(blank=True, help_text="AI-generated prompt for audio generation")
+    audio_prompt_generated_at = models.DateTimeField(blank=True, null=True, help_text="When audio prompt was generated")
+    audio_prompt_error = models.TextField(blank=True, help_text="Audio prompt generation error message if failed")
     
     # Timestamps
     created_at = models.DateTimeField(default=timezone.now, help_text="When the download was requested")

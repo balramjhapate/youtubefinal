@@ -746,3 +746,259 @@ def trim_video_segment(video_download, start_time, end_time):
         'status': 'failed',
         'error': 'Video trimming requires NCA Toolkit API. Please enable it in settings.'
     }
+
+def generate_audio_prompt(video_download):
+    """
+    Generate audio generation prompt from video transcript using configured AI provider
+    
+    Args:
+        video_download: VideoDownload model instance
+        
+    Returns:
+        dict: {
+            'prompt': str (generated audio prompt),
+            'status': 'success' or 'failed',
+            'error': str (if failed)
+        }
+    """
+    try:
+        # Import AIProviderSettings model
+        from .models import AIProviderSettings
+        
+        # Check if video has transcript
+        if not video_download.transcript:
+            return {
+                'prompt': '',
+                'status': 'failed',
+                'error': 'No transcript available. Please transcribe the video first.'
+            }
+        
+        # Get AI provider settings
+        try:
+            settings_obj = AIProviderSettings.objects.first()
+            if not settings_obj or not settings_obj.api_key:
+                return {
+                    'prompt': '',
+                    'status': 'failed',
+                    'error': 'AI provider not configured. Please add API key in admin panel.'
+                }
+        except Exception as e:
+            return {
+                'prompt': '',
+                'status': 'failed',
+                'error': f'Error retrieving AI provider settings: {str(e)}'
+            }
+        
+        provider = settings_obj.provider
+        api_key = settings_obj.api_key
+        
+        # Prefer English transcript, fallback to original
+        transcript_text = video_download.transcript or ''
+        title = video_download.title or video_download.original_title or 'Video'
+        description = video_download.description or video_download.original_description or ''
+        
+        # Create system prompt for AI
+        system_prompt = """You are an expert audio content creator. Your task is to create a detailed prompt for generating audio/voice-over from a video transcript.
+
+The prompt should include:
+1. Overall tone and mood (e.g., energetic, calm, informative)
+2. Speaking style and pacing
+3. Key emotions and emphasis points
+4. Background music or sound effects suggestions
+5. Target audience considerations
+
+Be concise but comprehensive."""
+        
+        # Create user message
+        user_message = f"""Video Title: {title}
+
+Description: {description}
+
+Transcript:
+{transcript_text[:3000]}  
+
+Please create a detailed audio generation prompt that will help create an engaging voice-over for this video content."""
+        
+        # Call appropriate AI provider
+        if provider == 'gemini':
+            result = _call_gemini_api(api_key, system_prompt, user_message)
+        elif provider == 'openai':
+            result = _call_openai_api(api_key, system_prompt, user_message)
+        elif provider == 'anthropic':
+            result = _call_anthropic_api(api_key, system_prompt, user_message)
+        else:
+            return {
+                'prompt': '',
+                'status': 'failed',
+                'error': f'Unsupported AI provider: {provider}'
+            }
+        
+        return result
+        
+    except Exception as e:
+        error_msg = str(e)
+        print(f"Error in generate_audio_prompt: {error_msg}")
+        return {
+            'prompt': '',
+            'status': 'failed',
+            'error': error_msg
+        }
+
+def _call_gemini_api(api_key, system_prompt, user_message):
+    """Call Google Gemini API using REST instead of SDK"""
+    # Try multiple model names - use full path format as required by API
+    model_names = ['models/gemini-2.0-flash', 'models/gemini-2.5-flash', 'models/gemini-pro']
+    
+    for model_name in model_names:
+        try:
+            # model_name already includes 'models/' prefix
+            url = f"https://generativelanguage.googleapis.com/v1beta/{model_name}:generateContent?key={api_key}"
+            
+            headers = {
+                'Content-Type': 'application/json',
+            }
+            
+            # Combine prompts
+            full_prompt = f"{system_prompt}\n\n{user_message}"
+            
+            payload = {
+                "contents": [{
+                    "parts": [{"text": full_prompt}]
+                }]
+            }
+            
+            response = requests.post(url, json=payload, headers=headers, timeout=30)
+            response.raise_for_status()
+            
+            data = response.json()
+            
+            # Extract text from response
+            if 'candidates' in data and len(data['candidates']) > 0:
+                candidate = data['candidates'][0]
+                if 'content' in candidate and 'parts' in candidate['content']:
+                    text_parts = [part.get('text', '') for part in candidate['content']['parts']]
+                    generated_text = ''.join(text_parts).strip()
+                    
+                    if generated_text:
+                        return {
+                            'prompt': generated_text,
+                            'status': 'success',
+                            'error': None
+                        }
+            
+            # If we got here, the response was empty but valid - try next model
+            continue
+            
+        except requests.exceptions.RequestException as e:
+            # If it's a 404, try next model. Otherwise, return error
+            if hasattr(e, 'response') and e.response is not None:
+                if e.response.status_code == 404:
+                    continue  # Try next model
+                try:
+                    error_data = e.response.json()
+                    error_msg = error_data.get('error', {}).get('message', str(e))
+                except:
+                    error_msg = str(e)
+            else:
+                error_msg = str(e)
+                
+            # For non-404 errors, return immediately
+            if not (hasattr(e, 'response') and e.response and e.response.status_code == 404):
+                return {
+                    'prompt': '',
+                    'status': 'failed',
+                    'error': f'Gemini API error: {error_msg}'
+                }
+        except Exception as e:
+            # Continue to try next model on any other exception
+            continue
+    
+    # If all models failed
+    return {
+        'prompt': '',
+        'status': 'failed',
+        'error': 'Could not find a working Gemini model. Tried: ' + ', '.join(model_names)
+    }
+
+
+def _call_openai_api(api_key, system_prompt, user_message):
+    """Call OpenAI API"""
+    try:
+        import openai
+        
+        client = openai.OpenAI(api_key=api_key)
+        
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message}
+            ]
+        )
+        
+        if response and response.choices:
+            return {
+                'prompt': response.choices[0].message.content.strip(),
+                'status': 'success',
+                'error': None
+            }
+        else:
+            return {
+                'prompt': '',
+                'status': 'failed',
+                'error': 'OpenAI API returned empty response'
+            }
+    except ImportError:
+        return {
+            'prompt': '',
+            'status': 'failed',
+            'error': 'openai library not installed. Run: pip install openai'
+        }
+    except Exception as e:
+        return {
+            'prompt': '',
+            'status': 'failed',
+            'error': f'OpenAI API error: {str(e)}'
+        }
+
+def _call_anthropic_api(api_key, system_prompt, user_message):
+    """Call Anthropic Claude API"""
+    try:
+        import anthropic
+        
+        client = anthropic.Anthropic(api_key=api_key)
+        
+        response = client.messages.create(
+            model="claude-3-5-sonnet-20241022",
+            max_tokens=1024,
+            system=system_prompt,
+            messages=[
+                {"role": "user", "content": user_message}
+            ]
+        )
+        
+        if response and response.content:
+            return {
+                'prompt': response.content[0].text.strip(),
+                'status': 'success',
+                'error': None
+            }
+        else:
+            return {
+                'prompt': '',
+                'status': 'failed',
+                'error': 'Anthropic API returned empty response'
+            }
+    except ImportError:
+        return {
+            'prompt': '',
+            'status': 'failed',
+            'error': 'anthropic library not installed. Run: pip install anthropic'
+        }
+    except Exception as e:
+        return {
+            'prompt': '',
+            'status': 'failed',
+            'error': f'Anthropic API error: {str(e)}'
+        }
+
