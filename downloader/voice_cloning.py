@@ -82,9 +82,13 @@ class VoiceCloningService:
         # Ensure reference text is clean
         ref_text = voice_profile.reference_text.strip()
         
+        # Generate reference codes
+        print(f"Encoding reference audio: {ref_audio_path}")
+        ref_codes = self.clone_voice(ref_audio_path, ref_text)
+        
         # Generate audio
         print(f"Synthesizing text: {text[:50]}...")
-        wav = self._model.infer(text, None, ref_text, ref_audio_path=ref_audio_path)
+        wav = self._model.infer(text, ref_codes, ref_text)
         
         # Save to file
         if output_path is None:

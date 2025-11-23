@@ -134,6 +134,7 @@ class VideoDownloadAdmin(admin.ModelAdmin):
         'synthesis_status',
         'synthesized_audio',
         'synthesis_error',
+        'synthesis_actions',
         'created_at',
         'updated_at'
     ]
@@ -166,7 +167,7 @@ class VideoDownloadAdmin(admin.ModelAdmin):
             'description': 'AI-generated prompt for audio generation from transcript'
         }),
         ('Audio Synthesis', {
-            'fields': ('voice_profile', 'synthesis_status', 'synthesized_audio', 'synthesis_error'),
+            'fields': ('voice_profile', 'synthesis_status', 'synthesis_actions', 'synthesized_audio', 'synthesis_error'),
             'description': 'AI-generated audio from transcript using a voice profile'
         }),
         ('Timestamps', {
@@ -724,8 +725,8 @@ class VideoDownloadAdmin(admin.ModelAdmin):
         obj.save()
 
         try:
-            voice_cloning_service = get_voice_cloning_service(obj.voice_profile.provider)
-            audio_file = voice_cloning_service.synthesize_audio(obj.transcript, obj.voice_profile.voice_id)
+            voice_cloning_service = get_voice_cloning_service()
+            audio_file = voice_cloning_service.synthesize(obj.transcript, obj.voice_profile)
 
             if audio_file:
                 filename = f"synthesized_audio_{obj.pk}.mp3"
@@ -745,6 +746,9 @@ class VideoDownloadAdmin(admin.ModelAdmin):
             obj.save()
             messages.error(request, f"Audio synthesis error for '{obj.title}': {str(e)}")
 
+        referer = request.META.get('HTTP_REFERER')
+        if referer:
+            return redirect(referer)
         return redirect('admin:downloader_videodownload_changelist')
 
     def synthesize_audio_bulk_view(self, request):
@@ -779,8 +783,8 @@ class VideoDownloadAdmin(admin.ModelAdmin):
                     obj.save()
 
                     try:
-                        voice_cloning_service = get_voice_cloning_service(obj.voice_profile.provider)
-                        audio_file = voice_cloning_service.synthesize_audio(obj.transcript, obj.voice_profile.voice_id)
+                        voice_cloning_service = get_voice_cloning_service()
+                        audio_file = voice_cloning_service.synthesize(obj.transcript, obj.voice_profile)
 
                         if audio_file:
                             filename = f"synthesized_audio_{obj.pk}.mp3"
@@ -994,6 +998,7 @@ class VideoDownloadAdmin(admin.ModelAdmin):
     synthesis_status_badge.short_description = "Synthesis"
 
     def voice_profile_display(self, obj):
+        from django.urls import reverse
         if obj.voice_profile:
             return format_html('<a href="{}">{}</a>',
                                reverse('admin:downloader_voiceprofile_change', args=[obj.voice_profile.pk]),
@@ -1118,4 +1123,48 @@ class VideoDownloadAdmin(admin.ModelAdmin):
 
         return format_html('<div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">{}</div>', format_html(''.join(str(b) for b in buttons)))
     download_button.short_description = "Actions"
+
+    def synthesis_actions(self, obj):
+        from django.urls import reverse
+        buttons = []
+        
+        if obj.transcription_status == 'transcribed' and obj.voice_profile:
+            synthesize_url = reverse('admin:downloader_videodownload_synthesize_audio', args=[obj.pk])
+            
+            if obj.synthesis_status == 'synthesized':
+                if obj.synthesized_audio:
+                    buttons.append(format_html(
+                        '<audio controls src="{}" style="vertical-align: middle; margin-right: 10px;"></audio>',
+                        obj.synthesized_audio.url
+                    ))
+                buttons.append(format_html(
+                    '<a class="button" href="{}" style="background-color: #17a2b8; color: white; padding: 5px 10px; border-radius: 4px; text-decoration: none;">Re-Synthesize ⟳</a>',
+                    synthesize_url
+                ))
+            elif obj.synthesis_status == 'synthesizing':
+                buttons.append(format_html(
+                    '<span style="color: #ffc107; font-weight: bold;">Synthesizing... ⟳</span>'
+                ))
+            elif obj.synthesis_status == 'failed':
+                 buttons.append(format_html(
+                    '<span style="color: #dc3545; margin-right: 10px;">Failed: {}</span>',
+                    obj.synthesis_error
+                ))
+                 buttons.append(format_html(
+                    '<a class="button" href="{}" style="background-color: #dc3545; color: white; padding: 5px 10px; border-radius: 4px; text-decoration: none;">Retry Synthesis 🗣️</a>',
+                    synthesize_url
+                ))
+            else: # not_synthesized
+                 buttons.append(format_html(
+                    '<a class="button" href="{}" style="background: linear-gradient(135deg, #9b59b6 0%, #8e44ad 100%); color: white; padding: 5px 10px; border-radius: 4px; text-decoration: none;">Synthesize Audio 🗣️</a>',
+                    synthesize_url
+                ))
+        elif not obj.voice_profile:
+            return format_html('<span style="color: #6c757d;">Select a Voice Profile and Save to enable synthesis.</span>')
+        elif obj.transcription_status != 'transcribed':
+            return format_html('<span style="color: #6c757d;">Transcribe video first to enable synthesis.</span>')
+            
+        return format_html(''.join(buttons))
+    
+    synthesis_actions.short_description = "Actions"
 
