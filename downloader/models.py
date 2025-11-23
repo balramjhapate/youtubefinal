@@ -19,6 +19,20 @@ class AIProviderSettings(models.Model):
         return f"{self.provider} settings"
 
 
+class VoiceProfile(models.Model):
+    """Store voice cloning profiles."""
+    name = models.CharField(max_length=100, help_text="Name of the voice profile")
+    reference_audio = models.FileField(upload_to='voice_refs/', help_text="Reference audio file (.wav)")
+    reference_text = models.TextField(help_text="Transcript of the reference audio")
+    embedding_path = models.CharField(max_length=500, blank=True, help_text="Path to cached embedding file")
+    created_at = models.DateTimeField(default=timezone.now)
+    
+    def __str__(self):
+        return self.name
+
+    class Meta:
+        ordering = ['-created_at']
+
 class VideoDownload(models.Model):
     """Model to track video downloads from Xiaohongshu/RedNote"""
     
@@ -123,6 +137,17 @@ class VideoDownload(models.Model):
     audio_generation_prompt = models.TextField(blank=True, help_text="AI-generated prompt for audio generation")
     audio_prompt_generated_at = models.DateTimeField(blank=True, null=True, help_text="When audio prompt was generated")
     audio_prompt_error = models.TextField(blank=True, help_text="Audio prompt generation error message if failed")
+    
+    # Audio Synthesis
+    voice_profile = models.ForeignKey('VoiceProfile', on_delete=models.SET_NULL, null=True, blank=True, help_text="Voice profile for audio synthesis")
+    synthesized_audio = models.FileField(upload_to='synthesized_audio/', blank=True, null=True, help_text="Synthesized audio file")
+    synthesis_status = models.CharField(
+        max_length=20,
+        choices=[('not_synthesized', 'Not Synthesized'), ('synthesizing', 'Synthesizing'), ('synthesized', 'Synthesized'), ('failed', 'Failed')],
+        default='not_synthesized',
+        help_text="Audio synthesis status"
+    )
+    synthesis_error = models.TextField(blank=True, help_text="Synthesis error message if failed")
     
     # Timestamps
     created_at = models.DateTimeField(default=timezone.now, help_text="When the download was requested")

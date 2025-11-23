@@ -17,6 +17,16 @@ document.addEventListener('DOMContentLoaded', () => {
     const generatePromptBtn = document.getElementById('generate-prompt');
     const generatedPromptPre = document.getElementById('generated-prompt');
 
+    // Voice Cloning elements
+    const voiceNameInput = document.getElementById('voice-name');
+    const voiceAudioInput = document.getElementById('voice-audio');
+    const voiceTextInput = document.getElementById('voice-text');
+    const createVoiceBtn = document.getElementById('create-voice');
+    const voiceSelect = document.getElementById('voice-select');
+    const synthTextInput = document.getElementById('synth-text');
+    const synthesizeBtn = document.getElementById('synthesize-audio');
+    const synthPlayer = document.getElementById('synth-player');
+
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
         const url = urlInput.value.trim();
@@ -159,6 +169,105 @@ document.addEventListener('DOMContentLoaded', () => {
             });
     }
 
-    // Fetch settings from DB on startup
+    // Voice Cloning Functions
+
+    function loadVoiceProfiles() {
+        fetch('/api/voice-profiles/')
+            .then(r => r.json())
+            .then(data => {
+                voiceSelect.innerHTML = '<option value="">Select a voice...</option>';
+                if (data.profiles && data.profiles.length > 0) {
+                    data.profiles.forEach(p => {
+                        const option = document.createElement('option');
+                        option.value = p.id;
+                        option.textContent = p.name;
+                        voiceSelect.appendChild(option);
+                    });
+                } else {
+                    voiceSelect.innerHTML = '<option value="">No voices found</option>';
+                }
+            })
+            .catch(err => console.error('Error loading voices:', err));
+    }
+
+    createVoiceBtn.addEventListener('click', () => {
+        const name = voiceNameInput.value.trim();
+        const text = voiceTextInput.value.trim();
+        const file = voiceAudioInput.files[0];
+
+        if (!name || !text || !file) {
+            alert('Please fill all voice fields');
+            return;
+        }
+
+        createVoiceBtn.disabled = true;
+        createVoiceBtn.textContent = 'Creating...';
+
+        const formData = new FormData();
+        formData.append('name', name);
+        formData.append('reference_text', text);
+        formData.append('reference_audio', file);
+
+        fetch('/api/voice-profiles/', {
+            method: 'POST',
+            body: formData
+        })
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) throw new Error(data.error);
+                alert('Voice profile created!');
+                loadVoiceProfiles();
+                // Clear inputs
+                voiceNameInput.value = '';
+                voiceTextInput.value = '';
+                voiceAudioInput.value = '';
+            })
+            .catch(err => {
+                console.error(err);
+                alert('Failed to create voice: ' + err.message);
+            })
+            .finally(() => {
+                createVoiceBtn.disabled = false;
+                createVoiceBtn.textContent = 'Create Voice Profile';
+            });
+    });
+
+    synthesizeBtn.addEventListener('click', () => {
+        const text = synthTextInput.value.trim();
+        const profileId = voiceSelect.value;
+
+        if (!text || !profileId) {
+            alert('Please select a voice and enter text');
+            return;
+        }
+
+        synthesizeBtn.disabled = true;
+        synthesizeBtn.textContent = 'Synthesizing...';
+        synthPlayer.style.display = 'none';
+
+        fetch('/api/synthesize-audio/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: text, profile_id: profileId })
+        })
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) throw new Error(data.error);
+                synthPlayer.src = data.audio_url;
+                synthPlayer.style.display = 'block';
+                synthPlayer.play();
+            })
+            .catch(err => {
+                console.error(err);
+                alert('Synthesis failed: ' + err.message);
+            })
+            .finally(() => {
+                synthesizeBtn.disabled = false;
+                synthesizeBtn.textContent = 'Synthesize Audio';
+            });
+    });
+
+    // Fetch settings and voices on startup
     fetchSettings();
+    loadVoiceProfiles();
 });

@@ -30,6 +30,34 @@
   <textarea id="transcript-input" rows="4" placeholder="Paste transcript here..."></textarea>
   <button id="generate-prompt">Generate Prompt</button>
   <pre id="generated-prompt" class="hidden"></pre>
+  <hr>
+  <h3>Voice Cloning</h3>
+  <div class="input-group">
+    <label for="voice-name">New Voice Name</label>
+    <input type="text" id="voice-name" placeholder="e.g., My Voice">
+  </div>
+  <div class="input-group">
+    <label for="voice-audio">Reference Audio (.wav)</label>
+    <input type="file" id="voice-audio" accept=".wav">
+  </div>
+  <div class="input-group">
+    <label for="voice-text">Reference Text</label>
+    <textarea id="voice-text" rows="2" placeholder="Transcript of audio..."></textarea>
+  </div>
+  <button id="create-voice">Create Voice Profile</button>
+  
+  <div class="input-group" style="margin-top: 15px;">
+    <label for="voice-select">Select Voice</label>
+    <select id="voice-select">
+      <option value="">Loading voices...</option>
+    </select>
+  </div>
+  <div class="input-group">
+    <label for="synth-text">Text to Speak</label>
+    <textarea id="synth-text" rows="2" placeholder="Text to synthesize..."></textarea>
+  </div>
+  <button id="synthesize-audio">Synthesize Audio</button>
+  <audio id="synth-player" controls style="width: 100%; margin-top: 10px; display: none;"></audio>
 </aside>
 <div class="background-blobs">
         <div class="blob blob-1"></div>

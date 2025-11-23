@@ -185,3 +185,85 @@ def generate_audio_prompt_view(request):
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
 
+
+from .models import VoiceProfile
+from .voice_cloning import get_voice_cloning_service
+
+@csrf_exempt
+@require_http_methods(["GET", "POST"])
+def voice_profiles_view(request):
+    """Manage voice profiles."""
+    if request.method == "GET":
+        profiles = VoiceProfile.objects.all()
+        data = [{
+            "id": p.id,
+            "name": p.name,
+            "reference_text": p.reference_text,
+            "created_at": p.created_at.isoformat()
+        } for p in profiles]
+        return JsonResponse({"profiles": data})
+        
+    else:  # POST - Create new profile
+        try:
+            name = request.POST.get('name')
+            ref_text = request.POST.get('reference_text')
+            audio_file = request.FILES.get('reference_audio')
+            
+            if not all([name, ref_text, audio_file]):
+                return JsonResponse({"error": "Missing required fields"}, status=400)
+                
+            profile = VoiceProfile.objects.create(
+                name=name,
+                reference_text=ref_text,
+                reference_audio=audio_file
+            )
+            
+            # Pre-calculate embedding (optional, can be done async)
+            try:
+                service = get_voice_cloning_service()
+                # service.clone_voice(profile.reference_audio.path, profile.reference_text)
+                pass
+            except Exception as e:
+                print(f"Warning: Failed to pre-calculate embedding: {e}")
+                
+            return JsonResponse({
+                "id": profile.id,
+                "name": profile.name,
+                "status": "created"
+            })
+        except Exception as e:
+            return JsonResponse({"error": str(e)}, status=400)
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def synthesize_audio_view(request):
+    """Synthesize audio from text using a voice profile."""
+    try:
+        data = json.loads(request.body.decode('utf-8'))
+        text = data.get('text')
+        profile_id = data.get('profile_id')
+        
+        if not text or not profile_id:
+            return JsonResponse({"error": "Text and profile_id are required"}, status=400)
+            
+        try:
+            profile = VoiceProfile.objects.get(pk=profile_id)
+        except VoiceProfile.DoesNotExist:
+            return JsonResponse({"error": "Voice profile not found"}, status=404)
+            
+        service = get_voice_cloning_service()
+        output_path = service.synthesize(text, profile)
+        
+        # Return URL to the generated file
+        # Assuming MEDIA_URL is configured
+        from django.conf import settings
+        relative_path = os.path.relpath(output_path, settings.MEDIA_ROOT)
+        audio_url = settings.MEDIA_URL + relative_path
+        
+        return JsonResponse({
+            "audio_url": audio_url,
+            "status": "success"
+        })
+        
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
