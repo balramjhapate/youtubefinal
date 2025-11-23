@@ -21,5 +21,6 @@ from django.conf.urls.static import static
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path('', include('downloader.urls')),
+    path('api/', include('downloader.api_urls')),  # REST API endpoints
+    path('', include('downloader.urls')),  # Legacy endpoints (for backward compatibility)
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
