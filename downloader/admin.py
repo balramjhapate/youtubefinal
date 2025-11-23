@@ -897,7 +897,7 @@ class VideoDownloadAdmin(admin.ModelAdmin):
             if obj.audio_prompt_status == 'not_generated':
                 # Create onclick handler for audio prompt generation
                 buttons.append(format_html(
-                    '<button class="button" onclick="generateAudioPrompt({})" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; padding: 5px 10px; border-radius: 4px; border: none; cursor: pointer; margin-right: 5px;">🎵 Gen Audio Prompt</button>',
+                    '<button class="button" onclick="generateAudioPrompt({}, this)" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; padding: 5px 10px; border-radius: 4px; border: none; cursor: pointer; margin-right: 5px;">🎵 Gen Audio Prompt</button>',
                     obj.pk
                 ))
             elif obj.audio_prompt_status == 'generating':
@@ -910,7 +910,7 @@ class VideoDownloadAdmin(admin.ModelAdmin):
                 ))
             elif obj.audio_prompt_status == 'failed':
                 buttons.append(format_html(
-                    '<button class="button" onclick="generateAudioPrompt({})" style="background-color: #dc3545; color: white; padding: 5px 10px; border-radius: 4px; border: none; cursor: pointer; margin-right: 5px;">✗ Retry Gen Prompt</button>',
+                    '<button class="button" onclick="generateAudioPrompt({}, this)" style="background-color: #dc3545; color: white; padding: 5px 10px; border-radius: 4px; border: none; cursor: pointer; margin-right: 5px;">✗ Retry Gen Prompt</button>',
                     obj.pk
                 ))
         

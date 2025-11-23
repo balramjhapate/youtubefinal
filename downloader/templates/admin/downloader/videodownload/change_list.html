@@ -150,10 +150,15 @@
     })();
     
     // Audio Prompt Generation function
-    function generateAudioPrompt(videoId) {
-        if (!confirm('Generate audio prompt for this video? This will use your configured AI provider API.')) {
-            return;
-        }
+    function generateAudioPrompt(videoId, buttonElement) {
+        // No confirmation - just start processing
+        
+        // Show loading indicator
+        const originalText = buttonElement.innerHTML;
+        buttonElement.innerHTML = '⟳ Generating...';
+        buttonElement.disabled = true;
+        buttonElement.style.opacity = '0.7';
+        buttonElement.style.cursor = 'not-allowed';
         
         const apiUrl = window.location.origin + '/api/generate-audio-prompt/';
         
@@ -173,14 +178,49 @@
         })
         .then(data => {
             if (data.status === 'success') {
-                alert('Audio prompt generated successfully!');
-                window.location.reload();
+                // Show success briefly, then auto-reload
+                buttonElement.innerHTML = '✓ Success!';
+                buttonElement.style.background = '#28a745';
+                buttonElement.style.opacity = '1';
+                
+                // Auto-reload after 1 second to show success state
+                setTimeout(() => {
+                    window.location.reload();
+                }, 1000);
             } else {
-                alert('Error: ' + (data.error || 'Failed to generate audio prompt'));
+                // Show error state
+                buttonElement.innerHTML = '✗ Failed';
+                buttonElement.style.background = '#dc3545';
+                buttonElement.disabled = false;
+                buttonElement.style.opacity = '1';
+                buttonElement.style.cursor = 'pointer';
+                
+                // Log error to console for debugging
+                console.error('Audio prompt generation failed:', data.error);
+                
+                // Reset button after 3 seconds
+                setTimeout(() => {
+                    buttonElement.innerHTML = originalText;
+                    buttonElement.style.background = 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)';
+                }, 3000);
             }
         })
         .catch(error => {
-            alert('Error: ' + error.message);
+            // Show error state
+            buttonElement.innerHTML = '✗ Error';
+            buttonElement.style.background = '#dc3545';
+            buttonElement.disabled = false;
+            buttonElement.style.opacity = '1';
+            buttonElement.style.cursor = 'pointer';
+            
+            // Log error to console
+            console.error('Network error:', error);
+            
+            // Reset button after 3 seconds
+            setTimeout(() => {
+                buttonElement.innerHTML = originalText;
+                buttonElement.style.background = 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)';
+            }, 3000);
         });
     }
     

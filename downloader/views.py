@@ -159,11 +159,24 @@ def generate_audio_prompt_view(request):
         result = generate_audio_prompt(video)
         
         if result['status'] == 'success':
+            # Save the generated prompt to database
+            from django.utils import timezone
+            video.audio_prompt_status = 'generated'
+            video.audio_generation_prompt = result['prompt']
+            video.audio_prompt_generated_at = timezone.now()
+            video.audio_prompt_error = ''  # Clear any previous errors
+            video.save()
+            
             return JsonResponse({
                 "prompt": result['prompt'],
                 "status": "success"
             })
         else:
+            # Save error to database
+            video.audio_prompt_status = 'failed'
+            video.audio_prompt_error = result.get('error', 'Unknown error')
+            video.save()
+            
             return JsonResponse({
                 "error": result.get('error', 'Unknown error'),
                 "status": "failed"
