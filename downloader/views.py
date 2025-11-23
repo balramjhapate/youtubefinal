@@ -110,3 +110,31 @@ def extract_video(request):
             download.save()
         
         return JsonResponse({"error": str(e)}, status=400)
+
+from .models import AIProviderSettings
+
+@csrf_exempt
+@require_http_methods(["GET", "POST"])
+def ai_settings(request):
+    """GET returns current AI provider settings, POST updates them."""
+    if request.method == "GET":
+        try:
+            settings = AIProviderSettings.objects.first()
+            if not settings:
+                return JsonResponse({"provider": "gemini", "api_key": ""})
+            return JsonResponse({"provider": settings.provider, "api_key": settings.api_key})
+        except Exception as e:
+            return JsonResponse({"error": str(e)}, status=500)
+    else:  # POST
+        try:
+            data = json.loads(request.body.decode('utf-8'))
+            provider = data.get('provider', 'gemini')
+            api_key = data.get('api_key', '')
+            settings, created = AIProviderSettings.objects.get_or_create(id=1, defaults={"provider": provider, "api_key": api_key})
+            if not created:
+                settings.provider = provider
+                settings.api_key = api_key
+                settings.save()
+            return JsonResponse({"status": "saved"})
+        except Exception as e:
+            return JsonResponse({"error": str(e)}, status=400)

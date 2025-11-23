@@ -1,6 +1,23 @@
 from django.db import models
 from django.utils import timezone
 
+class AIProviderSettings(models.Model):
+    """Store AI provider configuration for the application."""
+    PROVIDER_CHOICES = [
+        ('gemini', 'Gemini'),
+        ('openai', 'OpenAI'),
+        ('anthropic', 'Anthropic'),
+    ]
+    provider = models.CharField(max_length=20, choices=PROVIDER_CHOICES, default='gemini')
+    api_key = models.CharField(max_length=255, blank=True)
+
+    class Meta:
+        verbose_name = "AI Provider Setting"
+        verbose_name_plural = "AI Provider Settings"
+
+    def __str__(self):
+        return f"{self.provider} settings"
+
 
 class VideoDownload(models.Model):
     """Model to track video downloads from Xiaohongshu/RedNote"""

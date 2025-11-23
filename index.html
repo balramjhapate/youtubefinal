@@ -10,7 +10,28 @@
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
-    <div class="background-blobs">
+<aside class="sidebar">
+  <h2>AI Provider Settings</h2>
+  <div class="input-group">
+    <label for="provider-select">Provider</label>
+    <select id="provider-select">
+      <option value="gemini">Gemini</option>
+      <option value="openai">OpenAI</option>
+      <option value="anthropic">Anthropic</option>
+    </select>
+  </div>
+  <div class="input-group">
+    <label for="api-key">API Key</label>
+    <input type="password" id="api-key" placeholder="Enter API key">
+  </div>
+  <button id="save-settings">Save Settings</button>
+  <hr>
+  <h3>Generate Prompt</h3>
+  <textarea id="transcript-input" rows="4" placeholder="Paste transcript here..."></textarea>
+  <button id="generate-prompt">Generate Prompt</button>
+  <pre id="generated-prompt" class="hidden"></pre>
+</aside>
+<div class="background-blobs">
         <div class="blob blob-1"></div>
         <div class="blob blob-2"></div>
         <div class="blob blob-3"></div>

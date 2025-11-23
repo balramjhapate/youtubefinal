@@ -9,6 +9,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const videoTitle = document.getElementById('video-title');
     const downloadLink = document.getElementById('download-link');
     const errorMessage = document.getElementById('error-message');
+    // Sidebar elements
+    const providerSelect = document.getElementById('provider-select');
+    const apiKeyInput = document.getElementById('api-key');
+    const saveSettingsBtn = document.getElementById('save-settings');
+    const transcriptInput = document.getElementById('transcript-input');
+    const generatePromptBtn = document.getElementById('generate-prompt');
+    const generatedPromptPre = document.getElementById('generated-prompt');
 
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -78,4 +85,80 @@ document.addEventListener('DOMContentLoaded', () => {
 
         resultSection.classList.remove('hidden');
     }
+
+    // Event listeners for sidebar actions
+    saveSettingsBtn.addEventListener('click', saveSettings);
+    generatePromptBtn.addEventListener('click', () => {
+        const transcript = transcriptInput.value.trim();
+        if (transcript) {
+            generatePrompt(transcript);
+        } else {
+            alert('Please enter a transcript');
+        }
+    });
+
+    // Functions for settings persistence and prompt generation using API
+    function fetchSettings() {
+        fetch('/api/ai-settings/', { method: 'GET' })
+            .then(r => r.json())
+            .then(data => {
+                if (data.provider) providerSelect.value = data.provider;
+                if (data.api_key) apiKeyInput.value = data.api_key;
+            })
+            .catch(err => {
+                console.error('Error fetching AI settings', err);
+            });
+    }
+
+    function saveSettings() {
+        const payload = {
+            provider: providerSelect.value,
+            api_key: apiKeyInput.value
+        };
+        fetch('/api/ai-settings/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        })
+            .then(r => r.json())
+            .then(res => {
+                alert('Settings saved');
+            })
+            .catch(err => {
+                console.error('Error saving AI settings', err);
+                alert('Failed to save settings');
+            });
+    }
+
+    function generatePrompt(transcript) {
+        // Retrieve current settings (could cache if needed)
+        fetch('/api/ai-settings/', { method: 'GET' })
+            .then(r => r.json())
+            .then(settings => {
+                if (!settings.provider || !settings.api_key) {
+                    alert('Please configure provider and API key');
+                    return;
+                }
+                // Placeholder API call – replace URL with actual endpoint
+                return fetch('/api/generate-prompt', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ provider: settings.provider, apiKey: settings.api_key, transcript })
+                });
+            })
+            .then(r => r && r.json())
+            .then(data => {
+                if (data && data.prompt) {
+                    generatedPromptPre.textContent = data.prompt;
+                    generatedPromptPre.classList.remove('hidden');
+                }
+            })
+            .catch(err => {
+                console.error(err);
+                alert('Error generating prompt');
+            });
+    }
+
+    // Fetch settings from DB on startup
+    fetchSettings();
 });

@@ -5,7 +5,7 @@ from django.contrib import messages
 from django.db import IntegrityError
 from django.utils import timezone
 from django.shortcuts import render, redirect, get_object_or_404
-from .models import VideoDownload
+from .models import VideoDownload, AIProviderSettings
 from .utils import (
     perform_extraction, extract_video_id, translate_text, download_file, 
     process_video_with_ai, transcribe_video, add_caption_to_video, 
@@ -15,6 +15,26 @@ from .utils import (
 # Unregister default auth models
 admin.site.unregister(User)
 admin.site.unregister(Group)
+
+@admin.register(AIProviderSettings)
+class AIProviderSettingsAdmin(admin.ModelAdmin):
+    """Admin interface for AI Provider Settings"""
+    list_display = ['id', 'provider', 'api_key_display']
+    fields = ['provider', 'api_key']
+    
+    def api_key_display(self, obj):
+        if obj.api_key:
+            return f"{obj.api_key[:10]}..." if len(obj.api_key) > 10 else obj.api_key
+        return "-"
+    api_key_display.short_description = "API Key"
+    
+    def has_add_permission(self, request):
+        # Only allow one settings record
+        return not AIProviderSettings.objects.exists()
+    
+    def has_delete_permission(self, request, obj=None):
+        # Don't allow deletion of the settings record
+        return False
 
 @admin.register(VideoDownload)
 class VideoDownloadAdmin(admin.ModelAdmin):
