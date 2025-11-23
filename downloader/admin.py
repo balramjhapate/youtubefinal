@@ -13,6 +13,27 @@ admin.site.unregister(Group)
 class VideoDownloadAdmin(admin.ModelAdmin):
     """Admin interface for VideoDownload model"""
     
+    change_list_template = 'admin/downloader/videodownload/change_list.html'
+
+    def changelist_view(self, request, extra_context=None):
+        # Calculate stats
+        total_videos = VideoDownload.objects.count()
+        downloaded_count = VideoDownload.objects.filter(is_downloaded=True).count()
+        cloud_only_count = total_videos - downloaded_count
+        success_count = VideoDownload.objects.filter(status='success').count()
+        failed_count = VideoDownload.objects.filter(status='failed').count()
+        pending_count = VideoDownload.objects.filter(status='pending').count()
+        
+        extra_context = extra_context or {}
+        extra_context['total_videos'] = total_videos
+        extra_context['downloaded_count'] = downloaded_count
+        extra_context['cloud_only_count'] = cloud_only_count
+        extra_context['success_count'] = success_count
+        extra_context['failed_count'] = failed_count
+        extra_context['pending_count'] = pending_count
+        
+        return super().changelist_view(request, extra_context=extra_context)
+
     list_display = [
         'thumbnail_display',
         'title_display', 

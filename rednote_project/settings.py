@@ -155,6 +155,7 @@ JAZZMIN_SETTINGS = {
     
     "changeform_format": "horizontal_tabs",
     "override_admin_login": True,
+    "custom_css": "downloader/admin_custom.css",
 }
 
 JAZZMIN_UI_TWEAKS = {

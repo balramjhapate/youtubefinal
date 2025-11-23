@@ -1,5 +1,5 @@
 import json
-from django.shortcuts import render
+from django.shortcuts import render, redirect
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
@@ -7,8 +7,8 @@ from .models import VideoDownload
 from .utils import perform_extraction, extract_video_id, translate_text
 
 def index(request):
-    """Homepage view"""
-    return render(request, 'downloader/index.html')
+    """Redirect homepage to admin login"""
+    return redirect('/admin/')
 
 @csrf_exempt
 @require_http_methods(["POST"])

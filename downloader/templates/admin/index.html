@@ -1,0 +1,27 @@
+{% extends "admin/base_site.html" %}
+{% load video_stats %}
+{% block content %}
+  <h1>RedNote Admin Dashboard</h1>
+  {% video_stats as stats %}
+  <div style="display:flex; gap:20px; margin-bottom:20px;">
+    <div style="background:#f0f4f8;padding:10px;border-radius:5px;flex:1;text-align:center;">
+      <strong>Total Videos</strong><br/>{{ stats.total }}
+    </div>
+    <div style="background:#e6f7e6;padding:10px;border-radius:5px;flex:1;text-align:center;">
+      <strong>Saved Locally</strong><br/>{{ stats.downloaded }}
+    </div>
+    <div style="background:#e6f0ff;padding:10px;border-radius:5px;flex:1;text-align:center;">
+      <strong>Cloud Only</strong><br/>{{ stats.cloud }}
+    </div>
+    <div style="background:#e6ffe6;padding:10px;border-radius:5px;flex:1;text-align:center;">
+      <strong>Success</strong><br/>{{ stats.success }}
+    </div>
+    <div style="background:#ffe6e6;padding:10px;border-radius:5px;flex:1;text-align:center;">
+      <strong>Failed</strong><br/>{{ stats.failed }}
+    </div>
+    <div style="background:#fff5e6;padding:10px;border-radius:5px;flex:1;text-align:center;">
+      <strong>Pending</strong><br/>{{ stats.pending }}
+    </div>
+  </div>
+  {{ block.super }}
+{% endblock %}

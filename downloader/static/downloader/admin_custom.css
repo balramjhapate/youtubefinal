@@ -1,0 +1,13 @@
+/* Hide Recent Actions on Dashboard */
+body.dashboard #content-related {
+    display: none !important;
+}
+
+/* Also try to hide the column if it's empty to reclaim space (Jazzmin specific) */
+body.dashboard .col-lg-3 {
+    display: none !important;
+}
+body.dashboard .col-lg-9 {
+    flex: 0 0 100% !important;
+    max-width: 100% !important;
+}
