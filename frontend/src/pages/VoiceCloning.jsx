@@ -28,7 +28,7 @@ export function VoiceCloning() {
     // Advanced parameters
     const [speed, setSpeed] = useState(1.0);
     const [temperature, setTemperature] = useState(0.75);
-    const [repetitionPenalty, setRepetitionPenalty] = useState(5.0);
+    const [repetitionPenalty, setRepetitionPenalty] = useState(2.0);
     const [topK, setTopK] = useState(50);
     const [topP, setTopP] = useState(0.85);
 
@@ -183,6 +183,15 @@ export function VoiceCloning() {
         saveVoiceMutation.mutate(formData);
     };
 
+    const handleResetDefaults = () => {
+        setSpeed(1.0);
+        setTemperature(0.75);
+        setRepetitionPenalty(2.0);
+        setTopK(50);
+        setTopP(0.85);
+        toast.success('Settings reset to defaults');
+    };
+
     const formatTime = (seconds) => {
         const mins = Math.floor(seconds / 60);
         const secs = seconds % 60;
@@ -190,9 +199,9 @@ export function VoiceCloning() {
     };
 
     const languageOptions = languages && typeof languages === 'object' && !Array.isArray(languages)
-        ? Object.entries(languages).map(([label, value]) => ({
-            value: value,
-            label: label,
+        ? Object.entries(languages).map(([code, name]) => ({
+            value: code,  // Use language code (e.g., 'en', 'es')
+            label: name,  // Display language name (e.g., 'English', 'Spanish')
         }))
         : [];
 
@@ -320,13 +329,24 @@ export function VoiceCloning() {
 
                             {/* Advanced Settings */}
                             <div className="mb-4">
-                                <button
-                                    onClick={() => setShowAdvanced(!showAdvanced)}
-                                    className="flex items-center gap-2 text-purple-400 hover:text-purple-300 font-medium mb-3"
-                                >
-                                    {showAdvanced ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                                    Advanced Settings
-                                </button>
+                                <div className="flex items-center justify-between mb-3">
+                                    <button
+                                        onClick={() => setShowAdvanced(!showAdvanced)}
+                                        className="flex items-center gap-2 text-purple-400 hover:text-purple-300 font-medium"
+                                    >
+                                        {showAdvanced ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                                        Advanced Settings
+                                    </button>
+
+                                    {showAdvanced && (
+                                        <button
+                                            onClick={handleResetDefaults}
+                                            className="text-xs text-gray-400 hover:text-white underline"
+                                        >
+                                            Reset to Defaults
+                                        </button>
+                                    )}
+                                </div>
 
                                 {showAdvanced && (
                                     <div className="space-y-3 pl-4 border-l-2 border-purple-500/30">

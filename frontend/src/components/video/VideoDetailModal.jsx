@@ -129,8 +129,17 @@ export function VideoDetailModal() {
               {/* Status badges */}
               <div className="flex flex-wrap gap-2">
                 <StatusBadge status={video.status} />
-                <StatusBadge status={video.transcription_status} />
-                <StatusBadge status={video.ai_processing_status} />
+                {video.transcription_status !== 'not_transcribed' && (
+                  <StatusBadge status={video.transcription_status} />
+                )}
+                {video.ai_processing_status !== 'not_processed' && (
+                  <StatusBadge status={video.ai_processing_status} />
+                )}
+                {video.transcript_hindi && (
+                  <span className="px-2 py-1 text-xs bg-purple-500/20 text-purple-300 rounded-full border border-purple-500/30">
+                    🇮🇳 Hindi Available
+                  </span>
+                )}
               </div>
 
               {/* Meta info */}
@@ -138,56 +147,59 @@ export function VideoDetailModal() {
                 <p>Created: {formatDate(video.created_at)}</p>
                 <p>Method: {video.extraction_method || '-'}</p>
                 {video.is_downloaded && (
-                  <p className="text-green-400">Downloaded locally</p>
+                  <p className="text-green-400">✓ Downloaded locally</p>
                 )}
               </div>
 
-              {/* Action buttons */}
-              <div className="flex flex-wrap gap-2">
-                {!video.is_downloaded && video.status === 'success' && (
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    icon={Download}
-                    onClick={() => downloadMutation.mutate()}
-                    loading={downloadMutation.isPending}
-                  >
-                    Download
-                  </Button>
-                )}
+              {/* Action buttons - Organized */}
+              <div className="space-y-2">
+                <div className="grid grid-cols-2 gap-2">
+                  {!video.is_downloaded && video.status === 'success' && (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      icon={Download}
+                      onClick={() => downloadMutation.mutate()}
+                      loading={downloadMutation.isPending}
+                    >
+                      Download
+                    </Button>
+                  )}
 
-                {video.transcription_status === 'not_transcribed' && (
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    icon={FileText}
-                    onClick={() => transcribeMutation.mutate()}
-                    loading={transcribeMutation.isPending}
-                  >
-                    Transcribe
-                  </Button>
-                )}
+                  {video.transcription_status === 'not_transcribed' && (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      icon={FileText}
+                      onClick={() => transcribeMutation.mutate()}
+                      loading={transcribeMutation.isPending}
+                    >
+                      Transcribe
+                    </Button>
+                  )}
 
-                {video.ai_processing_status === 'not_processed' && (
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    icon={Brain}
-                    onClick={() => processAIMutation.mutate()}
-                    loading={processAIMutation.isPending}
-                  >
-                    Process AI
-                  </Button>
-                )}
+                  {video.transcription_status === 'transcribed' && video.ai_processing_status === 'not_processed' && (
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      icon={Brain}
+                      onClick={() => processAIMutation.mutate()}
+                      loading={processAIMutation.isPending}
+                      className="col-span-2"
+                    >
+                      Generate AI Summary
+                    </Button>
+                  )}
+                </div>
 
                 <a
                   href={video.url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg btn-secondary"
+                  className="inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg btn-secondary w-full justify-center"
                 >
                   <ExternalLink className="w-4 h-4" />
-                  Original
+                  View Original
                 </a>
               </div>
             </div>
@@ -262,33 +274,64 @@ export function VideoDetailModal() {
               <div className="space-y-4">
                 {video.transcript ? (
                   <>
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-gray-400">
-                        Language: {video.transcript_language || 'Unknown'}
-                      </span>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        icon={Copy}
-                        onClick={() => copyToClipboard(video.transcript)}
-                      >
-                        Copy
-                      </Button>
-                    </div>
-                    <div className="p-4 bg-white/5 rounded-lg max-h-64 overflow-y-auto">
-                      <p className="text-sm whitespace-pre-wrap">{video.transcript}</p>
-                    </div>
-                    {video.transcript_hindi && (
-                      <div>
-                        <h4 className="text-sm font-medium text-gray-400 mb-2 flex items-center gap-2">
-                          <Globe className="w-4 h-4" />
-                          Hindi Translation
-                        </h4>
-                        <div className="p-4 bg-white/5 rounded-lg max-h-64 overflow-y-auto">
-                          <p className="text-sm whitespace-pre-wrap">{video.transcript_hindi}</p>
+                    {/* Transcript and Hindi Translation Grid */}
+                    <div className="grid md:grid-cols-2 gap-4">
+                      {/* Original Transcript */}
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <h4 className="text-sm font-medium text-gray-300">
+                            Original Transcript
+                          </h4>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-gray-500">
+                              {video.transcript_language || 'Unknown'}
+                            </span>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              icon={Copy}
+                              onClick={() => copyToClipboard(video.transcript)}
+                            >
+                              Copy
+                            </Button>
+                          </div>
+                        </div>
+                        <div className="p-4 bg-white/5 rounded-lg max-h-96 overflow-y-auto border border-white/10">
+                          <p className="text-sm whitespace-pre-wrap leading-relaxed">{video.transcript}</p>
                         </div>
                       </div>
-                    )}
+
+                      {/* Hindi Translation */}
+                      {video.transcript_hindi ? (
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between">
+                            <h4 className="text-sm font-medium text-purple-300 flex items-center gap-2">
+                              <Globe className="w-4 h-4" />
+                              Hindi Translation
+                            </h4>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              icon={Copy}
+                              onClick={() => copyToClipboard(video.transcript_hindi)}
+                            >
+                              Copy
+                            </Button>
+                          </div>
+                          <div className="p-4 bg-purple-500/5 rounded-lg max-h-96 overflow-y-auto border border-purple-500/20">
+                            <p className="text-sm whitespace-pre-wrap leading-relaxed">{video.transcript_hindi}</p>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-center p-8 bg-white/5 rounded-lg border border-white/10">
+                          <div className="text-center text-gray-400">
+                            <Globe className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                            <p className="text-sm">Hindi translation not available</p>
+                            <p className="text-xs mt-1">Translation happens automatically after transcription</p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </>
                 ) : (
                   <div className="text-center py-8 text-gray-400">

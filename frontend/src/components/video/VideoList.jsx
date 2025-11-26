@@ -8,6 +8,7 @@ import {
   MessageSquare,
   CheckSquare,
   Square,
+  Trash2,
 } from 'lucide-react';
 import { VideoCard } from './VideoCard';
 import { Button, LoadingOverlay } from '../common';
@@ -107,6 +108,16 @@ export function VideoList({ videos, isLoading }) {
     onError: (error) => toast.error(error),
   });
 
+  const bulkDeleteMutation = useMutation({
+    mutationFn: videosApi.bulkDelete,
+    onSuccess: () => {
+      toast.success('Videos deleted successfully');
+      queryClient.invalidateQueries(['videos']);
+      clearSelection();
+    },
+    onError: (error) => toast.error(error),
+  });
+
   const handleSelectAll = () => {
     if (selectedVideos.length === videos.length) {
       clearSelection();
@@ -186,13 +197,29 @@ export function VideoList({ videos, isLoading }) {
             </Button>
           </div>
 
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={clearSelection}
-          >
-            Clear
-          </Button>
+          <div className="flex gap-2 ml-auto">
+            <Button
+              size="sm"
+              variant="danger"
+              icon={Trash2}
+              onClick={() => {
+                if (window.confirm(`Delete ${selectedVideos.length} video(s)?`)) {
+                  bulkDeleteMutation.mutate(selectedVideos);
+                }
+              }}
+              loading={bulkDeleteMutation.isPending}
+            >
+              Delete All
+            </Button>
+
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={clearSelection}
+            >
+              Clear
+            </Button>
+          </div>
         </div>
       )}
 

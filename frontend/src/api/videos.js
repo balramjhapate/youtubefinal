@@ -68,7 +68,7 @@ export const videosApi = {
 
   // Delete video
   delete: async (id) => {
-    const response = await apiClient.delete(`/videos/${id}/`);
+    const response = await apiClient.delete(`/videos/${id}/delete/`);
     return response.data;
   },
 
@@ -90,6 +90,11 @@ export const videosApi = {
 
   bulkGeneratePrompts: async (videoIds) => {
     const response = await apiClient.post('/bulk/generate-prompts/', { video_ids: videoIds });
+    return response.data;
+  },
+
+  bulkDelete: async (videoIds) => {
+    const response = await apiClient.post('/bulk/delete/', { video_ids: videoIds });
     return response.data;
   },
 };

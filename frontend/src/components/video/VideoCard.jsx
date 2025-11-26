@@ -35,9 +35,8 @@ export function VideoCard({
 
   return (
     <div
-      className={`glass-card p-4 transition-all cursor-pointer hover:border-white/20 ${
-        isSelected ? 'ring-2 ring-[var(--rednote-primary)]' : ''
-      }`}
+      className={`glass-card p-4 transition-all cursor-pointer hover:border-white/20 ${isSelected ? 'ring-2 ring-[var(--rednote-primary)]' : ''
+        }`}
       onClick={() => openVideoDetail(video.id)}
     >
       <div className="flex gap-4">
@@ -121,60 +120,73 @@ export function VideoCard({
           {/* Status badges */}
           <div className="flex flex-wrap gap-2 mt-2">
             <StatusBadge status={video.status} />
-            <StatusBadge status={video.transcription_status} />
-            <StatusBadge status={video.ai_processing_status} />
-            <StatusBadge status={video.audio_prompt_status} />
-            {video.synthesis_status !== 'not_synthesized' && (
-              <StatusBadge status={video.synthesis_status} />
+            {video.transcription_status !== 'not_transcribed' && (
+              <StatusBadge status={video.transcription_status} />
+            )}
+            {video.ai_processing_status !== 'not_processed' && (
+              <StatusBadge status={video.ai_processing_status} />
+            )}
+            {video.transcript_hindi && (
+              <span className="px-2 py-1 text-xs bg-purple-500/20 text-purple-300 rounded-full border border-purple-500/30">
+                🇮🇳 Hindi
+              </span>
+            )}
+            {video.is_downloaded && (
+              <span className="px-2 py-1 text-xs bg-green-500/20 text-green-300 rounded-full border border-green-500/30">
+                ✓ Downloaded
+              </span>
             )}
           </div>
 
           {/* Meta info */}
-          <div className="flex items-center gap-4 mt-2 text-xs text-gray-500">
+          <div className="flex items-center gap-4 mt-2 text-xs text-gray-400">
             <span>{formatRelativeTime(video.created_at)}</span>
-            {video.is_downloaded && (
-              <span className="text-green-400">Downloaded</span>
-            )}
-            {video.voice_profile_name && (
-              <span>Voice: {video.voice_profile_name}</span>
+            {video.extraction_method && (
+              <span className="text-gray-500">via {video.extraction_method}</span>
             )}
           </div>
 
-          {/* Action buttons */}
-          <div className="flex flex-wrap gap-2 mt-3">
-            {!video.is_downloaded && video.status === 'success' && (
+          {/* Action buttons - Organized grid */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-3">
+            {/* Primary actions */}
+            {!video.is_downloaded && (
               <Button
                 size="sm"
                 variant="secondary"
                 icon={Download}
                 onClick={(e) => handleAction(onDownload, e)}
+                className="w-full"
               >
                 Download
               </Button>
             )}
 
-            {video.transcription_status === 'not_transcribed' && (
+            {(video.transcription_status === 'not_transcribed' || video.transcription_status === 'failed') && (
               <Button
                 size="sm"
-                variant="secondary"
+                variant={video.transcription_status === 'failed' ? 'danger' : 'secondary'}
                 icon={FileText}
                 onClick={(e) => handleAction(onTranscribe, e)}
+                className="w-full"
               >
-                Transcribe
+                {video.transcription_status === 'failed' ? 'Retry Transcribe' : 'Transcribe'}
               </Button>
             )}
 
-            {video.ai_processing_status === 'not_processed' && (
+            {/* AI Summary - Show alongside other buttons */}
+            {(video.ai_processing_status === 'not_processed' || video.ai_processing_status === 'failed') && (
               <Button
                 size="sm"
-                variant="secondary"
+                variant={video.ai_processing_status === 'failed' ? 'danger' : 'primary'}
                 icon={Brain}
                 onClick={(e) => handleAction(onProcessAI, e)}
+                className="w-full"
               >
-                AI Process
+                {video.ai_processing_status === 'failed' ? 'Retry AI' : 'AI Summary'}
               </Button>
             )}
 
+            {/* Secondary actions */}
             {video.audio_prompt_status === 'not_generated' &&
               video.transcription_status === 'transcribed' && (
                 <Button
@@ -182,6 +194,7 @@ export function VideoCard({
                   variant="secondary"
                   icon={MessageSquare}
                   onClick={(e) => handleAction(onGeneratePrompt, e)}
+                  className="w-full"
                 >
                   Gen Prompt
                 </Button>
@@ -194,6 +207,7 @@ export function VideoCard({
                   variant="secondary"
                   icon={Volume2}
                   onClick={(e) => handleAction(onSynthesize, e)}
+                  className="w-full"
                 >
                   Synthesize
                 </Button>
