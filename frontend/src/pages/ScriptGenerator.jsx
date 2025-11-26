@@ -7,7 +7,11 @@ import {
     Copy,
     Check,
     RefreshCw,
-    MessageSquare
+    MessageSquare,
+    Tag,
+    FileTextIcon,
+    ChevronDown,
+    ChevronUp
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { videosApi, settingsApi } from '../api';
@@ -20,6 +24,7 @@ export function ScriptGenerator() {
     const [prompt, setPrompt] = useState('');
     const [generatedScript, setGeneratedScript] = useState('');
     const [isCopied, setIsCopied] = useState(false);
+    const [expandedVideos, setExpandedVideos] = useState([]);
 
     // Fetch videos
     const { data: videos, isLoading: isLoadingVideos } = useQuery({
@@ -73,6 +78,15 @@ export function ScriptGenerator() {
         );
     };
 
+    const toggleVideoExpand = (videoId, e) => {
+        e.stopPropagation();
+        setExpandedVideos(prev =>
+            prev.includes(videoId)
+                ? prev.filter(id => id !== videoId)
+                : [...prev, videoId]
+        );
+    };
+
     const providerOptions = [
         { value: 'gemini', label: 'Google Gemini' },
         { value: 'openai', label: 'OpenAI GPT-4' },
@@ -103,28 +117,136 @@ export function ScriptGenerator() {
                                 <LoadingSpinner />
                             </div>
                         ) : (
-                            <div className="space-y-2 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
-                                {videos?.map(video => (
-                                    <div
-                                        key={video.id}
-                                        onClick={() => toggleVideoSelection(video.id)}
-                                        className={`p-3 rounded-lg border cursor-pointer transition-all flex items-center gap-3 ${selectedVideos.includes(video.id)
-                                                ? 'bg-[var(--rednote-primary)]/10 border-[var(--rednote-primary)]'
-                                                : 'bg-white/5 border-white/10 hover:bg-white/10'
-                                            }`}
-                                    >
-                                        <div className={`w-5 h-5 rounded border flex items-center justify-center ${selectedVideos.includes(video.id)
-                                                ? 'bg-[var(--rednote-primary)] border-[var(--rednote-primary)]'
-                                                : 'border-gray-500'
-                                            }`}>
-                                            {selectedVideos.includes(video.id) && <Check className="w-3 h-3 text-white" />}
+                            <div className="space-y-3 max-h-[600px] overflow-y-auto pr-2 custom-scrollbar">
+                                {videos?.map(video => {
+                                    const isExpanded = expandedVideos.includes(video.id);
+                                    const isSelected = selectedVideos.includes(video.id);
+                                    
+                                    return (
+                                        <div
+                                            key={video.id}
+                                            className={`rounded-lg border transition-all ${isSelected
+                                                    ? 'bg-[var(--rednote-primary)]/10 border-[var(--rednote-primary)]'
+                                                    : 'bg-white/5 border-white/10 hover:bg-white/10'
+                                                }`}
+                                        >
+                                            {/* Video Header */}
+                                            <div
+                                                onClick={() => toggleVideoSelection(video.id)}
+                                                className="p-4 cursor-pointer flex items-start gap-3"
+                                            >
+                                                {/* Checkbox */}
+                                                <div className={`mt-1 w-5 h-5 rounded border flex items-center justify-center flex-shrink-0 ${isSelected
+                                                        ? 'bg-[var(--rednote-primary)] border-[var(--rednote-primary)]'
+                                                        : 'border-gray-500'
+                                                    }`}>
+                                                    {isSelected && <Check className="w-3 h-3 text-white" />}
+                                                </div>
+
+                                                {/* Video Thumbnail */}
+                                                {video.cover_url && (
+                                                    <div className="w-24 h-16 rounded overflow-hidden flex-shrink-0">
+                                                        <img
+                                                            src={video.cover_url}
+                                                            alt={video.title}
+                                                            className="w-full h-full object-cover"
+                                                        />
+                                                    </div>
+                                                )}
+
+                                                {/* Video Info */}
+                                                <div className="flex-1 min-w-0">
+                                                    <p className="font-medium line-clamp-2">{video.title || 'Untitled Video'}</p>
+                                                    <p className="text-xs text-gray-400 line-clamp-1 mt-1">{video.original_title}</p>
+                                                    
+                                                    {/* Status Badges */}
+                                                    <div className="flex gap-2 mt-2 flex-wrap">
+                                                        {video.transcription_status === 'transcribed' && (
+                                                            <span className="text-xs px-2 py-1 rounded bg-green-500/20 text-green-400">
+                                                                Transcribed
+                                                            </span>
+                                                        )}
+                                                        {video.ai_processing_status === 'processed' && (
+                                                            <span className="text-xs px-2 py-1 rounded bg-blue-500/20 text-blue-400">
+                                                                AI Processed
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                </div>
+
+                                                {/* Expand Button */}
+                                                <button
+                                                    onClick={(e) => toggleVideoExpand(video.id, e)}
+                                                    className="flex-shrink-0 p-1 hover:bg-white/10 rounded transition-colors"
+                                                >
+                                                    {isExpanded ? (
+                                                        <ChevronUp className="w-5 h-5 text-gray-400" />
+                                                    ) : (
+                                                        <ChevronDown className="w-5 h-5 text-gray-400" />
+                                                    )}
+                                                </button>
+                                            </div>
+
+                                            {/* Expanded Content */}
+                                            {isExpanded && (
+                                                <div className="px-4 pb-4 space-y-3 border-t border-white/10 pt-3">
+                                                    {/* Description */}
+                                                    {video.description && (
+                                                        <div>
+                                                            <h4 className="text-xs font-semibold text-gray-400 mb-1 flex items-center gap-1">
+                                                                <FileTextIcon className="w-3 h-3" />
+                                                                Description
+                                                            </h4>
+                                                            <p className="text-sm text-gray-300 line-clamp-3">{video.description}</p>
+                                                        </div>
+                                                    )}
+
+                                                    {/* AI Summary */}
+                                                    {video.ai_summary && (
+                                                        <div>
+                                                            <h4 className="text-xs font-semibold text-gray-400 mb-1 flex items-center gap-1">
+                                                                <Bot className="w-3 h-3" />
+                                                                AI Summary (English)
+                                                            </h4>
+                                                            <p className="text-sm text-gray-300 line-clamp-4">{video.ai_summary}</p>
+                                                        </div>
+                                                    )}
+
+                                                    {/* Transcript Preview */}
+                                                    {video.transcript && (
+                                                        <div>
+                                                            <h4 className="text-xs font-semibold text-gray-400 mb-1 flex items-center gap-1">
+                                                                <MessageSquare className="w-3 h-3" />
+                                                                Transcript
+                                                            </h4>
+                                                            <p className="text-sm text-gray-300 line-clamp-3">{video.transcript}</p>
+                                                        </div>
+                                                    )}
+
+                                                    {/* Tags */}
+                                                    {video.ai_tags && (
+                                                        <div>
+                                                            <h4 className="text-xs font-semibold text-gray-400 mb-1 flex items-center gap-1">
+                                                                <Tag className="w-3 h-3" />
+                                                                Tags
+                                                            </h4>
+                                                            <div className="flex flex-wrap gap-1">
+                                                                {video.ai_tags.split(',').map((tag, idx) => (
+                                                                    <span
+                                                                        key={idx}
+                                                                        className="text-xs px-2 py-1 rounded bg-[var(--rednote-primary)]/20 text-[var(--rednote-primary)]"
+                                                                    >
+                                                                        {tag.trim()}
+                                                                    </span>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
                                         </div>
-                                        <div className="flex-1 min-w-0">
-                                            <p className="font-medium truncate">{video.title || 'Untitled Video'}</p>
-                                            <p className="text-xs text-gray-400 truncate">{video.original_title}</p>
-                                        </div>
-                                    </div>
-                                ))}
+                                    );
+                                })}
 
                                 {videos?.length === 0 && (
                                     <p className="text-center text-gray-400 py-4">No videos available</p>
