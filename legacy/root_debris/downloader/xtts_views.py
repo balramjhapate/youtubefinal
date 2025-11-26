@@ -31,9 +31,23 @@ class XTTSGenerateView(APIView):
             )
         
         text = request.data.get('text')
-        language = request.data.get('language')
+        language = request.data.get('language', '').strip()
         reference_audio = request.FILES.get('reference_audio')
         voice_id = request.data.get('voice_id')
+        
+        # Normalize language code - handle display names sent from frontend
+        language_map = {
+            'english': 'en', 'hindi': 'hi', 'spanish': 'es', 'french': 'fr',
+            'german': 'de', 'italian': 'it', 'portuguese': 'pt', 'polish': 'pl',
+            'turkish': 'tr', 'russian': 'ru', 'dutch': 'nl', 'czech': 'cs',
+            'arabic': 'ar', 'chinese': 'zh-cn', 'japanese': 'ja', 'hungarian': 'hu',
+            'korean': 'ko'
+        }
+        # Convert to lowercase for lookup
+        language_lower = language.lower()
+        if language_lower in language_map:
+            language = language_map[language_lower]
+            logger.info(f"Converted language '{request.data.get('language')}' to code '{language}'")
         
         # Advanced parameters
         speed = float(request.data.get('speed', 1.0))
@@ -115,13 +129,17 @@ class XTTSGenerateView(APIView):
                 status=status.HTTP_503_SERVICE_UNAVAILABLE
             )
         except Exception as e:
-            logger.error(f"XTTS Generation Error: {str(e)}", exc_info=True)
+            import traceback
+            error_traceback = traceback.format_exc()
+            logger.error(f"XTTS Generation Error: {str(e)}\n{error_traceback}")
             error_message = str(e)
             # Provide more user-friendly error messages
             if 'model' in error_message.lower() or 'load' in error_message.lower():
                 error_message = f"Failed to load XTTS model: {error_message}"
+            elif 'download' in error_message.lower() or 'downloading' in error_message.lower():
+                error_message = f"Model is still downloading. Please wait a few minutes and try again. Error: {error_message}"
             return Response(
-                {'error': error_message},
+                {'error': error_message, 'details': error_traceback if settings.DEBUG else None},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 

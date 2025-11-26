@@ -319,7 +319,11 @@ export function VoiceCloning() {
                             <Select
                                 label="Language"
                                 value={language}
-                                onChange={(e) => setLanguage(e.target.value)}
+                                onChange={(e) => {
+                                    const selectedValue = e.target.value;
+                                    console.log('Language selected:', selectedValue, 'from options:', languageOptions.find(opt => opt.value === selectedValue));
+                                    setLanguage(selectedValue);
+                                }}
                                 options={languageOptions}
                                 className="mb-4"
                             />
