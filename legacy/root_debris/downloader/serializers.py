@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import VideoDownload, AIProviderSettings, VoiceProfile
+from .models import VideoDownload, AIProviderSettings, ClonedVoice
 
 
 class AIProviderSettingsSerializer(serializers.ModelSerializer):
@@ -21,52 +21,15 @@ class AIProviderSettingsSerializer(serializers.ModelSerializer):
                 data['api_key_masked'] = '*' * len(api_key)
         return data
 
-
-class VoiceProfileSerializer(serializers.ModelSerializer):
-    """Serializer for Voice Profiles"""
-    reference_audio_url = serializers.SerializerMethodField()
-
+class ClonedVoiceSerializer(serializers.ModelSerializer):
     class Meta:
-        model = VoiceProfile
-        fields = [
-            'id', 'name', 'reference_audio', 'reference_audio_url',
-            'reference_text', 'embedding_path', 'created_at'
-        ]
-        read_only_fields = ['id', 'created_at', 'embedding_path']
-
-    def get_reference_audio_url(self, obj):
-        """Get full URL for reference audio"""
-        if obj.reference_audio:
-            request = self.context.get('request')
-            if request:
-                return request.build_absolute_uri(obj.reference_audio.url)
-            return obj.reference_audio.url
-        return None
-
-
-class VoiceProfileListSerializer(serializers.ModelSerializer):
-    """Lighter serializer for list views - includes audio URL for playback"""
-    reference_audio_url = serializers.SerializerMethodField()
-
-    class Meta:
-        model = VoiceProfile
-        fields = ['id', 'name', 'reference_text', 'reference_audio_url', 'created_at']
-
-    def get_reference_audio_url(self, obj):
-        """Get full URL for reference audio"""
-        if obj.reference_audio:
-            request = self.context.get('request')
-            if request:
-                return request.build_absolute_uri(obj.reference_audio.url)
-            return obj.reference_audio.url
-        return None
+        model = ClonedVoice
+        fields = ['id', 'name', 'file', 'created_at']
 
 
 class VideoDownloadSerializer(serializers.ModelSerializer):
     """Full serializer for Video Downloads"""
-    voice_profile_name = serializers.SerializerMethodField()
     local_file_url = serializers.SerializerMethodField()
-    synthesized_audio_url = serializers.SerializerMethodField()
 
     class Meta:
         model = VideoDownload
@@ -85,24 +48,11 @@ class VideoDownloadSerializer(serializers.ModelSerializer):
             'transcription_status', 'transcript', 'transcript_hindi',
             'transcript_language', 'transcript_started_at', 'transcript_processed_at',
             'transcript_error_message',
-            # Audio Prompt
-            'audio_prompt_status', 'audio_generation_prompt',
-            'audio_prompt_generated_at', 'audio_prompt_error',
-            # Synthesis
-            'voice_profile', 'voice_profile_name', 'synthesized_audio',
-            'synthesized_audio_url', 'synthesis_status', 'synthesis_error',
         ]
         read_only_fields = [
             'id', 'video_id', 'created_at', 'updated_at',
             'ai_processed_at', 'transcript_started_at', 'transcript_processed_at',
-            'audio_prompt_generated_at'
         ]
-
-    def get_voice_profile_name(self, obj):
-        """Get voice profile name"""
-        if obj.voice_profile:
-            return obj.voice_profile.name
-        return None
 
     def get_local_file_url(self, obj):
         """Get full URL for local file"""
@@ -113,21 +63,10 @@ class VideoDownloadSerializer(serializers.ModelSerializer):
             return obj.local_file.url
         return None
 
-    def get_synthesized_audio_url(self, obj):
-        """Get full URL for synthesized audio"""
-        if obj.synthesized_audio:
-            request = self.context.get('request')
-            if request:
-                return request.build_absolute_uri(obj.synthesized_audio.url)
-            return obj.synthesized_audio.url
-        return None
-
 
 class VideoDownloadListSerializer(serializers.ModelSerializer):
     """Lighter serializer for list views"""
-    voice_profile_name = serializers.SerializerMethodField()
     local_file_url = serializers.SerializerMethodField()
-    synthesized_audio_url = serializers.SerializerMethodField()
 
     class Meta:
         model = VideoDownload
@@ -135,15 +74,8 @@ class VideoDownloadListSerializer(serializers.ModelSerializer):
             'id', 'url', 'video_id', 'title', 'cover_url', 'video_url',
             'status', 'extraction_method', 'is_downloaded', 'local_file_url',
             'transcription_status', 'ai_processing_status',
-            'audio_prompt_status', 'synthesis_status',
-            'voice_profile', 'voice_profile_name', 'synthesized_audio_url',
             'created_at'
         ]
-
-    def get_voice_profile_name(self, obj):
-        if obj.voice_profile:
-            return obj.voice_profile.name
-        return None
 
     def get_local_file_url(self, obj):
         if obj.local_file:
@@ -151,14 +83,6 @@ class VideoDownloadListSerializer(serializers.ModelSerializer):
             if request:
                 return request.build_absolute_uri(obj.local_file.url)
             return obj.local_file.url
-        return None
-
-    def get_synthesized_audio_url(self, obj):
-        if obj.synthesized_audio:
-            request = self.context.get('request')
-            if request:
-                return request.build_absolute_uri(obj.synthesized_audio.url)
-            return obj.synthesized_audio.url
         return None
 
 
@@ -178,18 +102,6 @@ class VideoTranscribeSerializer(serializers.Serializer):
     )
 
 
-class AudioPromptGenerateSerializer(serializers.Serializer):
-    """Serializer for audio prompt generation"""
-    video_id = serializers.IntegerField(required=True, help_text="Video ID")
-
-
-class SynthesizeAudioSerializer(serializers.Serializer):
-    """Serializer for audio synthesis request"""
-    text = serializers.CharField(required=True, help_text="Text to synthesize")
-    profile_id = serializers.IntegerField(required=True, help_text="Voice profile ID")
-    video_id = serializers.IntegerField(required=False, help_text="Optional video ID to link")
-
-
 class BulkActionSerializer(serializers.Serializer):
     """Serializer for bulk actions"""
     video_ids = serializers.ListField(
@@ -206,6 +118,4 @@ class DashboardStatsSerializer(serializers.Serializer):
     downloaded_locally = serializers.IntegerField()
     transcribed = serializers.IntegerField()
     ai_processed = serializers.IntegerField()
-    audio_prompts_generated = serializers.IntegerField()
-    synthesized = serializers.IntegerField()
     failed = serializers.IntegerField()

@@ -4,3 +4,4 @@ export { Modal } from './Modal';
 export { StatusBadge } from './StatusBadge';
 export { LoadingSpinner, LoadingOverlay, PageLoader } from './LoadingSpinner';
 export { AudioPlayer } from './AudioPlayer';
+export { Card } from './Card';

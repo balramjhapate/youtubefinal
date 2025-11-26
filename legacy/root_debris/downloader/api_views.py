@@ -9,17 +9,15 @@ from rest_framework.decorators import api_view, action
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
-from .models import VideoDownload, AIProviderSettings, VoiceProfile
+from .models import VideoDownload, AIProviderSettings
 from .serializers import (
     VideoDownloadSerializer, VideoDownloadListSerializer,
-    AIProviderSettingsSerializer, VoiceProfileSerializer,
-    VoiceProfileListSerializer, VideoExtractSerializer,
-    VideoTranscribeSerializer, AudioPromptGenerateSerializer,
-    SynthesizeAudioSerializer, BulkActionSerializer, DashboardStatsSerializer
+    AIProviderSettingsSerializer, VideoExtractSerializer,
+    VideoTranscribeSerializer, BulkActionSerializer, DashboardStatsSerializer
 )
 from .utils import (
     perform_extraction, extract_video_id, translate_text,
-    generate_audio_prompt, transcribe_video, download_file,
+    transcribe_video, download_file,
     process_video_with_ai
 )
 
@@ -310,152 +308,6 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                 "error": str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-    @action(detail=True, methods=['post'])
-    def generate_audio_prompt(self, request, pk=None):
-        """Generate audio prompt for a video"""
-        video = self.get_object()
-
-        if video.audio_prompt_status == 'generating':
-            return Response({
-                "status": "already_generating",
-                "message": "Audio prompt generation is already in progress"
-            })
-
-        if video.audio_prompt_status == 'generated':
-            return Response({
-                "status": "already_generated",
-                "prompt": video.audio_generation_prompt
-            })
-
-        video.audio_prompt_status = 'generating'
-        video.save()
-
-        try:
-            result = generate_audio_prompt(video)
-
-            if result['status'] == 'success':
-                video.audio_prompt_status = 'generated'
-                video.audio_generation_prompt = result['prompt']
-                video.audio_prompt_generated_at = timezone.now()
-                video.audio_prompt_error = ''
-                video.save()
-
-                return Response({
-                    "status": "success",
-                    "prompt": video.audio_generation_prompt
-                })
-            else:
-                video.audio_prompt_status = 'failed'
-                video.audio_prompt_error = result.get('error', 'Unknown error')
-                video.save()
-
-                return Response({
-                    "status": "failed",
-                    "error": result.get('error', 'Unknown error')
-                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-        except Exception as e:
-            video.audio_prompt_status = 'failed'
-            video.audio_prompt_error = str(e)
-            video.save()
-
-            return Response({
-                "status": "failed",
-                "error": str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    @action(detail=True, methods=['post'])
-    def synthesize(self, request, pk=None):
-        """Synthesize audio for a video"""
-        video = self.get_object()
-        profile_id = request.data.get('profile_id')
-        text = request.data.get('text')
-
-        if not profile_id:
-            return Response({
-                "error": "profile_id is required"
-            }, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            profile = VoiceProfile.objects.get(pk=profile_id)
-        except VoiceProfile.DoesNotExist:
-            return Response({
-                "error": "Voice profile not found"
-            }, status=status.HTTP_404_NOT_FOUND)
-
-        # Use provided text or fall back to audio prompt or transcript
-        if not text:
-            text = video.audio_generation_prompt or video.transcript_hindi or video.transcript
-
-        if not text:
-            return Response({
-                "error": "No text available for synthesis"
-            }, status=status.HTTP_400_BAD_REQUEST)
-
-        video.synthesis_status = 'synthesizing'
-        video.voice_profile = profile
-        video.save()
-
-        try:
-            from .voice_cloning import get_voice_cloning_service
-            from django.conf import settings
-
-            service = get_voice_cloning_service()
-            output_path = service.synthesize(text, profile)
-
-            if output_path:
-                relative_path = os.path.relpath(output_path, settings.MEDIA_ROOT)
-                video.synthesized_audio = relative_path
-                video.synthesis_status = 'synthesized'
-                video.synthesis_error = ''
-                video.save()
-
-                return Response({
-                    "status": "success",
-                    "audio_url": request.build_absolute_uri(settings.MEDIA_URL + relative_path)
-                })
-            else:
-                video.synthesis_status = 'failed'
-                video.synthesis_error = 'Synthesis returned no output'
-                video.save()
-
-                return Response({
-                    "status": "failed",
-                    "error": "Synthesis returned no output"
-                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-        except Exception as e:
-            video.synthesis_status = 'failed'
-            video.synthesis_error = str(e)
-            video.save()
-
-            return Response({
-                "status": "failed",
-                "error": str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    @action(detail=True, methods=['patch'])
-    def update_voice_profile(self, request, pk=None):
-        """Update voice profile for a video"""
-        video = self.get_object()
-        profile_id = request.data.get('voice_profile_id')
-
-        if profile_id:
-            try:
-                profile = VoiceProfile.objects.get(pk=profile_id)
-                video.voice_profile = profile
-            except VoiceProfile.DoesNotExist:
-                return Response({
-                    "error": "Voice profile not found"
-                }, status=status.HTTP_404_NOT_FOUND)
-        else:
-            video.voice_profile = None
-
-        video.save()
-        return Response({
-            "status": "success",
-            "voice_profile_id": profile_id
-        })
 
 
 class AISettingsViewSet(viewsets.ViewSet):
@@ -488,111 +340,6 @@ class AISettingsViewSet(viewsets.ViewSet):
         return Response({"status": "saved", "provider": provider})
 
 
-class VoiceProfileViewSet(viewsets.ModelViewSet):
-    """ViewSet for Voice Profiles"""
-    queryset = VoiceProfile.objects.all().order_by('-created_at')
-    parser_classes = [JSONParser, MultiPartParser, FormParser]
-
-    def get_serializer_class(self):
-        if self.action == 'list':
-            return VoiceProfileListSerializer
-        return VoiceProfileSerializer
-
-    def create(self, request):
-        """Create a new voice profile"""
-        name = request.data.get('name')
-        ref_text = request.data.get('reference_text')
-        audio_file = request.FILES.get('reference_audio')
-
-        if not all([name, ref_text, audio_file]):
-            return Response({
-                "error": "Missing required fields: name, reference_text, reference_audio"
-            }, status=status.HTTP_400_BAD_REQUEST)
-
-        profile = VoiceProfile.objects.create(
-            name=name,
-            reference_text=ref_text,
-            reference_audio=audio_file
-        )
-
-        serializer = VoiceProfileSerializer(profile, context={'request': request})
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
-
-    @action(detail=False, methods=['get'], url_path='synthesis-status')
-    def synthesis_status(self, request):
-        """Check if voice synthesis service is available"""
-        try:
-            from .voice_cloning import get_voice_cloning_service
-            service = get_voice_cloning_service()
-            status_info = service.get_status()
-            return Response(status_info)
-        except Exception as e:
-            return Response({
-                "available": False,
-                "error": str(e),
-                "model_loaded": False
-            })
-
-    @action(detail=False, methods=['post'], url_path='test-synthesis')
-    def test_synthesis(self, request):
-        """Test voice synthesis with a profile"""
-        profile_id = request.data.get('profile_id')
-        text = request.data.get('text')
-
-        if not profile_id:
-            return Response({
-                "error": "profile_id is required"
-            }, status=status.HTTP_400_BAD_REQUEST)
-
-        if not text:
-            return Response({
-                "error": "text is required"
-            }, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            profile = VoiceProfile.objects.get(pk=profile_id)
-        except VoiceProfile.DoesNotExist:
-            return Response({
-                "error": "Voice profile not found"
-            }, status=status.HTTP_404_NOT_FOUND)
-
-        try:
-            from .voice_cloning import get_voice_cloning_service
-            from django.conf import settings
-
-            service = get_voice_cloning_service()
-
-            # Check if service is available before attempting synthesis
-            if not service.is_available():
-                status_info = service.get_status()
-                return Response({
-                    "status": "failed",
-                    "error": status_info.get('error', 'Voice synthesis service is not available'),
-                    "service_unavailable": True
-                }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
-
-            output_path = service.synthesize(text, profile)
-
-            if output_path:
-                relative_path = os.path.relpath(output_path, settings.MEDIA_ROOT)
-                audio_url = request.build_absolute_uri(settings.MEDIA_URL + relative_path)
-
-                return Response({
-                    "status": "success",
-                    "audio_url": audio_url,
-                    "profile_name": profile.name
-                })
-            else:
-                return Response({
-                    "status": "failed",
-                    "error": "Synthesis returned no output"
-                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-        except Exception as e:
-            return Response({
-                "status": "failed",
-                "error": str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @api_view(['GET'])
@@ -604,8 +351,6 @@ def dashboard_stats(request):
         'downloaded_locally': VideoDownload.objects.filter(is_downloaded=True).count(),
         'transcribed': VideoDownload.objects.filter(transcription_status='transcribed').count(),
         'ai_processed': VideoDownload.objects.filter(ai_processing_status='processed').count(),
-        'audio_prompts_generated': VideoDownload.objects.filter(audio_prompt_status='generated').count(),
-        'synthesized': VideoDownload.objects.filter(synthesis_status='synthesized').count(),
         'failed': VideoDownload.objects.filter(status='failed').count(),
     }
 
@@ -783,57 +528,3 @@ def bulk_process_ai(request):
     return Response({"results": results})
 
 
-@api_view(['POST'])
-def bulk_generate_prompts(request):
-    """Bulk generate audio prompts"""
-    serializer = BulkActionSerializer(data=request.data)
-    if not serializer.is_valid():
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-    video_ids = serializer.validated_data['video_ids']
-    videos = VideoDownload.objects.filter(id__in=video_ids)
-
-    results = []
-    for video in videos:
-        if video.audio_prompt_status in ['generating', 'generated']:
-            results.append({
-                "id": video.id,
-                "status": video.audio_prompt_status
-            })
-            continue
-
-        video.audio_prompt_status = 'generating'
-        video.save()
-
-        try:
-            result = generate_audio_prompt(video)
-
-            if result['status'] == 'success':
-                video.audio_prompt_status = 'generated'
-                video.audio_generation_prompt = result['prompt']
-                video.audio_prompt_generated_at = timezone.now()
-                video.save()
-                results.append({
-                    "id": video.id,
-                    "status": "success"
-                })
-            else:
-                video.audio_prompt_status = 'failed'
-                video.audio_prompt_error = result.get('error', '')
-                video.save()
-                results.append({
-                    "id": video.id,
-                    "status": "failed",
-                    "error": result.get('error', '')
-                })
-        except Exception as e:
-            video.audio_prompt_status = 'failed'
-            video.audio_prompt_error = str(e)
-            video.save()
-            results.append({
-                "id": video.id,
-                "status": "failed",
-                "error": str(e)
-            })
-
-    return Response({"results": results})

@@ -264,75 +264,145 @@ def process_video_with_ai(video_download):
                 'error': 'No title, description, or transcript available'
             }
         
-        # Step 3: Generate summary
-        summary_parts = []
+        # Step 3: Generate summary using AI Provider if available
+        from .models import AIProviderSettings
         
-        if transcript_text:
-            # Use transcript as primary source for summary
-            # Take first 300 characters or first sentence
-            if len(transcript_text) > 300:
-                # Find first sentence break near 300 chars
-                truncate_pos = 300
-                for punct in ['. ', '。', '! ', '！', '? ', '？']:
-                    pos = transcript_text.find(punct, 200, 300)
-                    if pos != -1:
-                        truncate_pos = pos + len(punct)
-                        break
-                summary_parts.append(f"Transcript: {transcript_text[:truncate_pos].strip()}...")
-            else:
-                summary_parts.append(f"Transcript: {transcript_text}")
-        else:
-            # Fallback to title and description
-            if title:
-                summary_parts.append(f"This video is about: {title}")
-            if description:
-                desc_summary = description.split('.')[0] if '.' in description else description[:200]
-                summary_parts.append(f"Description: {desc_summary}")
-        
-        ai_summary = " | ".join(summary_parts) if summary_parts else "AI analysis completed."
-        
-        # Step 4: Generate tags based on transcript and metadata
+        ai_summary = ""
         tags = []
         
-        # Extract keywords from transcript (more accurate than just title)
-        text_for_tags = transcript_text if transcript_text else f"{title} {description}"
-        
-        if text_for_tags:
-            # Simple keyword extraction (can be enhanced with NLP)
-            words = re.findall(r'\b\w{4,}\b', text_for_tags.lower())  # Words with 4+ characters
+        try:
+            settings_obj = AIProviderSettings.objects.first()
+            if settings_obj and settings_obj.api_key:
+                print(f"Using AI Provider: {settings_obj.provider}")
+                
+                # Create prompt for Hindi summary
+                system_prompt = """You are a helpful content assistant for a video platform. 
+Your task is to analyze video content and generate a concise summary in HINDI and relevant tags in English.
+
+OUTPUT FORMAT:
+Return a JSON object with the following structure:
+{
+    "summary": "Your summary in Hindi here...",
+    "tags": ["tag1", "tag2", "tag3"]
+}
+
+REQUIREMENTS:
+1. Summary must be in HINDI (Devanagari script).
+2. Summary should be concise (2-3 sentences) and capture the main point.
+3. Tags should be in ENGLISH, relevant to the content, and include 5-10 tags.
+4. If the content is inappropriate, provide a neutral summary."""
+
+                user_message = f"""Video Title: {title}
+Description: {description}
+Transcript: {transcript_text[:2000]}
+
+Please generate a Hindi summary and English tags for this video."""
+
+                # Call AI API
+                result = None
+                if settings_obj.provider == 'gemini':
+                    result = _call_gemini_api(settings_obj.api_key, system_prompt, user_message)
+                elif settings_obj.provider == 'openai':
+                    result = _call_openai_api(settings_obj.api_key, system_prompt, user_message)
+                elif settings_obj.provider == 'anthropic':
+                    result = _call_anthropic_api(settings_obj.api_key, system_prompt, user_message)
+                
+                if result and result['status'] == 'success':
+                    ai_response = result['prompt']
+                    # Parse JSON response
+                    try:
+                        # Clean up code blocks if present
+                        cleaned_response = ai_response.replace('```json', '').replace('```', '').strip()
+                        import json
+                        parsed = json.loads(cleaned_response)
+                        ai_summary = parsed.get('summary', '')
+                        tags = parsed.get('tags', [])
+                    except Exception as e:
+                        print(f"Failed to parse AI JSON response: {e}")
+                        # Fallback: treat whole response as summary if parsing fails
+                        ai_summary = ai_response
+                        tags = ['ai-generated']
+
+        except Exception as e:
+            print(f"AI Provider error: {e}")
+            # Fallback to heuristic method below
+
+        # Step 4: Fallback to heuristic summary if AI failed or not configured
+        if not ai_summary:
+            print("Falling back to heuristic summary generation...")
+            summary_parts = []
             
-            # Filter common stop words (Chinese and English)
-            stop_words = {
-                'the', 'this', 'that', 'with', 'from', 'have', 'been', 'they', 'what', 
-                'your', 'some', 'will', 'very', 'just', 'like', 'them', 'then', 'than',
-                'the', 'this', 'that', 'and', 'are', 'but', 'not', 'you', 'all', 'can',
-                'her', 'was', 'one', 'our', 'out', 'day', 'get', 'has', 'him', 'his',
-                'how', 'man', 'new', 'now', 'old', 'see', 'two', 'way', 'who', 'its'
-            }
+            if transcript_text:
+                # Use transcript as primary source for summary
+                # Take first 300 characters or first sentence
+                if len(transcript_text) > 300:
+                    # Find first sentence break near 300 chars
+                    truncate_pos = 300
+                    for punct in ['. ', '。', '! ', '！', '? ', '？']:
+                        pos = transcript_text.find(punct, 200, 300)
+                        if pos != -1:
+                            truncate_pos = pos + len(punct)
+                            break
+                    summary_parts.append(f"Transcript: {transcript_text[:truncate_pos].strip()}...")
+                else:
+                    summary_parts.append(f"Transcript: {transcript_text}")
+            else:
+                # Fallback to title and description
+                if title:
+                    summary_parts.append(f"This video is about: {title}")
+                if description:
+                    desc_summary = description.split('.')[0] if '.' in description else description[:200]
+                    summary_parts.append(f"Description: {desc_summary}")
             
-            # Count word frequency
-            word_count = {}
-            for word in words:
-                if word not in stop_words and len(word) > 3:
-                    word_count[word] = word_count.get(word, 0) + 1
+            ai_summary = " | ".join(summary_parts) if summary_parts else "AI analysis completed."
             
-            # Get top keywords
-            sorted_words = sorted(word_count.items(), key=lambda x: x[1], reverse=True)
-            tags.extend([word for word, count in sorted_words[:8]])
-        
-        # Add metadata-based tags
-        if transcript_language:
-            if transcript_language.startswith('zh'):
-                tags.append('chinese-content')
-            elif transcript_language.startswith('en'):
-                tags.append('english-content')
-        
-        if len(transcript_text) > 500:
-            tags.append('long-form')
-        
-        # Ensure we have at least some tags
+            # Translate heuristic summary to Hindi if possible
+            try:
+                ai_summary = translate_text(ai_summary, target='hi')
+            except:
+                pass
+
+        # Step 5: Generate tags based on transcript and metadata (if not already from AI)
         if not tags:
-            tags = ['content', 'social-media', 'video']
+            # Extract keywords from transcript (more accurate than just title)
+            text_for_tags = transcript_text if transcript_text else f"{title} {description}"
+            
+            if text_for_tags:
+                # Simple keyword extraction (can be enhanced with NLP)
+                words = re.findall(r'\b\w{4,}\b', text_for_tags.lower())  # Words with 4+ characters
+                
+                # Filter common stop words (Chinese and English)
+                stop_words = {
+                    'the', 'this', 'that', 'with', 'from', 'have', 'been', 'they', 'what', 
+                    'your', 'some', 'will', 'very', 'just', 'like', 'them', 'then', 'than',
+                    'the', 'this', 'that', 'and', 'are', 'but', 'not', 'you', 'all', 'can',
+                    'her', 'was', 'one', 'our', 'out', 'day', 'get', 'has', 'him', 'his',
+                    'how', 'man', 'new', 'now', 'old', 'see', 'two', 'way', 'who', 'its'
+                }
+                
+                # Count word frequency
+                word_count = {}
+                for word in words:
+                    if word not in stop_words and len(word) > 3:
+                        word_count[word] = word_count.get(word, 0) + 1
+                
+                # Get top keywords
+                sorted_words = sorted(word_count.items(), key=lambda x: x[1], reverse=True)
+                tags.extend([word for word, count in sorted_words[:8]])
+            
+            # Add metadata-based tags
+            if transcript_language:
+                if transcript_language.startswith('zh'):
+                    tags.append('chinese-content')
+                elif transcript_language.startswith('en'):
+                    tags.append('english-content')
+            
+            if len(transcript_text) > 500:
+                tags.append('long-form')
+            
+            # Ensure we have at least some tags
+            if not tags:
+                tags = ['content', 'social-media', 'video']
         
         return {
             'summary': ai_summary,

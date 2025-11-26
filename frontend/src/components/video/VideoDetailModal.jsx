@@ -6,21 +6,21 @@ import {
   FileText,
   Brain,
   MessageSquare,
-  Volume2,
+
   Play,
   Globe,
   Copy,
   ExternalLink,
 } from 'lucide-react';
 import { Modal, Button, StatusBadge, AudioPlayer, LoadingSpinner, Select } from '../common';
-import { videosApi, voiceProfilesApi } from '../../api';
+import { videosApi } from '../../api';
 import { formatDate, truncateText } from '../../utils/formatters';
 import { useStore } from '../../store';
 
 export function VideoDetailModal() {
   const { videoDetailModalOpen, selectedVideoId, closeVideoDetail } = useStore();
   const queryClient = useQueryClient();
-  const [selectedProfileId, setSelectedProfileId] = useState('');
+
   const [activeTab, setActiveTab] = useState('info');
 
   // Fetch video details
@@ -30,11 +30,7 @@ export function VideoDetailModal() {
     enabled: !!selectedVideoId,
   });
 
-  // Fetch voice profiles
-  const { data: profiles } = useQuery({
-    queryKey: ['voice-profiles'],
-    queryFn: voiceProfilesApi.getAll,
-  });
+
 
   // Mutations
   const downloadMutation = useMutation({
@@ -64,23 +60,7 @@ export function VideoDetailModal() {
     onError: (error) => toast.error(error),
   });
 
-  const generatePromptMutation = useMutation({
-    mutationFn: () => videosApi.generateAudioPrompt(selectedVideoId),
-    onSuccess: () => {
-      toast.success('Audio prompt generated');
-      queryClient.invalidateQueries(['video', selectedVideoId]);
-    },
-    onError: (error) => toast.error(error),
-  });
 
-  const synthesizeMutation = useMutation({
-    mutationFn: () => videosApi.synthesize(selectedVideoId, selectedProfileId),
-    onSuccess: () => {
-      toast.success('Audio synthesized successfully');
-      queryClient.invalidateQueries(['video', selectedVideoId]);
-    },
-    onError: (error) => toast.error(error),
-  });
 
   const copyToClipboard = (text) => {
     navigator.clipboard.writeText(text);
@@ -93,8 +73,6 @@ export function VideoDetailModal() {
     { id: 'info', label: 'Info' },
     { id: 'transcript', label: 'Transcript' },
     { id: 'ai', label: 'AI Summary' },
-    { id: 'audio', label: 'Audio Prompt' },
-    { id: 'synthesis', label: 'Synthesis' },
   ];
 
   return (
@@ -153,8 +131,6 @@ export function VideoDetailModal() {
                 <StatusBadge status={video.status} />
                 <StatusBadge status={video.transcription_status} />
                 <StatusBadge status={video.ai_processing_status} />
-                <StatusBadge status={video.audio_prompt_status} />
-                <StatusBadge status={video.synthesis_status} />
               </div>
 
               {/* Meta info */}
@@ -224,11 +200,10 @@ export function VideoDetailModal() {
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
-                  className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${
-                    activeTab === tab.id
-                      ? 'bg-white/10 text-white'
-                      : 'text-gray-400 hover:text-white hover:bg-white/5'
-                  }`}
+                  className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${activeTab === tab.id
+                    ? 'bg-white/10 text-white'
+                    : 'text-gray-400 hover:text-white hover:bg-white/5'
+                    }`}
                 >
                   {tab.label}
                 </button>
@@ -254,6 +229,32 @@ export function VideoDetailModal() {
                     </p>
                   </div>
                 )}
+                <div>
+                  <h4 className="text-sm font-medium text-gray-400 mb-2">Original URL</h4>
+                  <div className="flex items-center gap-2 p-3 bg-white/5 rounded-lg group">
+                    <p className="text-sm text-gray-300 truncate flex-1 font-mono">
+                      {video.url}
+                    </p>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      icon={Copy}
+                      onClick={() => copyToClipboard(video.url)}
+                      className="opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      Copy
+                    </Button>
+                    <a
+                      href={video.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="p-2 text-gray-400 hover:text-white transition-colors"
+                      title="Open in new tab"
+                    >
+                      <ExternalLink className="w-4 h-4" />
+                    </a>
+                  </div>
+                </div>
               </div>
             )}
 
@@ -355,117 +356,16 @@ export function VideoDetailModal() {
               </div>
             )}
 
-            {activeTab === 'audio' && (
-              <div className="space-y-4">
-                {video.audio_generation_prompt ? (
-                  <>
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-gray-400">
-                        Generated at: {formatDate(video.audio_prompt_generated_at)}
-                      </span>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        icon={Copy}
-                        onClick={() => copyToClipboard(video.audio_generation_prompt)}
-                      >
-                        Copy
-                      </Button>
-                    </div>
-                    <div className="p-4 bg-white/5 rounded-lg max-h-96 overflow-y-auto">
-                      <p className="text-sm whitespace-pre-wrap">
-                        {video.audio_generation_prompt}
-                      </p>
-                    </div>
-                  </>
-                ) : (
-                  <div className="text-center py-8 text-gray-400">
-                    <MessageSquare className="w-12 h-12 mx-auto mb-3 opacity-50" />
-                    <p>No audio prompt generated</p>
-                    {video.audio_prompt_status === 'not_generated' &&
-                      video.transcription_status === 'transcribed' && (
-                        <Button
-                          size="sm"
-                          variant="primary"
-                          className="mt-4"
-                          onClick={() => generatePromptMutation.mutate()}
-                          loading={generatePromptMutation.isPending}
-                        >
-                          Generate Audio Prompt
-                        </Button>
-                      )}
-                    {video.transcription_status !== 'transcribed' && (
-                      <p className="text-sm mt-2">
-                        Transcribe the video first to generate audio prompts
-                      </p>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
 
-            {activeTab === 'synthesis' && (
-              <div className="space-y-4">
-                {video.synthesized_audio_url ? (
-                  <div>
-                    <h4 className="text-sm font-medium text-gray-400 mb-3">
-                      Synthesized Audio
-                    </h4>
-                    <AudioPlayer
-                      src={video.synthesized_audio_url}
-                      title={`${video.title}_synthesized.wav`}
-                    />
-                  </div>
-                ) : (
-                  <div className="text-center py-8">
-                    <Volume2 className="w-12 h-12 mx-auto mb-3 opacity-50 text-gray-400" />
-                    <p className="text-gray-400 mb-4">No synthesized audio yet</p>
-
-                    {video.audio_prompt_status === 'generated' && (
-                      <div className="max-w-sm mx-auto space-y-4">
-                        <Select
-                          label="Voice Profile"
-                          value={selectedProfileId}
-                          onChange={(e) => setSelectedProfileId(e.target.value)}
-                          options={
-                            profiles?.map((p) => ({
-                              value: p.id,
-                              label: p.name,
-                            })) || []
-                          }
-                          placeholder="Select a voice profile"
-                        />
-
-                        <Button
-                          variant="primary"
-                          icon={Volume2}
-                          onClick={() => synthesizeMutation.mutate()}
-                          loading={synthesizeMutation.isPending}
-                          disabled={!selectedProfileId}
-                          className="w-full"
-                        >
-                          Synthesize Audio
-                        </Button>
-                      </div>
-                    )}
-
-                    {video.audio_prompt_status !== 'generated' && (
-                      <p className="text-sm text-gray-500">
-                        Generate an audio prompt first to synthesize audio
-                      </p>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
           </div>
         </div>
       ) : (
         <div className="text-center py-12 text-gray-400">
           Video not found
         </div>
-      )}
-    </Modal>
+      )
+      }
+    </Modal >
   );
 }
 

@@ -1,4 +1,5 @@
 export { Dashboard } from './Dashboard';
 export { Videos } from './Videos';
-export { VoiceProfiles } from './VoiceProfiles';
 export { Settings } from './Settings';
+export { VoiceCloning } from './VoiceCloning';
+export { default as ScriptGenerator } from './ScriptGenerator';

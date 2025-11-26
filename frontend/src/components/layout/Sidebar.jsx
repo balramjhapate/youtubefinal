@@ -2,16 +2,18 @@ import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard,
   Video,
-  Mic2,
   Settings,
   X,
+  Mic,
+  FileText,
 } from 'lucide-react';
 import { useStore } from '../../store';
 
 const navItems = [
   { path: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { path: '/videos', icon: Video, label: 'Videos' },
-  { path: '/voice-profiles', icon: Mic2, label: 'Voice Profiles' },
+  { path: '/voice-cloning', icon: Mic, label: 'Voice Cloning' },
+  { path: '/script-generator', icon: FileText, label: 'Script Generator' },
   { path: '/settings', icon: Settings, label: 'Settings' },
 ];
 
@@ -30,9 +32,8 @@ export function Sidebar() {
 
       {/* Sidebar */}
       <aside
-        className={`fixed top-16 left-0 bottom-0 z-40 w-64 glass-card rounded-none border-t-0 border-b-0 border-l-0 transform transition-transform duration-300 ease-in-out ${
-          sidebarOpen ? 'translate-x-0' : '-translate-x-full'
-        } lg:translate-x-0`}
+        className={`fixed top-16 left-0 bottom-0 z-40 w-64 glass-card rounded-none border-t-0 border-b-0 border-l-0 transform transition-transform duration-300 ease-in-out ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'
+          } lg:translate-x-0`}
       >
         {/* Close button (mobile) */}
         <button
@@ -52,10 +53,9 @@ export function Sidebar() {
                 if (window.innerWidth < 1024) toggleSidebar();
               }}
               className={({ isActive }) =>
-                `flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
-                  isActive
-                    ? 'bg-[var(--rednote-primary)]/20 text-[var(--rednote-primary)] border border-[var(--rednote-primary)]/30'
-                    : 'text-gray-400 hover:bg-white/5 hover:text-white'
+                `flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${isActive
+                  ? 'bg-[var(--rednote-primary)]/20 text-[var(--rednote-primary)] border border-[var(--rednote-primary)]/30'
+                  : 'text-gray-400 hover:bg-white/5 hover:text-white'
                 }`
               }
             >

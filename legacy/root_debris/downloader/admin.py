@@ -5,13 +5,12 @@ from django.contrib import messages
 from django.db import IntegrityError
 from django.utils import timezone
 from django.shortcuts import render, redirect, get_object_or_404
-from .models import VideoDownload, AIProviderSettings, VoiceProfile
+from .models import VideoDownload, AIProviderSettings
 from .utils import (
     perform_extraction, extract_video_id, translate_text, download_file,
     process_video_with_ai, transcribe_video, add_caption_to_video,
-    extract_thumbnail_from_video, trim_video_segment, generate_audio_prompt
+    extract_thumbnail_from_video, trim_video_segment
 )
-from .voice_cloning import get_voice_cloning_service
 
 # Unregister default auth models
 admin.site.unregister(User)
@@ -36,14 +35,6 @@ class AIProviderSettingsAdmin(admin.ModelAdmin):
     def has_delete_permission(self, request, obj=None):
         # Don't allow deletion of the settings record
         return False
-
-@admin.register(VoiceProfile)
-class VoiceProfileAdmin(admin.ModelAdmin):
-    """Admin interface for VoiceProfile model"""
-    list_display = ['name', 'created_at']
-    search_fields = ['name', 'reference_text']
-    readonly_fields = ['created_at']
-    fields = ['name', 'reference_audio', 'reference_text', 'embedding_path']
 
 @admin.register(VideoDownload)
 class VideoDownloadAdmin(admin.ModelAdmin):
@@ -86,9 +77,6 @@ class VideoDownloadAdmin(admin.ModelAdmin):
         'status_badge',
         'transcription_status_badge',
         'ai_status_badge',
-        'audio_prompt_status_badge',
-        'synthesis_status_badge',
-        'voice_profile_display',
         'download_status',
         'download_button',
         'created_at'
@@ -127,14 +115,6 @@ class VideoDownloadAdmin(admin.ModelAdmin):
         'transcript_started_at',
         'transcript_processed_at',
         'transcript_error_message',
-        'audio_prompt_status',
-        'audio_generation_prompt',
-        'audio_prompt_error',
-        'audio_prompt_generated_at',
-        'synthesis_status',
-        'synthesized_audio',
-        'synthesis_error',
-        'synthesis_actions',
         'created_at',
         'updated_at'
     ]
@@ -162,14 +142,6 @@ class VideoDownloadAdmin(admin.ModelAdmin):
             'fields': ('transcription_status', 'transcript', 'transcript_hindi', 'transcript_language', 'transcript_started_at', 'transcript_processed_at', 'transcript_error_message'),
             'description': 'Full transcript of video speech/audio with Hindi translation'
         }),
-        ('Audio Generation', {
-            'fields': ('audio_prompt_status', 'audio_generation_prompt', 'audio_prompt_error', 'audio_prompt_generated_at'),
-            'description': 'AI-generated prompt for audio generation from transcript'
-        }),
-        ('Audio Synthesis', {
-            'fields': ('voice_profile', 'synthesis_status', 'synthesis_actions', 'synthesized_audio', 'synthesis_error'),
-            'description': 'AI-generated audio from transcript using a voice profile'
-        }),
         ('Timestamps', {
             'fields': ('created_at', 'updated_at')
         }),
@@ -179,8 +151,6 @@ class VideoDownloadAdmin(admin.ModelAdmin):
         'download_video_action',
         'transcribe_video_action',
         'process_with_ai_action',
-        'generate_audio_prompt_action',
-        'synthesize_audio_action',
         'add_caption_action'
     ]
 
@@ -401,49 +371,6 @@ class VideoDownloadAdmin(admin.ModelAdmin):
         if failed_count > 0:
             messages.error(request, f"Failed to add captions to {failed_count} video(s).")
     add_caption_action.short_description = "Add Captions to Videos (NCA API)"
-
-    def generate_audio_prompt_action(self, request, queryset):
-        """Action to generate audio prompts from transcripts"""
-        success_count = 0
-        failed_count = 0
-
-        for obj in queryset:
-            if not obj.transcript:
-                failed_count += 1
-                messages.warning(request, f"Video '{obj.title}' has no transcript. Please transcribe first.")
-                continue
-
-            # Set status to generating
-            obj.audio_prompt_status = 'generating'
-            obj.save()
-
-            try:
-                result = generate_audio_prompt(obj)
-
-                if result['status'] == 'success':
-                    obj.audio_prompt_status = 'generated'
-                    obj.audio_generation_prompt = result['prompt']
-                    obj.audio_prompt_generated_at = timezone.now()
-                    obj.audio_prompt_error = ''
-                    success_count += 1
-                else:
-                    obj.audio_prompt_status = 'failed'
-                    obj.audio_prompt_error = result.get('error', 'Unknown error')
-                    failed_count += 1
-
-                obj.save()
-
-            except Exception as e:
-                obj.audio_prompt_status = 'failed'
-                obj.audio_prompt_error = str(e)
-                obj.save()
-                failed_count += 1
-
-        if success_count > 0:
-            messages.success(request, f"Successfully generated audio prompts for {success_count} video(s).")
-        if failed_count > 0:
-            messages.error(request, f"Failed to generate audio prompts for {failed_count} video(s).")
-    generate_audio_prompt_action.short_description = "Generate Audio Prompts (AI)"
 
     def synthesize_audio_action(self, request, queryset):
         """Action to synthesize audio from transcripts using a voice profile"""
@@ -937,74 +864,10 @@ class VideoDownloadAdmin(admin.ModelAdmin):
         )
     ai_status_badge.short_description = "AI Status"
 
-    def audio_prompt_status_badge(self, obj):
-        colors = {
-            'not_generated': '#6c757d',  # gray
-            'generating': '#ffc107',     # yellow
-            'generated': '#28a745',      # green
-            'failed': '#dc3545'          # red
-        }
-        labels = {
-            'not_generated': 'Not Generated',
-            'generating': 'Generating',
-            'generated': 'Generated',
-            'failed': 'Failed'
-        }
-        status = obj.audio_prompt_status
-        icon = ''
-        if status == 'generated':
-            icon = '🎵 '
-        elif status == 'generating':
-            icon = '⟳ '
-        elif status == 'failed':
-            icon = '✗ '
 
-        return format_html(
-            '<span style="background-color: {}; color: white; padding: 3px 10px; border-radius: 10px; font-size: 11px; display: inline-block;">{}{}</span>',
-            colors.get(status, '#6c757d'),
-            icon,
-            labels.get(status, status.title())
-        )
-    audio_prompt_status_badge.short_description = "Audio Prompt"
 
-    def synthesis_status_badge(self, obj):
-        colors = {
-            'not_synthesized': '#6c757d',  # gray
-            'synthesizing': '#ffc107',     # yellow
-            'synthesized': '#28a745',      # green
-            'failed': '#dc3545'            # red
-        }
-        labels = {
-            'not_synthesized': 'Not Synthesized',
-            'synthesizing': 'Synthesizing',
-            'synthesized': 'Synthesized',
-            'failed': 'Failed'
-        }
-        status = obj.synthesis_status
-        icon = ''
-        if status == 'synthesized':
-            icon = '🗣️ '
-        elif status == 'synthesizing':
-            icon = '⟳ '
-        elif status == 'failed':
-            icon = '✗ '
 
-        return format_html(
-            '<span style="background-color: {}; color: white; padding: 3px 10px; border-radius: 10px; font-size: 11px; display: inline-block;">{}{}</span>',
-            colors.get(status, '#6c757d'),
-            icon,
-            labels.get(status, status.title())
-        )
-    synthesis_status_badge.short_description = "Synthesis"
 
-    def voice_profile_display(self, obj):
-        from django.urls import reverse
-        if obj.voice_profile:
-            return format_html('<a href="{}">{}</a>',
-                               reverse('admin:downloader_voiceprofile_change', args=[obj.voice_profile.pk]),
-                               obj.voice_profile.name)
-        return "-"
-    voice_profile_display.short_description = "Voice Profile"
 
     def download_status(self, obj):
         if obj.is_downloaded:
@@ -1051,75 +914,7 @@ class VideoDownloadAdmin(admin.ModelAdmin):
                     transcribe_url
                 ))
 
-        # 3. AI Processing
-        if obj.status == 'success':
-            ai_url = reverse('admin:downloader_videodownload_process_ai', args=[obj.pk])
-            if obj.ai_processing_status == 'processed':
-                buttons.append(format_html(
-                    '<span title="AI Processed" style="font-size: 20px; cursor: help; color: #667eea;">🤖</span>'
-                ))
-            elif obj.ai_processing_status == 'processing':
-                buttons.append(format_html(
-                    '<span title="Processing AI..." style="font-size: 20px; color: #ffc107;">⟳</span>'
-                ))
-            elif obj.ai_processing_status == 'failed':
-                buttons.append(format_html(
-                    '<a class="button" href="{}" style="background-color: #dc3545; color: white; padding: 3px 8px; border-radius: 4px; text-decoration: none; font-size: 12px;">Retry 🤖</a>',
-                    ai_url
-                ))
-            elif obj.ai_processing_status == 'not_processed':
-                buttons.append(format_html(
-                    '<a class="button" href="{}" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 3px 8px; border-radius: 4px; text-decoration: none; font-size: 12px;">Process AI</a>',
-                    ai_url
-                ))
 
-        # 4. Audio Prompt Generation
-        if obj.transcription_status == 'transcribed':
-            if obj.audio_prompt_status == 'generated':
-                buttons.append(format_html(
-                    '<span title="Audio Prompt Ready" style="font-size: 20px; cursor: help; color: #f5576c;">🎵</span>'
-                ))
-            elif obj.audio_prompt_status == 'generating':
-                buttons.append(format_html(
-                    '<span title="Generating Prompt..." style="font-size: 20px; color: #ffc107;">⟳</span>'
-                ))
-            elif obj.audio_prompt_status == 'failed':
-                buttons.append(format_html(
-                    '<button class="button" onclick="generateAudioPrompt({}, this)" style="background-color: #dc3545; color: white; padding: 3px 8px; border-radius: 4px; border: none; cursor: pointer; font-size: 12px;">Retry 🎵</button>',
-                    obj.pk
-                ))
-            elif obj.audio_prompt_status == 'not_generated':
-                buttons.append(format_html(
-                    '<button class="button" onclick="generateAudioPrompt({}, this)" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; padding: 3px 8px; border-radius: 4px; border: none; cursor: pointer; font-size: 12px;">Gen Audio</button>',
-                    obj.pk
-                ))
-
-        # 5. Audio Synthesis
-        if obj.transcription_status == 'transcribed' and obj.voice_profile:
-            synthesize_url = reverse('admin:downloader_videodownload_synthesize_audio', args=[obj.pk])
-            if obj.synthesis_status == 'synthesized':
-                buttons.append(format_html(
-                    '<span title="Audio Synthesized" style="font-size: 20px; cursor: help; color: #9b59b6;">🗣️</span>'
-                ))
-                if obj.synthesized_audio:
-                    buttons.append(format_html(
-                        '<a href="{}" target="_blank" title="Play Synthesized Audio" style="text-decoration: none; font-size: 20px; color: #9b59b6;">▶️</a>',
-                        obj.synthesized_audio.url
-                    ))
-            elif obj.synthesis_status == 'synthesizing':
-                buttons.append(format_html(
-                    '<span title="Synthesizing..." style="font-size: 20px; color: #ffc107;">⟳</span>'
-                ))
-            elif obj.synthesis_status == 'failed':
-                buttons.append(format_html(
-                    '<a class="button" href="{}" style="background-color: #dc3545; color: white; padding: 3px 8px; border-radius: 4px; text-decoration: none; font-size: 12px;">Retry 🗣️</a>',
-                    synthesize_url
-                ))
-            elif obj.synthesis_status == 'not_synthesized':
-                buttons.append(format_html(
-                    '<a class="button" href="{}" style="background: linear-gradient(135deg, #9b59b6 0%, #8e44ad 100%); color: white; padding: 3px 8px; border-radius: 4px; text-decoration: none; font-size: 12px;">Synthesize</a>',
-                    synthesize_url
-                ))
 
         return format_html('<div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">{}</div>', format_html(''.join(str(b) for b in buttons)))
     download_button.short_description = "Actions"

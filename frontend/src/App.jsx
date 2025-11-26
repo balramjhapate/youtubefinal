@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from 'react-hot-toast';
 import { Layout } from './components/layout';
 import { VideoDetailModal } from './components/video';
-import { Dashboard, Videos, VoiceProfiles, Settings } from './pages';
+import { Dashboard, Videos, Settings, VoiceCloning, ScriptGenerator } from './pages';
 
 // Create a client
 const queryClient = new QueryClient({
@@ -24,8 +24,9 @@ function App() {
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/videos" element={<Videos />} />
-            <Route path="/voice-profiles" element={<VoiceProfiles />} />
             <Route path="/settings" element={<Settings />} />
+            <Route path="/voice-cloning" element={<VoiceCloning />} />
+            <Route path="/script-generator" element={<ScriptGenerator />} />
           </Routes>
         </Layout>
 

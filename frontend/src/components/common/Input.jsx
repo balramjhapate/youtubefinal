@@ -76,9 +76,9 @@ export const Select = forwardRef(({
         className={`w-full px-4 py-2.5 rounded-lg input-dark ${error ? 'border-red-500' : ''} ${className}`}
         {...props}
       >
-        <option value="">{placeholder}</option>
+        <option value="" className="text-gray-900">{placeholder}</option>
         {options.map((option) => (
-          <option key={option.value} value={option.value}>
+          <option key={option.value} value={option.value} className="text-gray-900">
             {option.label}
           </option>
         ))}
