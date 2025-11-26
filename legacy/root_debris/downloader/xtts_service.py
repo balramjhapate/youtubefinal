@@ -1,9 +1,29 @@
 import os
-import torch
-from TTS.api import TTS
+import sys
 import logging
+from io import StringIO
 
 logger = logging.getLogger(__name__)
+
+# Set environment variable to auto-accept Coqui TTS license
+os.environ['COQUI_TOS_AGREED'] = '1'
+
+# Lazy import TTS to avoid blocking Django startup if TTS dependencies aren't compatible
+try:
+    import torch
+    # Redirect stdin temporarily to avoid interactive prompts
+    old_stdin = sys.stdin
+    sys.stdin = StringIO('y\n')
+    try:
+        from TTS.api import TTS
+        TTS_AVAILABLE = True
+    finally:
+        sys.stdin = old_stdin
+except (ImportError, TypeError) as e:
+    logger.warning(f"TTS library not available: {e}. XTTS features will be disabled.")
+    TTS_AVAILABLE = False
+    TTS = None
+    torch = None
 
 class XTTSService:
     _instance = None
@@ -15,13 +35,21 @@ class XTTSService:
         return cls._instance
 
     def load_model(self):
+        if not TTS_AVAILABLE:
+            raise ImportError("TTS library is not available. Please check your Python version (requires 3.9-3.11, NOT 3.12+) and ensure all dependencies are installed.")
         if self._model is None:
             try:
                 device = "cuda" if torch.cuda.is_available() else "cpu"
                 logger.info(f"Loading XTTS v2 model on {device}...")
-                # This will download the model on first run
-                self._model = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(device)
-                logger.info("XTTS v2 model loaded successfully.")
+                # Redirect stdin to auto-accept license prompt
+                old_stdin = sys.stdin
+                sys.stdin = StringIO('y\n')
+                try:
+                    # This will download the model on first run
+                    self._model = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(device)
+                    logger.info("XTTS v2 model loaded successfully.")
+                finally:
+                    sys.stdin = old_stdin
             except Exception as e:
                 logger.error(f"Failed to load XTTS model: {str(e)}")
                 raise e

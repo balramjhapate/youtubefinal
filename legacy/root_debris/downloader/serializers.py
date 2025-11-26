@@ -22,9 +22,19 @@ class AIProviderSettingsSerializer(serializers.ModelSerializer):
         return data
 
 class ClonedVoiceSerializer(serializers.ModelSerializer):
+    file_url = serializers.SerializerMethodField()
+    
     class Meta:
         model = ClonedVoice
-        fields = ['id', 'name', 'file', 'created_at']
+        fields = ['id', 'name', 'file', 'file_url', 'created_at']
+    
+    def get_file_url(self, obj):
+        if obj.file:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.file.url)
+            return obj.file.url
+        return None
 
 
 class VideoDownloadSerializer(serializers.ModelSerializer):

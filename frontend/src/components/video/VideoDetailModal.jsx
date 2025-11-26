@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import {
@@ -13,51 +13,169 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import { Modal, Button, StatusBadge, AudioPlayer, LoadingSpinner, Select } from '../common';
+import { VideoProgressIndicator } from './VideoProgressIndicator';
 import { videosApi } from '../../api';
 import { formatDate, truncateText } from '../../utils/formatters';
 import { useStore } from '../../store';
 
 export function VideoDetailModal() {
-  const { videoDetailModalOpen, selectedVideoId, closeVideoDetail } = useStore();
+  const {
+    videoDetailModalOpen,
+    selectedVideoId,
+    closeVideoDetail,
+    startProcessing,
+    completeProcessing,
+    getProcessingState,
+  } = useStore();
   const queryClient = useQueryClient();
 
   const [activeTab, setActiveTab] = useState('info');
-
-  // Fetch video details
+  const [progress, setProgress] = useState(0);
+  
+  // Fetch video details - must be before useEffect hooks that use it
   const { data: video, isLoading } = useQuery({
     queryKey: ['video', selectedVideoId],
     queryFn: () => videosApi.getById(selectedVideoId),
     enabled: !!selectedVideoId,
   });
+  
+  const processingState = selectedVideoId ? getProcessingState(selectedVideoId) : null;
+
+  // Simulate progress
+  useEffect(() => {
+    if (!processingState) {
+      setProgress(0);
+      return;
+    }
+
+    const interval = setInterval(() => {
+      setProgress((prev) => {
+        if (prev < 95) {
+          return Math.min(prev + Math.random() * 3, 95);
+        }
+        return prev;
+      });
+    }, 300);
+
+    return () => clearInterval(interval);
+  }, [processingState]);
+
+  // Check completion
+  useEffect(() => {
+    if (processingState && video) {
+      const { type } = processingState;
+      let isCompleted = false;
+
+      if (type === 'download' && video.is_downloaded) {
+        isCompleted = true;
+      } else if (type === 'transcribe' && video.transcription_status === 'transcribed') {
+        isCompleted = true;
+      } else if (type === 'processAI' && video.ai_processing_status === 'processed') {
+        isCompleted = true;
+      }
+
+      if (isCompleted) {
+        setProgress(100);
+        setTimeout(() => {
+          completeProcessing(selectedVideoId);
+          setProgress(0);
+        }, 1000);
+      }
+    }
+  }, [video, processingState, selectedVideoId, completeProcessing]);
 
 
 
   // Mutations
   const downloadMutation = useMutation({
-    mutationFn: () => videosApi.download(selectedVideoId),
-    onSuccess: () => {
-      toast.success('Video downloaded successfully');
-      queryClient.invalidateQueries(['video', selectedVideoId]);
+    mutationFn: async () => {
+      startProcessing(selectedVideoId, 'download');
+      return videosApi.download(selectedVideoId);
     },
-    onError: (error) => toast.error(error),
+    onSuccess: () => {
+      const checkInterval = setInterval(() => {
+        queryClient.invalidateQueries(['video', selectedVideoId]);
+        queryClient.invalidateQueries(['videos']);
+        const updatedVideo = queryClient.getQueryData(['video', selectedVideoId]);
+        if (updatedVideo?.is_downloaded) {
+          clearInterval(checkInterval);
+          completeProcessing(selectedVideoId);
+          toast.success('Video downloaded successfully');
+        }
+      }, 1000);
+
+      setTimeout(() => {
+        clearInterval(checkInterval);
+        completeProcessing(selectedVideoId);
+      }, 60000);
+    },
+    onError: (error) => {
+      completeProcessing(selectedVideoId);
+      toast.error(error?.response?.data?.error || 'Download failed');
+    },
   });
 
   const transcribeMutation = useMutation({
-    mutationFn: () => videosApi.transcribe(selectedVideoId),
+    mutationFn: () => {
+      startProcessing(selectedVideoId, 'transcribe');
+      return videosApi.transcribe(selectedVideoId);
+    },
     onSuccess: () => {
       toast.success('Transcription started');
       queryClient.invalidateQueries(['video', selectedVideoId]);
+      
+      const checkInterval = setInterval(() => {
+        queryClient.invalidateQueries(['video', selectedVideoId]);
+        const updatedVideo = queryClient.getQueryData(['video', selectedVideoId]);
+        if (updatedVideo?.transcription_status === 'transcribed' || updatedVideo?.transcription_status === 'failed') {
+          clearInterval(checkInterval);
+          completeProcessing(selectedVideoId);
+          if (updatedVideo.transcription_status === 'transcribed') {
+            toast.success('Transcription completed');
+          }
+        }
+      }, 2000);
+
+      setTimeout(() => {
+        clearInterval(checkInterval);
+        completeProcessing(selectedVideoId);
+      }, 300000);
     },
-    onError: (error) => toast.error(error),
+    onError: (error) => {
+      completeProcessing(selectedVideoId);
+      toast.error(error?.response?.data?.error || 'Transcription failed');
+    },
   });
 
   const processAIMutation = useMutation({
-    mutationFn: () => videosApi.processAI(selectedVideoId),
-    onSuccess: () => {
-      toast.success('AI processing completed');
-      queryClient.invalidateQueries(['video', selectedVideoId]);
+    mutationFn: () => {
+      startProcessing(selectedVideoId, 'processAI');
+      return videosApi.processAI(selectedVideoId);
     },
-    onError: (error) => toast.error(error),
+    onSuccess: () => {
+      queryClient.invalidateQueries(['video', selectedVideoId]);
+      
+      const checkInterval = setInterval(() => {
+        queryClient.invalidateQueries(['video', selectedVideoId]);
+        const updatedVideo = queryClient.getQueryData(['video', selectedVideoId]);
+        if (updatedVideo?.ai_processing_status === 'processed' || updatedVideo?.ai_processing_status === 'failed') {
+          clearInterval(checkInterval);
+          completeProcessing(selectedVideoId);
+          if (updatedVideo.ai_processing_status === 'processed') {
+            toast.success('AI processing completed');
+          }
+        }
+      }, 2000);
+
+      setTimeout(() => {
+        clearInterval(checkInterval);
+        completeProcessing(selectedVideoId);
+      }, 120000);
+    },
+    onError: (error) => {
+      completeProcessing(selectedVideoId);
+      toast.error(error?.response?.data?.error || 'AI processing failed');
+    },
   });
 
 
@@ -151,6 +269,21 @@ export function VideoDetailModal() {
                 )}
               </div>
 
+              {/* Progress Indicators */}
+              {processingState && (
+                <div className="mb-3">
+                  {processingState.type === 'download' && (
+                    <VideoProgressIndicator label="Downloading video..." progress={progress} />
+                  )}
+                  {processingState.type === 'transcribe' && (
+                    <VideoProgressIndicator label="Transcribing audio..." progress={progress} />
+                  )}
+                  {processingState.type === 'processAI' && (
+                    <VideoProgressIndicator label="Processing with AI..." progress={progress} />
+                  )}
+                </div>
+              )}
+
               {/* Action buttons - Organized */}
               <div className="space-y-2">
                 <div className="grid grid-cols-2 gap-2">
@@ -160,34 +293,37 @@ export function VideoDetailModal() {
                       variant="secondary"
                       icon={Download}
                       onClick={() => downloadMutation.mutate()}
-                      loading={downloadMutation.isPending}
+                      loading={!!processingState && processingState.type === 'download'}
+                      disabled={!!processingState && processingState.type === 'download'}
                     >
-                      Download
+                      {processingState?.type === 'download' ? 'Downloading...' : 'Download'}
                     </Button>
                   )}
 
-                  {video.transcription_status === 'not_transcribed' && (
+                  {(video.transcription_status === 'not_transcribed' || video.transcription_status === 'failed') && (
                     <Button
                       size="sm"
-                      variant="secondary"
+                      variant={video.transcription_status === 'failed' ? 'danger' : 'secondary'}
                       icon={FileText}
                       onClick={() => transcribeMutation.mutate()}
-                      loading={transcribeMutation.isPending}
+                      loading={!!processingState && processingState.type === 'transcribe'}
+                      disabled={!!processingState && processingState.type === 'transcribe'}
                     >
-                      Transcribe
+                      {video.transcription_status === 'failed' ? 'Retry Transcribe' : 'Transcribe'}
                     </Button>
                   )}
 
-                  {video.transcription_status === 'transcribed' && video.ai_processing_status === 'not_processed' && (
+                  {(video.ai_processing_status === 'not_processed' || video.ai_processing_status === 'failed') && (
                     <Button
                       size="sm"
-                      variant="primary"
+                      variant={video.ai_processing_status === 'failed' ? 'danger' : 'primary'}
                       icon={Brain}
                       onClick={() => processAIMutation.mutate()}
-                      loading={processAIMutation.isPending}
+                      loading={!!processingState && processingState.type === 'processAI'}
+                      disabled={!!processingState && processingState.type === 'processAI'}
                       className="col-span-2"
                     >
-                      Generate AI Summary
+                      {video.ai_processing_status === 'failed' ? 'Retry AI Summary' : 'Generate AI Summary'}
                     </Button>
                   )}
                 </div>
@@ -406,9 +542,8 @@ export function VideoDetailModal() {
         <div className="text-center py-12 text-gray-400">
           Video not found
         </div>
-      )
-      }
-    </Modal >
+      )}
+    </Modal>
   );
 }
 

@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import toast from 'react-hot-toast';
 import {
     Mic,
     Upload,
@@ -14,6 +13,7 @@ import {
 } from 'lucide-react';
 import { Button, Input, Textarea, Select, AudioPlayer, LoadingSpinner } from '../components/common';
 import { xttsApi } from '../api';
+import { showSuccess, showError, showWarning, showLoading, closeAlert } from '../utils/alerts';
 
 export function VoiceCloning() {
     const [activeTab, setActiveTab] = useState('generate'); // 'generate' or 'voices'
@@ -50,10 +50,68 @@ export function VoiceCloning() {
     });
 
     // Fetch saved voices
-    const { data: savedVoices = [], isLoading: voicesLoading } = useQuery({
+    const { data: savedVoices = [], isLoading: voicesLoading, error: voicesError } = useQuery({
         queryKey: ['xtts-voices'],
         queryFn: xttsApi.getVoices,
+        retry: false,
     });
+    
+    // Check if TTS service is unavailable
+    const [ttsUnavailable, setTtsUnavailable] = useState(false);
+
+    // Generate speech mutation - must be declared before useEffect that uses it
+    const generateMutation = useMutation({
+        mutationFn: async (formData) => {
+            setIsGenerating(true);
+            setStartTime(Date.now());
+            showLoading('Generating Audio', 'Please wait while we generate your audio...');
+            return await xttsApi.generate(formData);
+        },
+        onSuccess: (data) => {
+            closeAlert();
+            setGeneratedAudioUrl(data.audio_url);
+            showSuccess('Success!', 'Audio generated successfully!');
+            setIsGenerating(false);
+            setStartTime(null);
+        },
+        onError: (error) => {
+            closeAlert();
+            // Extract error message properly
+            let errorMessage = 'Failed to generate audio';
+            let errorTitle = 'Generation Failed';
+            
+            if (error.response?.data?.error) {
+                errorMessage = error.response.data.error;
+            } else if (error.data?.error) {
+                errorMessage = error.data.error;
+            } else if (error.message) {
+                errorMessage = error.message;
+            }
+            
+            // Special handling for service unavailable
+            if (error.status === 503) {
+                errorTitle = 'Service Unavailable';
+                showError(
+                    errorTitle,
+                    errorMessage,
+                    { width: 600, confirmButtonText: 'Understood' }
+                );
+            } else {
+                showError(errorTitle, errorMessage);
+            }
+            
+            setIsGenerating(false);
+            setStartTime(null);
+        },
+    });
+
+    // Check for TTS unavailability after mutation is declared
+    useEffect(() => {
+        // Check if we got a 503 error from generate mutation
+        if (generateMutation.error?.status === 503) {
+            setTtsUnavailable(true);
+        }
+    }, [generateMutation.error]);
 
     // Timer effect for progress tracking
     useEffect(() => {
@@ -68,39 +126,27 @@ export function VoiceCloning() {
         return () => clearInterval(interval);
     }, [isGenerating, startTime]);
 
-    // Generate speech mutation
-    const generateMutation = useMutation({
-        mutationFn: async (formData) => {
-            setIsGenerating(true);
-            setStartTime(Date.now());
-            return await xttsApi.generate(formData);
-        },
-        onSuccess: (data) => {
-            setGeneratedAudioUrl(data.audio_url);
-            toast.success('Audio generated successfully!');
-            setIsGenerating(false);
-            setStartTime(null);
-        },
-        onError: (error) => {
-            toast.error(error.response?.data?.error || 'Failed to generate audio');
-            setIsGenerating(false);
-            setStartTime(null);
-        },
-    });
-
     // Save voice mutation
     const saveVoiceMutation = useMutation({
         mutationFn: async (formData) => {
             return await xttsApi.saveVoice(formData);
         },
         onSuccess: () => {
-            toast.success('Voice saved successfully!');
+            showSuccess('Success!', 'Voice saved successfully!');
             queryClient.invalidateQueries(['xtts-voices']);
             setVoiceName('');
             setReferenceFile(null);
         },
         onError: (error) => {
-            toast.error(error.response?.data?.error || 'Failed to save voice');
+            let errorMessage = 'Failed to save voice';
+            if (error.response?.data?.error) {
+                errorMessage = error.response.data.error;
+            } else if (error.data?.error) {
+                errorMessage = error.data.error;
+            } else if (error.message) {
+                errorMessage = error.message;
+            }
+            showError('Save Failed', errorMessage);
         },
     });
 
@@ -110,32 +156,40 @@ export function VoiceCloning() {
             return await xttsApi.deleteVoice(voiceId);
         },
         onSuccess: () => {
-            toast.success('Voice deleted successfully!');
+            showSuccess('Success!', 'Voice deleted successfully!');
             queryClient.invalidateQueries(['xtts-voices']);
         },
         onError: (error) => {
-            toast.error(error.response?.data?.error || 'Failed to delete voice');
+            let errorMessage = 'Failed to delete voice';
+            if (error.response?.data?.error) {
+                errorMessage = error.response.data.error;
+            } else if (error.data?.error) {
+                errorMessage = error.data.error;
+            } else if (error.message) {
+                errorMessage = error.message;
+            }
+            showError('Delete Failed', errorMessage);
         },
     });
 
     const handleGenerate = () => {
         if (!text.trim()) {
-            toast.error('Please enter text to generate');
+            showWarning('Validation Error', 'Please enter text to generate');
             return;
         }
 
         if (!language) {
-            toast.error('Please select a language');
+            showWarning('Validation Error', 'Please select a language');
             return;
         }
 
         if (!useExistingVoice && !referenceFile) {
-            toast.error('Please upload a reference audio file');
+            showWarning('Validation Error', 'Please upload a reference audio file');
             return;
         }
 
         if (useExistingVoice && !selectedVoiceId) {
-            toast.error('Please select a saved voice');
+            showWarning('Validation Error', 'Please select a saved voice');
             return;
         }
 
@@ -167,12 +221,12 @@ export function VoiceCloning() {
 
     const handleSaveVoice = () => {
         if (!voiceName.trim()) {
-            toast.error('Please enter a voice name');
+            showWarning('Validation Error', 'Please enter a voice name');
             return;
         }
 
         if (!referenceFile) {
-            toast.error('Please upload a voice file');
+            showWarning('Validation Error', 'Please upload a voice file');
             return;
         }
 
@@ -189,7 +243,7 @@ export function VoiceCloning() {
         setRepetitionPenalty(2.0);
         setTopK(50);
         setTopP(0.85);
-        toast.success('Settings reset to defaults');
+        showSuccess('Settings Reset', 'Settings have been reset to defaults');
     };
 
     const formatTime = (seconds) => {

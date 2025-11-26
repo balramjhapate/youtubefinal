@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Download,
   FileText,
@@ -10,6 +10,7 @@ import {
   Eye,
 } from 'lucide-react';
 import { StatusBadge, Button } from '../common';
+import { VideoProgressIndicator } from './VideoProgressIndicator';
 import { truncateText, formatRelativeTime } from '../../utils/formatters';
 import { useStore } from '../../store';
 
@@ -25,7 +26,55 @@ export function VideoCard({
   onSelect,
 }) {
   const [showMenu, setShowMenu] = useState(false);
-  const { openVideoDetail } = useStore();
+  const [progress, setProgress] = useState(0);
+  const { openVideoDetail, getProcessingState, startProcessing, updateProcessingProgress, completeProcessing } = useStore();
+  
+  // Get current processing state
+  const processingState = getProcessingState(video.id);
+  
+  // Simulate progress for active processing
+  useEffect(() => {
+    if (!processingState) {
+      setProgress(0);
+      return;
+    }
+
+    const interval = setInterval(() => {
+      setProgress((prev) => {
+        // Increase progress gradually, cap at 95% until actually completed
+        if (prev < 95) {
+          return Math.min(prev + Math.random() * 3, 95);
+        }
+        return prev;
+      });
+    }, 300);
+
+    return () => clearInterval(interval);
+  }, [processingState]);
+
+  // Check if video status changed to completed
+  useEffect(() => {
+    if (processingState) {
+      const { type } = processingState;
+      let isCompleted = false;
+
+      if (type === 'download' && video.is_downloaded) {
+        isCompleted = true;
+      } else if (type === 'transcribe' && video.transcription_status === 'transcribed') {
+        isCompleted = true;
+      } else if (type === 'processAI' && video.ai_processing_status === 'processed') {
+        isCompleted = true;
+      }
+
+      if (isCompleted) {
+        setProgress(100);
+        setTimeout(() => {
+          completeProcessing(video.id);
+          setProgress(0);
+        }, 1000);
+      }
+    }
+  }, [video, processingState, completeProcessing]);
 
   const handleAction = (action, e) => {
     e.stopPropagation();
@@ -146,44 +195,94 @@ export function VideoCard({
             )}
           </div>
 
+          {/* Progress Indicators */}
+          {processingState && (
+            <div className="mt-2">
+              {processingState.type === 'download' && (
+                <VideoProgressIndicator label="Downloading video..." progress={progress} />
+              )}
+              {processingState.type === 'transcribe' && (
+                <VideoProgressIndicator label="Transcribing audio..." progress={progress} />
+              )}
+              {processingState.type === 'processAI' && (
+                <VideoProgressIndicator label="Processing with AI..." progress={progress} />
+              )}
+            </div>
+          )}
+
           {/* Action buttons - Organized grid */}
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-3">
             {/* Primary actions */}
-            {!video.is_downloaded && (
+            {!video.is_downloaded && video.status === 'success' && (
               <Button
                 size="sm"
                 variant="secondary"
                 icon={Download}
-                onClick={(e) => handleAction(onDownload, e)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  startProcessing(video.id, 'download');
+                  handleAction(onDownload, e);
+                }}
                 className="w-full"
+                disabled={!!processingState && processingState.type === 'download'}
+                loading={!!processingState && processingState.type === 'download'}
               >
-                Download
+                {processingState?.type === 'download' ? 'Downloading...' : 'Download'}
               </Button>
             )}
 
+            {/* Transcription - Show retry if failed, or button if not transcribed */}
             {(video.transcription_status === 'not_transcribed' || video.transcription_status === 'failed') && (
               <Button
                 size="sm"
                 variant={video.transcription_status === 'failed' ? 'danger' : 'secondary'}
                 icon={FileText}
-                onClick={(e) => handleAction(onTranscribe, e)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  startProcessing(video.id, 'transcribe');
+                  handleAction(onTranscribe, e);
+                }}
                 className="w-full"
+                disabled={!!processingState && processingState.type === 'transcribe'}
+                loading={!!processingState && processingState.type === 'transcribe'}
               >
                 {video.transcription_status === 'failed' ? 'Retry Transcribe' : 'Transcribe'}
               </Button>
             )}
 
-            {/* AI Summary - Show alongside other buttons */}
+            {/* Show transcribing status */}
+            {video.transcription_status === 'transcribing' && !processingState && (
+              <div className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                <FileText className="w-4 h-4 animate-pulse" />
+                Transcribing...
+              </div>
+            )}
+
+            {/* AI Summary - Show retry if failed, or button if not processed */}
             {(video.ai_processing_status === 'not_processed' || video.ai_processing_status === 'failed') && (
               <Button
                 size="sm"
                 variant={video.ai_processing_status === 'failed' ? 'danger' : 'primary'}
                 icon={Brain}
-                onClick={(e) => handleAction(onProcessAI, e)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  startProcessing(video.id, 'processAI');
+                  handleAction(onProcessAI, e);
+                }}
                 className="w-full"
+                disabled={!!processingState && processingState.type === 'processAI'}
+                loading={!!processingState && processingState.type === 'processAI'}
               >
                 {video.ai_processing_status === 'failed' ? 'Retry AI' : 'AI Summary'}
               </Button>
+            )}
+
+            {/* Show processing status */}
+            {video.ai_processing_status === 'processing' && !processingState && (
+              <div className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg bg-orange-500/20 text-orange-300 border border-orange-500/30">
+                <Brain className="w-4 h-4 animate-pulse" />
+                Processing...
+              </div>
             )}
 
             {/* Secondary actions */}

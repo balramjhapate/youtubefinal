@@ -35,6 +35,30 @@ export const useStore = create((set, get) => ({
   selectedVideoId: null,
   openVideoDetail: (id) => set({ videoDetailModalOpen: true, selectedVideoId: id }),
   closeVideoDetail: () => set({ videoDetailModalOpen: false, selectedVideoId: null }),
+
+  // Processing states tracking
+  processingVideos: {}, // { videoId: { type: 'download'|'transcribe'|'processAI', progress } }
+  startProcessing: (videoId, type) => set((state) => ({
+    processingVideos: {
+      ...state.processingVideos,
+      [videoId]: { type, progress: 0 },
+    },
+  })),
+  updateProcessingProgress: (videoId, progress) => set((state) => ({
+    processingVideos: {
+      ...state.processingVideos,
+      [videoId]: { ...state.processingVideos[videoId], progress },
+    },
+  })),
+  completeProcessing: (videoId) => set((state) => {
+    const newProcessing = { ...state.processingVideos };
+    delete newProcessing[videoId];
+    return { processingVideos: newProcessing };
+  }),
+  getProcessingState: (videoId) => {
+    const state = get();
+    return state.processingVideos[videoId] || null;
+  },
 }));
 
 export default useStore;

@@ -17,36 +17,117 @@ import { useStore } from '../../store';
 
 export function VideoList({ videos, isLoading }) {
   const queryClient = useQueryClient();
-  const { selectedVideos, toggleVideoSelection, selectAllVideos, clearSelection } = useStore();
+  const {
+    selectedVideos,
+    toggleVideoSelection,
+    selectAllVideos,
+    clearSelection,
+    startProcessing,
+    completeProcessing,
+  } = useStore();
   const [synthesizeModalOpen, setSynthesizeModalOpen] = useState(false);
   const [currentVideoId, setCurrentVideoId] = useState(null);
 
   // Mutations
   const downloadMutation = useMutation({
-    mutationFn: videosApi.download,
-    onSuccess: () => {
-      toast.success('Video downloaded successfully');
-      queryClient.invalidateQueries(['videos']);
+    mutationFn: async (videoId) => {
+      startProcessing(videoId, 'download');
+      return videosApi.download(videoId);
     },
-    onError: (error) => toast.error(error),
+    onSuccess: (data, videoId) => {
+      // Poll for completion
+      const checkInterval = setInterval(() => {
+        queryClient.invalidateQueries(['videos']);
+        queryClient.invalidateQueries(['video', videoId]);
+        const video = videos?.find((v) => v.id === videoId);
+        if (video?.is_downloaded) {
+          clearInterval(checkInterval);
+          completeProcessing(videoId);
+          toast.success('Video downloaded successfully');
+        }
+      }, 1000);
+
+      // Timeout after 60 seconds
+      setTimeout(() => {
+        clearInterval(checkInterval);
+        completeProcessing(videoId);
+      }, 60000);
+    },
+    onError: (error, videoId) => {
+      completeProcessing(videoId);
+      toast.error(error?.response?.data?.error || 'Download failed');
+    },
   });
 
   const transcribeMutation = useMutation({
-    mutationFn: videosApi.transcribe,
-    onSuccess: () => {
+    mutationFn: async (videoId) => {
+      startProcessing(videoId, 'transcribe');
+      return videosApi.transcribe(videoId);
+    },
+    onSuccess: (data, videoId) => {
       toast.success('Transcription started');
       queryClient.invalidateQueries(['videos']);
+      queryClient.invalidateQueries(['video', videoId]);
+      
+      // Poll for completion
+      const checkInterval = setInterval(() => {
+        queryClient.invalidateQueries(['videos']);
+        queryClient.invalidateQueries(['video', videoId]);
+        const video = videos?.find((v) => v.id === videoId);
+        if (video?.transcription_status === 'transcribed' || video?.transcription_status === 'failed') {
+          clearInterval(checkInterval);
+          completeProcessing(videoId);
+          if (video.transcription_status === 'transcribed') {
+            toast.success('Transcription completed');
+          }
+        }
+      }, 2000);
+
+      // Timeout after 5 minutes
+      setTimeout(() => {
+        clearInterval(checkInterval);
+        completeProcessing(videoId);
+      }, 300000);
     },
-    onError: (error) => toast.error(error),
+    onError: (error, videoId) => {
+      completeProcessing(videoId);
+      toast.error(error?.response?.data?.error || 'Transcription failed');
+    },
   });
 
   const processAIMutation = useMutation({
-    mutationFn: videosApi.processAI,
-    onSuccess: () => {
-      toast.success('AI processing completed');
-      queryClient.invalidateQueries(['videos']);
+    mutationFn: async (videoId) => {
+      startProcessing(videoId, 'processAI');
+      return videosApi.processAI(videoId);
     },
-    onError: (error) => toast.error(error),
+    onSuccess: (data, videoId) => {
+      queryClient.invalidateQueries(['videos']);
+      queryClient.invalidateQueries(['video', videoId]);
+      
+      // Poll for completion
+      const checkInterval = setInterval(() => {
+        queryClient.invalidateQueries(['videos']);
+        queryClient.invalidateQueries(['video', videoId]);
+        const video = videos?.find((v) => v.id === videoId);
+        if (video?.ai_processing_status === 'processed' || video?.ai_processing_status === 'failed') {
+          clearInterval(checkInterval);
+          completeProcessing(videoId);
+          if (video.ai_processing_status === 'processed') {
+            toast.success('AI processing completed');
+          }
+        }
+      }, 2000);
+
+      // Timeout after 2 minutes
+      setTimeout(() => {
+        clearInterval(checkInterval);
+        completeProcessing(videoId);
+      }, 120000);
+    },
+    onError: (error, videoId) => {
+      completeProcessing(videoId);
+      toast.error(error?.response?.data?.error || 'AI processing failed');
+    },
   });
 
   const generatePromptMutation = useMutation({
