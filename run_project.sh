@@ -149,6 +149,26 @@ else
     touch venv/.deps_installed
     echo "✓ Python dependencies installed successfully."
 fi
+
+# Ensure PyTorch is installed with GPU support (MPS for Mac, CUDA for NVIDIA)
+echo "Installing/updating PyTorch with GPU support..."
+pip install torch torchvision torchaudio > /dev/null 2>&1
+if [ $? -eq 0 ]; then
+    echo "✓ PyTorch installed/updated successfully"
+else
+    echo "⚠️  Warning: PyTorch installation had issues, but continuing..."
+fi
+
+# Install AI Provider SDKs (for metadata generation and AI features)
+echo "Installing AI Provider SDKs..."
+pip install google-generativeai openai anthropic > /dev/null 2>&1
+if [ $? -eq 0 ]; then
+    echo "✓ AI Provider SDKs installed/updated successfully"
+else
+    echo "⚠️  Warning: AI Provider SDKs installation had issues, but continuing..."
+    echo "   Note: REST API fallback will be used if SDKs are not available"
+fi
+
 cd ../..
 
 # Install npm dependencies
