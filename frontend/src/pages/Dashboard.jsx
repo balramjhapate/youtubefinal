@@ -8,10 +8,12 @@ import {
   Volume2,
   AlertCircle,
   CheckCircle,
+  Loader2,
 } from 'lucide-react';
 import { PageLoader } from '../components/common';
 import { VideoList } from '../components/video';
 import { settingsApi, videosApi } from '../api';
+import { isVideoProcessing } from '../utils/formatters';
 
 function StatCard({ icon: Icon, label, value, color }) {
   const colorClasses = {
@@ -53,6 +55,10 @@ export function Dashboard() {
     queryFn: () => videosApi.getAll(),
   });
 
+  // Count processing videos
+  const processingVideos = videos?.filter(isVideoProcessing) || [];
+  const processingCount = processingVideos.length;
+
   if (statsLoading && videosLoading) {
     return <PageLoader />;
   }
@@ -66,6 +72,23 @@ export function Dashboard() {
           Overview of your RedNote video collection
         </p>
       </div>
+
+      {/* Processing Alert */}
+      {processingCount > 0 && (
+        <div className="glass-card p-4 bg-yellow-500/10 border border-yellow-500/30">
+          <div className="flex items-center gap-3">
+            <Loader2 className="w-5 h-5 text-yellow-400 animate-spin" />
+            <div>
+              <p className="text-sm font-medium text-yellow-400">
+                {processingCount} video{processingCount !== 1 ? 's' : ''} currently processing
+              </p>
+              <p className="text-xs text-yellow-300/70 mt-0.5">
+                Reprocess buttons are disabled while videos are being processed
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Stats Grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

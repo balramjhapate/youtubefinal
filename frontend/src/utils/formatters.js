@@ -90,3 +90,14 @@ export const formatFileSize = (bytes) => {
 
   return `${size.toFixed(1)} ${units[unitIndex]}`;
 };
+
+// Check if a video is currently processing
+export const isVideoProcessing = (video) => {
+  if (!video) return false;
+  return (
+    video.transcription_status === 'transcribing' ||
+    video.ai_processing_status === 'processing' ||
+    video.script_status === 'generating' ||
+    video.synthesis_status === 'synthesizing'
+  );
+};

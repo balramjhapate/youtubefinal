@@ -139,6 +139,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # Configure these settings to use the No-Code Architects Toolkit API
 # for fast media processing (transcription, captioning, video editing, etc.)
 # Documentation: https://github.com/stephengpope/no-code-architects-toolkit
+# NCA Toolkit API Configuration (Optional - for comparison with Whisper)
 NCA_API_URL = os.environ.get('NCA_API_URL', 'http://localhost:8080')  # Base URL of NCA Toolkit API
 NCA_API_KEY = os.environ.get('NCA_API_KEY', 'my_secret_key_123')  # API key for authentication (matches Docker container)
 NCA_API_TIMEOUT = int(os.environ.get('NCA_API_TIMEOUT', '600'))  # Request timeout in seconds (10 minutes)
@@ -146,6 +147,23 @@ NCA_API_TIMEOUT = int(os.environ.get('NCA_API_TIMEOUT', '600'))  # Request timeo
 NCA_API_ENABLED = os.environ.get('NCA_API_ENABLED', 'true').lower() == 'true'  # Enable/disable NCA API
 
 # If NCA_API_ENABLED is False, will fallback to local processing (Whisper, ffmpeg)
+
+# Whisper Transcription Configuration (Primary method)
+WHISPER_MODEL_SIZE = os.environ.get('WHISPER_MODEL_SIZE', 'base')  # tiny, base, small, medium, large
+# Model size recommendations:
+#   - tiny: Fastest, least accurate (~1GB RAM, ~32x realtime)
+#   - base: Good balance (~1GB RAM, ~16x realtime) - RECOMMENDED
+#   - small: Better accuracy (~2GB RAM, ~6x realtime)
+#   - medium: High accuracy (~5GB RAM, ~2x realtime)
+#   - large: Best accuracy (~10GB RAM, ~1x realtime)
+
+WHISPER_DEVICE = os.environ.get('WHISPER_DEVICE', 'cpu')  # 'cpu' or 'cuda' (GPU)
+WHISPER_CONFIDENCE_THRESHOLD = float(os.environ.get('WHISPER_CONFIDENCE_THRESHOLD', '-1.5'))  # Confidence threshold for retry
+WHISPER_RETRY_WITH_LARGER_MODEL = os.environ.get('WHISPER_RETRY_WITH_LARGER_MODEL', 'true').lower() == 'true'  # Auto-retry low confidence segments
+WHISPERX_ENABLED = os.environ.get('WHISPERX_ENABLED', 'false').lower() == 'true'  # Enable WhisperX for better alignment/diarization
+
+# Dual Transcription Mode (for comparison)
+DUAL_TRANSCRIPTION_ENABLED = os.environ.get('DUAL_TRANSCRIPTION_ENABLED', 'true').lower() == 'true'  # Run both NCA and Whisper
 
 # Jazzmin Settings
 JAZZMIN_SETTINGS = {

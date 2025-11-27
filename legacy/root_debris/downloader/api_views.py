@@ -967,6 +967,7 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
 
         except Exception as e:
             import traceback
+<<<<<<< HEAD
             error_msg = str(e)
             traceback.print_exc()
             
@@ -985,11 +986,33 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
             
             video.transcription_status = 'failed'
             video.transcript_error_message = error_msg
+=======
+            error_details = str(e)
+            print(f"Transcription exception: {error_details}")
+            traceback.print_exc()
+            
+            # Provide more detailed error message
+            if 'whisper' in error_details.lower():
+                error_details = f"Whisper transcription error: {error_details}. Please check if Whisper is properly installed."
+            elif 'ffmpeg' in error_details.lower():
+                error_details = f"FFmpeg error: {error_details}. Please ensure ffmpeg is installed."
+            elif 'file' in error_details.lower() or 'not found' in error_details.lower():
+                error_details = f"File error: {error_details}. Please ensure the video file exists."
+            else:
+                error_details = f"Transcription failed: {error_details}"
+            
+            video.transcription_status = 'failed'
+            video.transcript_error_message = error_details
+>>>>>>> dd01845a9edf790183474bf32e70509ec6ff3925
             video.save()
 
             return Response({
                 "status": "failed",
+<<<<<<< HEAD
                 "error": error_msg,
+=======
+                "error": error_details,
+>>>>>>> dd01845a9edf790183474bf32e70509ec6ff3925
                 "step": "transcription"
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
@@ -1788,6 +1811,7 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                                                 traceback.print_exc()
                                                 video.synthesis_error = error_msg
                                                 video.save()
+<<<<<<< HEAD
                                         else:
                                             error_msg = 'ffmpeg not found or video file not available'
                                             print(f"ERROR: {error_msg}")
@@ -1834,6 +1858,72 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                 "steps_status": steps_status,
                 "warnings": [] if not has_failures else ["Some processing steps failed. Check individual step status."]
             })
+=======
+                            else:
+                                error_msg = 'TTS service not available. Please install Coqui TTS: pip install TTS (requires Python 3.9-3.11, NOT 3.12+)'
+                                print(f"ERROR: {error_msg}")
+                                video.synthesis_status = 'failed'
+                                video.synthesis_error = error_msg
+                                video.save()
+                        except Exception as e:
+                            print(f"TTS generation error during reprocess: {e}")
+                            import traceback
+                            traceback.print_exc()
+                            video.synthesis_status = 'failed'
+                            video.synthesis_error = str(e)
+                            video.save()
+                    
+                    return Response({
+                        "status": "success",
+                        "message": "Video reprocessing completed successfully.",
+                        "video_id": video.id
+                    })
+                else:
+                    # Get detailed error message
+                    error_msg = result.get('error', '')
+                    if not error_msg or error_msg == 'Unknown error':
+                        # Try to get more specific error information
+                        if 'segments' in result and not result.get('segments'):
+                            error_msg = 'Transcription completed but no segments were generated. The audio may be too short or contain no speech.'
+                        elif 'language' in result and not result.get('language'):
+                            error_msg = 'Could not detect language in the audio. Please ensure the video contains clear speech.'
+                        else:
+                            error_msg = 'Transcription failed. Please check if the video file is valid and contains audio.'
+                    
+                    video.transcription_status = 'failed'
+                    video.transcript_error_message = error_msg
+                    video.save()
+                    return Response({
+                        "status": "failed",
+                        "error": error_msg,
+                        "step": "transcription"
+                    }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                    
+            except Exception as e:
+                import traceback
+                error_details = str(e)
+                print(f"Transcription exception during reprocess: {error_details}")
+                traceback.print_exc()
+                
+                # Provide more detailed error message
+                if 'whisper' in error_details.lower():
+                    error_details = f"Whisper transcription error: {error_details}. Please check if Whisper is properly installed."
+                elif 'ffmpeg' in error_details.lower():
+                    error_details = f"FFmpeg error: {error_details}. Please ensure ffmpeg is installed."
+                elif 'file' in error_details.lower() or 'not found' in error_details.lower():
+                    error_details = f"File error: {error_details}. Please ensure the video file exists."
+                else:
+                    error_details = f"Transcription failed: {error_details}"
+                
+                video.transcription_status = 'failed'
+                video.transcript_error_message = error_details
+                video.save()
+                return Response({
+                    "status": "failed",
+                    "error": error_details,
+                    "step": "transcription"
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+>>>>>>> dd01845a9edf790183474bf32e70509ec6ff3925
             
         except Exception as e:
             print(f"Error during reprocess: {e}")

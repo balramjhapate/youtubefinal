@@ -162,20 +162,39 @@ class VideoDownload(models.Model):
     ai_tags = models.CharField(max_length=500, blank=True, help_text="AI-generated tags (comma-separated)")
     ai_error_message = models.TextField(blank=True, help_text="AI processing error message if failed")
     
-    # Transcription
+    # Transcription (NCA-based - legacy)
     transcription_status = models.CharField(
         max_length=20,
         choices=TRANSCRIPTION_STATUS_CHOICES,
         default='not_transcribed',
-        help_text="Transcription status"
+        help_text="NCA Transcription status"
     )
-    transcript = models.TextField(blank=True, help_text="Full transcript of video speech/audio WITH timestamps (00:00:00 format)")
-    transcript_without_timestamps = models.TextField(blank=True, help_text="Full transcript of video speech/audio WITHOUT timestamps (plain text)")
-    transcript_hindi = models.TextField(blank=True, help_text="Hindi translation of the transcript (without timestamps)")
-    transcript_language = models.CharField(max_length=10, blank=True, help_text="Detected language of transcript")
-    transcript_started_at = models.DateTimeField(blank=True, null=True, help_text="When transcription started")
-    transcript_processed_at = models.DateTimeField(blank=True, null=True, help_text="When transcription was completed")
-    transcript_error_message = models.TextField(blank=True, help_text="Transcription error message if failed")
+    transcript = models.TextField(blank=True, help_text="NCA: Full transcript WITH timestamps (00:00:00 format)")
+    transcript_without_timestamps = models.TextField(blank=True, help_text="NCA: Full transcript WITHOUT timestamps (plain text)")
+    transcript_hindi = models.TextField(blank=True, help_text="NCA: Hindi translation of the transcript")
+    transcript_language = models.CharField(max_length=10, blank=True, help_text="NCA: Detected language of transcript")
+    transcript_started_at = models.DateTimeField(blank=True, null=True, help_text="When NCA transcription started")
+    transcript_processed_at = models.DateTimeField(blank=True, null=True, help_text="When NCA transcription was completed")
+    transcript_error_message = models.TextField(blank=True, help_text="NCA: Transcription error message if failed")
+    
+    # Whisper Transcription (new - for comparison)
+    whisper_transcription_status = models.CharField(
+        max_length=20,
+        choices=TRANSCRIPTION_STATUS_CHOICES,
+        default='not_transcribed',
+        help_text="Whisper Transcription status"
+    )
+    whisper_transcript = models.TextField(blank=True, help_text="Whisper: Full transcript WITH timestamps (00:00:00 format)")
+    whisper_transcript_without_timestamps = models.TextField(blank=True, help_text="Whisper: Full transcript WITHOUT timestamps (plain text)")
+    whisper_transcript_hindi = models.TextField(blank=True, help_text="Whisper: Hindi translation of the transcript")
+    whisper_transcript_language = models.CharField(max_length=10, blank=True, help_text="Whisper: Detected language (ISO code)")
+    whisper_transcript_segments = models.JSONField(blank=True, null=True, help_text="Whisper: Raw segments with timestamps and confidence scores")
+    whisper_transcript_started_at = models.DateTimeField(blank=True, null=True, help_text="When Whisper transcription started")
+    whisper_transcript_processed_at = models.DateTimeField(blank=True, null=True, help_text="When Whisper transcription was completed")
+    whisper_transcript_error_message = models.TextField(blank=True, help_text="Whisper: Transcription error message if failed")
+    whisper_model_used = models.CharField(max_length=20, blank=True, help_text="Whisper model size used (tiny/base/small/medium/large)")
+    whisper_confidence_avg = models.FloatField(blank=True, null=True, help_text="Whisper: Average confidence score across all segments")
+    
     
     # Timestamps
     created_at = models.DateTimeField(default=timezone.now, help_text="When the download was requested")
