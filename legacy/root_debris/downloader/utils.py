@@ -2534,12 +2534,269 @@ def get_clean_script_for_tts(formatted_script):
     # Join all clean lines
     clean_script = '\n'.join(clean_lines).strip()
     
-    # ALWAYS add CTA at the end if not already present
-    cta_text = "आपकी मम्मी कसम सब्सक्राइब"
-    if clean_script and cta_text not in clean_script:
-        clean_script = clean_script + "\n\n" + cta_text
+    # ALWAYS add CTA at the end - append it properly formatted
+    cta_text = "आपकी मम्मी कसम सब्सक्राइब जरूर करे"
+    partial_cta = "आपकी मम्मी कसम सब्सक्राइब"
+    
+    if clean_script:
+        # Check if CTA already exists at the end
+        script_stripped = clean_script.strip()
+        ends_with_full_cta = script_stripped.endswith(cta_text)
+        ends_with_partial_cta = script_stripped.endswith(partial_cta) and not ends_with_full_cta
+        
+        # If CTA is already at the end, keep it as is
+        if ends_with_full_cta:
+            return clean_script
+        
+        # Remove CTA from anywhere in the script (to avoid duplicates)
+        # Replace full CTA first
+        if cta_text in clean_script:
+            # Remove it but preserve the rest of the content
+            clean_script = clean_script.replace(cta_text, "").strip()
+        
+        # Remove partial CTA if full CTA is not present
+        if partial_cta in clean_script and cta_text not in clean_script:
+            clean_script = clean_script.replace(partial_cta, "").strip()
+        
+        # Clean up any extra whitespace/newlines
+        clean_script = clean_script.strip()
+        
+        # Add CTA at the end with proper spacing
+        if clean_script:
+            # Add space before CTA if script doesn't end with punctuation
+            if not clean_script.endswith(('।', '.', '!', '?', ':', ';')):
+                clean_script = clean_script + " " + cta_text
+            else:
+                clean_script = clean_script + " " + cta_text
+        else:
+            clean_script = cta_text
+    else:
+        clean_script = cta_text
     
     return clean_script
+
+
+def generate_video_metadata(video_download):
+    """
+    Generate title, description, and tags for video using AI
+    
+    Args:
+        video_download: VideoDownload model instance
+        
+    Returns:
+        dict: {
+            'title': str,
+            'description': str,
+            'tags': str (comma-separated),
+            'status': str ('success' or 'failed'),
+            'error': str (if failed)
+        }
+    """
+    try:
+        from .models import AIProviderSettings
+        from django.utils import timezone
+        
+        # Check if AI provider is configured
+        settings_obj = AIProviderSettings.objects.first()
+        if not settings_obj or not settings_obj.api_key:
+            return {
+                'title': '',
+                'description': '',
+                'tags': '',
+                'status': 'failed',
+                'error': 'AI provider not configured. Please add API key in settings.'
+            }
+        
+        # Get video content
+        original_title = video_download.title or video_download.original_title or 'Video'
+        original_description = video_download.description or video_download.original_description or ''
+        transcript = video_download.transcript_without_timestamps or video_download.transcript or ''
+        transcript_hindi = video_download.transcript_hindi or ''
+        ai_summary = video_download.ai_summary or ''
+        
+        # Create prompt for metadata generation
+        system_prompt = """You are a content creator assistant. Generate engaging metadata for a Hindi video.
+        
+OUTPUT FORMAT (JSON only):
+{
+    "title": "Engaging Hindi title (50-60 characters, catchy and SEO-friendly)",
+    "description": "Detailed Hindi description (2-3 paragraphs, 200-300 words, includes key points and call-to-action)",
+    "tags": "tag1, tag2, tag3, tag4, tag5" (5-10 relevant tags in English, comma-separated)
+}
+
+REQUIREMENTS:
+1. Title must be in HINDI (Devanagari script), engaging and click-worthy
+2. Description must be in HINDI (Devanagari script), detailed and informative
+3. Tags must be in ENGLISH, relevant keywords for SEO
+4. Make content engaging and optimized for YouTube/social media"""
+
+        user_message = f"""Original Title: {original_title}
+Original Description: {original_description}
+Video Summary: {ai_summary}
+Hindi Transcript: {transcript_hindi[:1500] if transcript_hindi else ''}
+English Transcript: {transcript[:1500] if transcript else ''}
+
+Generate engaging Hindi title, description, and English tags for this video."""
+
+        provider = settings_obj.provider
+        api_key = settings_obj.api_key
+        
+        # Call AI API
+        result = None
+        if provider == 'gemini':
+            # Use REST API instead of SDK to avoid dependency issues
+            try:
+                model_names = ['models/gemini-2.0-flash', 'models/gemini-2.5-flash', 'models/gemini-pro']
+                full_prompt = f"{system_prompt}\n\n{user_message}"
+                
+                for model_name in model_names:
+                    try:
+                        url = f"https://generativelanguage.googleapis.com/v1beta/{model_name}:generateContent?key={api_key}"
+                        headers = {'Content-Type': 'application/json'}
+                        payload = {
+                            "contents": [{
+                                "parts": [{"text": full_prompt}]
+                            }]
+                        }
+                        
+                        response = requests.post(url, json=payload, headers=headers, timeout=60)
+                        response.raise_for_status()
+                        
+                        data = response.json()
+                        if 'candidates' in data and len(data['candidates']) > 0:
+                            candidate = data['candidates'][0]
+                            if 'content' in candidate and 'parts' in candidate['content']:
+                                text_parts = [part.get('text', '') for part in candidate['content']['parts']]
+                                result_text = ''.join(text_parts).strip()
+                                if result_text:
+                                    break
+                    except requests.exceptions.RequestException as e:
+                        if hasattr(e, 'response') and e.response is not None:
+                            if e.response.status_code == 404:
+                                continue  # Try next model
+                        # If last model or non-404 error, raise
+                        if model_name == model_names[-1]:
+                            raise
+                        continue
+                
+                if not result_text:
+                    return {
+                        'title': '',
+                        'description': '',
+                        'tags': '',
+                        'status': 'failed',
+                        'error': 'Gemini API returned empty response'
+                    }
+            except Exception as e:
+                return {
+                    'title': '',
+                    'description': '',
+                    'tags': '',
+                    'status': 'failed',
+                    'error': f'Gemini API error: {str(e)}'
+                }
+        elif provider == 'openai':
+            try:
+                from openai import OpenAI
+                client = OpenAI(api_key=api_key)
+                response = client.chat.completions.create(
+                    model="gpt-4",
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_message}
+                    ],
+                    temperature=0.7
+                )
+                result_text = response.choices[0].message.content.strip()
+            except ImportError:
+                # Fallback to old API format
+                import openai
+                openai.api_key = api_key
+                response = openai.ChatCompletion.create(
+                    model="gpt-4",
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_message}
+                    ],
+                    temperature=0.7
+                )
+                result_text = response.choices[0].message.content.strip()
+        elif provider == 'anthropic':
+            try:
+                import anthropic
+                client = anthropic.Anthropic(api_key=api_key)
+                message = client.messages.create(
+                    model="claude-3-sonnet-20240229",
+                    max_tokens=1000,
+                    system=system_prompt,
+                    messages=[{"role": "user", "content": user_message}]
+                )
+                result_text = message.content[0].text.strip()
+            except ImportError:
+                return {
+                    'title': '',
+                    'description': '',
+                    'tags': '',
+                    'status': 'failed',
+                    'error': 'anthropic package not installed. Run: pip install anthropic'
+                }
+            except Exception as e:
+                return {
+                    'title': '',
+                    'description': '',
+                    'tags': '',
+                    'status': 'failed',
+                    'error': f'Anthropic API error: {str(e)}'
+                }
+        else:
+            return {
+                'title': '',
+                'description': '',
+                'tags': '',
+                'status': 'failed',
+                'error': f'Unsupported AI provider: {provider}'
+            }
+        
+        # Parse JSON response
+        try:
+            # Extract JSON from response (handle cases where AI adds extra text)
+            json_match = re.search(r'\{.*\}', result_text, re.DOTALL)
+            if json_match:
+                metadata = json.loads(json_match.group())
+            else:
+                metadata = json.loads(result_text)
+            
+            return {
+                'title': metadata.get('title', ''),
+                'description': metadata.get('description', ''),
+                'tags': metadata.get('tags', ''),
+                'status': 'success',
+                'error': None
+            }
+        except json.JSONDecodeError:
+            # Fallback: try to extract fields manually
+            title_match = re.search(r'"title":\s*"([^"]+)"', result_text)
+            desc_match = re.search(r'"description":\s*"([^"]+)"', result_text, re.DOTALL)
+            tags_match = re.search(r'"tags":\s*"([^"]+)"', result_text)
+            
+            return {
+                'title': title_match.group(1) if title_match else '',
+                'description': desc_match.group(1) if desc_match else '',
+                'tags': tags_match.group(1) if tags_match else '',
+                'status': 'success',
+                'error': None
+            }
+        
+    except Exception as e:
+        error_msg = str(e)
+        print(f"Error generating video metadata: {error_msg}")
+        return {
+            'title': '',
+            'description': '',
+            'tags': '',
+            'status': 'failed',
+            'error': error_msg
+        }
 
 
 def generate_hindi_script(video_download):

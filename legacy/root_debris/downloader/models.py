@@ -18,10 +18,50 @@ class AIProviderSettings(models.Model):
     def __str__(self):
         return f"{self.provider} settings"
 
+
+class CloudinarySettings(models.Model):
+    """Store Cloudinary configuration for video uploads."""
+    cloud_name = models.CharField(max_length=255, blank=True, help_text="Cloudinary cloud name")
+    api_key = models.CharField(max_length=255, blank=True, help_text="Cloudinary API key")
+    api_secret = models.CharField(max_length=255, blank=True, help_text="Cloudinary API secret")
+    enabled = models.BooleanField(default=False, help_text="Enable Cloudinary uploads")
+
+    class Meta:
+        verbose_name = "Cloudinary Setting"
+        verbose_name_plural = "Cloudinary Settings"
+
+    def __str__(self):
+        return f"Cloudinary settings ({'enabled' if self.enabled else 'disabled'})"
+
+
+class GoogleSheetsSettings(models.Model):
+    """Store Google Sheets configuration for tracking."""
+    spreadsheet_id = models.CharField(max_length=255, blank=True, help_text="Google Sheets spreadsheet ID")
+    sheet_name = models.CharField(max_length=255, default='Sheet1', help_text="Sheet name to write data to")
+    credentials_json = models.TextField(blank=True, help_text="Google Service Account JSON credentials")
+    enabled = models.BooleanField(default=False, help_text="Enable Google Sheets tracking")
+
+    class Meta:
+        verbose_name = "Google Sheets Setting"
+        verbose_name_plural = "Google Sheets Settings"
+
+    def __str__(self):
+        return f"Google Sheets settings ({'enabled' if self.enabled else 'disabled'})"
+
 class ClonedVoice(models.Model):
     name = models.CharField(max_length=100)
     file = models.FileField(upload_to='cloned_voices/')
+    is_default = models.BooleanField(default=False, help_text="Default voice used for video TTS generation")
     created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-is_default', '-created_at']
+
+    def save(self, *args, **kwargs):
+        # Ensure only one default voice exists
+        if self.is_default:
+            ClonedVoice.objects.filter(is_default=True).exclude(pk=self.pk).update(is_default=False)
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return self.name
@@ -216,3 +256,14 @@ class VideoDownload(models.Model):
     )
     review_notes = models.TextField(blank=True, help_text="Review notes or feedback")
     reviewed_at = models.DateTimeField(blank=True, null=True, help_text="When video was reviewed")
+    
+    # Cloudinary Upload
+    cloudinary_url = models.URLField(max_length=1000, blank=True, help_text="Cloudinary URL for final processed video")
+    cloudinary_uploaded_at = models.DateTimeField(blank=True, null=True, help_text="When video was uploaded to Cloudinary")
+    
+    # Generated Metadata (for Google Sheets)
+    generated_title = models.CharField(max_length=500, blank=True, help_text="AI-generated title for video")
+    generated_description = models.TextField(blank=True, help_text="AI-generated description for video")
+    generated_tags = models.CharField(max_length=1000, blank=True, help_text="AI-generated tags (comma-separated)")
+    google_sheets_synced = models.BooleanField(default=False, help_text="Whether data has been synced to Google Sheets")
+    google_sheets_synced_at = models.DateTimeField(blank=True, null=True, help_text="When data was synced to Google Sheets")

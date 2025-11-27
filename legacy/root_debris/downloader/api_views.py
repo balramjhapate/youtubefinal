@@ -2,6 +2,7 @@
 REST API Views for RedNote Downloader
 """
 import os
+import logging
 from django.utils import timezone
 from django.db.models import Count, Q
 from rest_framework import viewsets, status
@@ -9,18 +10,23 @@ from rest_framework.decorators import api_view, action
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
-from .models import VideoDownload, AIProviderSettings
+logger = logging.getLogger(__name__)
+
+from .models import VideoDownload, AIProviderSettings, CloudinarySettings, GoogleSheetsSettings
 from .serializers import (
     VideoDownloadSerializer, VideoDownloadListSerializer,
     AIProviderSettingsSerializer, VideoExtractSerializer,
-    VideoTranscribeSerializer, BulkActionSerializer, DashboardStatsSerializer
+    VideoTranscribeSerializer, BulkActionSerializer, DashboardStatsSerializer,
+    CloudinarySettingsSerializer, GoogleSheetsSettingsSerializer
 )
 from .utils import (
     perform_extraction, extract_video_id, detect_video_source, translate_text,
     transcribe_video, download_file,
     process_video_with_ai, get_video_duration,
-    calculate_tts_parameters, generate_hindi_script
+    calculate_tts_parameters, generate_hindi_script, generate_video_metadata
 )
+from .cloudinary_service import upload_video_file
+from .google_sheets_service import add_video_to_sheet
 
 
 class VideoDownloadViewSet(viewsets.ModelViewSet):
@@ -640,27 +646,55 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                             
                             # Use default Hindi speaker or get from voice profile
                             speaker_wav = None
-                            if video.voice_profile and video.voice_profile.reference_audio:
-                                speaker_wav = video.voice_profile.reference_audio.path
+                            if video.voice_profile and video.voice_profile.file:
+                                speaker_wav = video.voice_profile.file.path
+                            
+                            # If no voice profile, try to get default voice from ClonedVoice model
+                            if not speaker_wav:
+                                from .models import ClonedVoice
+                                default_voice = ClonedVoice.objects.filter(is_default=True).first()
+                                if not default_voice:
+                                    # Try to get any available voice as fallback
+                                    default_voice = ClonedVoice.objects.first()
+                                
+                                if default_voice and default_voice.file:
+                                    try:
+                                        speaker_wav = default_voice.file.path
+                                        # Verify file exists and is accessible
+                                        if not os.path.exists(speaker_wav):
+                                            logger.error(f"Voice file not found: {speaker_wav}")
+                                            speaker_wav = None
+                                        else:
+                                            logger.info(f"Using default voice profile: {default_voice.name} (file: {speaker_wav})")
+                                    except Exception as e:
+                                        logger.error(f"Error accessing voice file: {str(e)}")
+                                        speaker_wav = None
                             
                             if not speaker_wav:
-                                # Use default speaker (you may need to provide a default Hindi speaker file)
-                                # For now, we'll skip if no voice profile
-                                print("No voice profile available, skipping TTS generation")
+                                # No voice profile available at all
+                                logger.error("No voice profile available, skipping TTS generation")
                                 video.synthesis_status = 'failed'
-                                video.synthesis_error = 'No voice profile available for TTS'
+                                video.synthesis_error = 'No voice profile available for TTS. Please upload a voice sample in Voice Cloning section and set it as default.'
                                 video.save()
                             else:
                                 # Generate TTS audio
-                                service.generate_speech(
-                                    text=clean_script,
-                                    speaker_wav_path=speaker_wav,
-                                    language='hi',
-                                    output_path=temp_audio_path,
-                                    speed=video.tts_speed,
-                                    temperature=video.tts_temperature,
-                                    repetition_penalty=video.tts_repetition_penalty
-                                )
+                                try:
+                                    service.generate_speech(
+                                        text=clean_script,
+                                        speaker_wav_path=speaker_wav,
+                                        language='hi',
+                                        output_path=temp_audio_path,
+                                        speed=video.tts_speed,
+                                        temperature=video.tts_temperature,
+                                        repetition_penalty=video.tts_repetition_penalty
+                                    )
+                                except Exception as e:
+                                    error_msg = f"TTS generation failed: {str(e)}"
+                                    logger.error(error_msg, exc_info=True)
+                                    video.synthesis_status = 'failed'
+                                    video.synthesis_error = error_msg
+                                    video.save()
+                                    raise  # Re-raise to be caught by outer exception handler
                                 
                                 # Adjust audio duration to match video duration if available
                                 if video.duration and os.path.exists(temp_audio_path):
@@ -696,9 +730,10 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                                 
                                 print(f"TTS audio generated successfully for video {video.pk}")
                         else:
-                            print("TTS not available, skipping audio generation")
+                            error_msg = 'TTS service not available. Please install Coqui TTS: pip install TTS (requires Python 3.9-3.11, NOT 3.12+)'
+                            print(f"ERROR: {error_msg}")
                             video.synthesis_status = 'failed'
-                            video.synthesis_error = 'TTS service not available'
+                            video.synthesis_error = error_msg
                             video.save()
                     except Exception as e:
                         print(f"TTS generation error: {e}")
@@ -809,6 +844,43 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                                                 os.unlink(temp_final_path)
                                                 print(f"✓ Step 5b (ffmpeg) completed: Final video with new audio created: {final_video_url}")
                                                 print(f"✓ Video set to 'pending_review' status - ready for review")
+                                                
+                                                # Generate metadata, upload to Cloudinary, and sync to Google Sheets
+                                                try:
+                                                    # Generate metadata using AI
+                                                    metadata_result = generate_video_metadata(video)
+                                                    if metadata_result.get('status') == 'success':
+                                                        video.generated_title = metadata_result.get('title', '')
+                                                        video.generated_description = metadata_result.get('description', '')
+                                                        video.generated_tags = metadata_result.get('tags', '')
+                                                        print(f"✓ Generated metadata: {video.generated_title[:50]}...")
+                                                    else:
+                                                        print(f"⚠ Metadata generation failed: {metadata_result.get('error', 'Unknown error')}")
+                                                    
+                                                    # Upload to Cloudinary if enabled
+                                                    cloudinary_result = upload_video_file(video.final_processed_video)
+                                                    if cloudinary_result:
+                                                        video.cloudinary_url = cloudinary_result.get('secure_url') or cloudinary_result.get('url', '')
+                                                        video.cloudinary_uploaded_at = timezone.now()
+                                                        print(f"✓ Uploaded to Cloudinary: {video.cloudinary_url[:50]}...")
+                                                    else:
+                                                        print("⚠ Cloudinary upload skipped or failed")
+                                                    
+                                                    # Save video with metadata and Cloudinary URL
+                                                    video.save()
+                                                    
+                                                    # Add to Google Sheets if enabled
+                                                    sheet_result = add_video_to_sheet(video, video.cloudinary_url)
+                                                    if sheet_result and sheet_result.get('success'):
+                                                        print(f"✓ Added to Google Sheets")
+                                                    else:
+                                                        error_msg = sheet_result.get('error', 'Unknown error') if sheet_result else 'Google Sheets not configured'
+                                                        print(f"⚠ Google Sheets sync failed: {error_msg}")
+                                                        logger.warning(f"Google Sheets sync failed for video {video.id}: {error_msg}")
+                                                except Exception as e:
+                                                    print(f"⚠ Error in post-processing (Cloudinary/Sheets): {str(e)}")
+                                                    import traceback
+                                                    traceback.print_exc()
                                             else:
                                                 error_msg = f"ffmpeg combine failed: {result.stderr[:500] if result.stderr else 'Unknown error'}"
                                                 print(f"✗ Step 5b (ffmpeg) failed: {error_msg}")
@@ -998,6 +1070,99 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
         })
 
     @action(detail=True, methods=['post'])
+    def upload_and_sync(self, request, pk=None):
+        """Manually trigger Cloudinary upload and Google Sheets sync for an existing video"""
+        try:
+            video = self.get_object()
+            
+            if not video.final_processed_video and not video.final_processed_video_url:
+                return Response({
+                    "error": "Video has no final processed video. Please process the video first."
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            results = {
+                'metadata_generated': False,
+                'cloudinary_uploaded': False,
+                'google_sheets_synced': False,
+                'errors': []
+            }
+            
+            # Generate metadata if not already generated
+            if not video.generated_title or not video.generated_description:
+                try:
+                    metadata_result = generate_video_metadata(video)
+                    if metadata_result.get('status') == 'success':
+                        video.generated_title = metadata_result.get('title', '')
+                        video.generated_description = metadata_result.get('description', '')
+                        video.generated_tags = metadata_result.get('tags', '')
+                        results['metadata_generated'] = True
+                        print(f"✓ Generated metadata: {video.generated_title[:50]}...")
+                    else:
+                        results['errors'].append(f"Metadata generation failed: {metadata_result.get('error', 'Unknown error')}")
+                except Exception as e:
+                    results['errors'].append(f"Metadata generation error: {str(e)}")
+            
+            # Upload to Cloudinary if enabled and not already uploaded
+            if not video.cloudinary_url:
+                try:
+                    cloudinary_result = upload_video_file(video.final_processed_video)
+                    if cloudinary_result:
+                        video.cloudinary_url = cloudinary_result.get('secure_url') or cloudinary_result.get('url', '')
+                        video.cloudinary_uploaded_at = timezone.now()
+                        results['cloudinary_uploaded'] = True
+                        print(f"✓ Uploaded to Cloudinary: {video.cloudinary_url[:50]}...")
+                    else:
+                        results['errors'].append("Cloudinary upload skipped or failed (check settings)")
+                except Exception as e:
+                    results['errors'].append(f"Cloudinary upload error: {str(e)}")
+            else:
+                results['errors'].append("Video already uploaded to Cloudinary")
+            
+            # Save video with any updates
+            video.save()
+            
+            # Add to Google Sheets if enabled and not already synced
+            if not video.google_sheets_synced:
+                try:
+                    sheet_result = add_video_to_sheet(video, video.cloudinary_url)
+                    if sheet_result and sheet_result.get('success'):
+                        results['google_sheets_synced'] = True
+                        print(f"✓ Added to Google Sheets")
+                    else:
+                        error_msg = sheet_result.get('error', 'Unknown error') if sheet_result else 'Google Sheets not configured'
+                        results['errors'].append(f"Google Sheets sync failed: {error_msg}")
+                        logger.warning(f"Google Sheets sync failed for video {video.id}: {error_msg}")
+                except Exception as e:
+                    results['errors'].append(f"Google Sheets sync error: {str(e)}")
+            else:
+                results['errors'].append("Video already synced to Google Sheets")
+            
+            # Determine overall status
+            success_count = sum([
+                results['metadata_generated'],
+                results['cloudinary_uploaded'],
+                results['google_sheets_synced']
+            ])
+            
+            if success_count > 0:
+                return Response({
+                    "status": "success",
+                    "message": f"Completed {success_count} operation(s)",
+                    **results
+                })
+            else:
+                return Response({
+                    "status": "partial",
+                    "message": "No new operations completed",
+                    **results
+                }, status=status.HTTP_200_OK)
+                
+        except Exception as e:
+            return Response({
+                "error": str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=['post'])
     def reprocess(self, request, pk=None):
         """Reprocess video - reset processing state and re-run the full pipeline"""
         video = self.get_object()
@@ -1008,12 +1173,15 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
             }, status=status.HTTP_400_BAD_REQUEST)
         
         # Check if video is currently being processed
-        if (video.transcription_status == 'transcribing' or 
+        force_reprocess = request.data.get('force', False) or request.query_params.get('force', 'false').lower() == 'true'
+        
+        if not force_reprocess and (video.transcription_status == 'transcribing' or 
             video.ai_processing_status == 'processing' or
             video.script_status == 'generating' or
             video.synthesis_status == 'synthesizing'):
             return Response({
-                "error": "Video is currently being processed. Please wait for current process to complete."
+                "error": "Video is currently being processed. Please wait for current process to complete.",
+                "can_force": True
             }, status=status.HTTP_400_BAD_REQUEST)
         
         try:
@@ -1192,25 +1360,54 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                                 temp_audio.close()
                                 
                                 speaker_wav = None
-                                if video.voice_profile and video.voice_profile.reference_audio:
-                                    speaker_wav = video.voice_profile.reference_audio.path
+                                if video.voice_profile and video.voice_profile.file:
+                                    speaker_wav = video.voice_profile.file.path
+                                
+                                # If no voice profile, try to get default voice from ClonedVoice model
+                                if not speaker_wav:
+                                    from .models import ClonedVoice
+                                    default_voice = ClonedVoice.objects.filter(is_default=True).first()
+                                    if not default_voice:
+                                        # Try to get any available voice as fallback
+                                        default_voice = ClonedVoice.objects.first()
+                                    
+                                    if default_voice and default_voice.file:
+                                        try:
+                                            speaker_wav = default_voice.file.path
+                                            # Verify file exists and is accessible
+                                            if not os.path.exists(speaker_wav):
+                                                logger.error(f"Voice file not found: {speaker_wav}")
+                                                speaker_wav = None
+                                            else:
+                                                logger.info(f"Using default voice profile: {default_voice.name} (file: {speaker_wav})")
+                                        except Exception as e:
+                                            logger.error(f"Error accessing voice file: {str(e)}")
+                                            speaker_wav = None
                                 
                                 if not speaker_wav:
-                                    print("No voice profile available, skipping TTS generation")
+                                    logger.error("No voice profile available, skipping TTS generation")
                                     video.synthesis_status = 'failed'
-                                    video.synthesis_error = 'No voice profile available for TTS'
+                                    video.synthesis_error = 'No voice profile available for TTS. Please upload a voice sample in Voice Cloning section and set it as default.'
                                     video.save()
                                 else:
                                     # Generate TTS audio
-                                    service.generate_speech(
-                                        text=clean_script,
-                                        speaker_wav_path=speaker_wav,
-                                        language='hi',
-                                        output_path=temp_audio_path,
-                                        speed=video.tts_speed,
-                                        temperature=video.tts_temperature,
-                                        repetition_penalty=video.tts_repetition_penalty
-                                    )
+                                    try:
+                                        service.generate_speech(
+                                            text=clean_script,
+                                            speaker_wav_path=speaker_wav,
+                                            language='hi',
+                                            output_path=temp_audio_path,
+                                            speed=video.tts_speed,
+                                            temperature=video.tts_temperature,
+                                            repetition_penalty=video.tts_repetition_penalty
+                                        )
+                                    except Exception as e:
+                                        error_msg = f"TTS generation failed: {str(e)}"
+                                        logger.error(error_msg, exc_info=True)
+                                        video.synthesis_status = 'failed'
+                                        video.synthesis_error = error_msg
+                                        video.save()
+                                        raise  # Re-raise to be caught by outer exception handler
                                     
                                     # Adjust audio duration to match video duration if available
                                     if video.duration and os.path.exists(temp_audio_path):
@@ -1303,6 +1500,39 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                                                             video.save()
                                                             os.unlink(temp_final_path)
                                                             print(f"✓ Reprocess completed: Final video created")
+                                                            
+                                                            # Generate metadata, upload to Cloudinary, and sync to Google Sheets
+                                                            try:
+                                                                # Generate metadata using AI
+                                                                metadata_result = generate_video_metadata(video)
+                                                                if metadata_result.get('status') == 'success':
+                                                                    video.generated_title = metadata_result.get('title', '')
+                                                                    video.generated_description = metadata_result.get('description', '')
+                                                                    video.generated_tags = metadata_result.get('tags', '')
+                                                                    print(f"✓ Generated metadata: {video.generated_title[:50]}...")
+                                                                
+                                                                # Upload to Cloudinary if enabled
+                                                                cloudinary_result = upload_video_file(video.final_processed_video)
+                                                                if cloudinary_result:
+                                                                    video.cloudinary_url = cloudinary_result.get('secure_url') or cloudinary_result.get('url', '')
+                                                                    video.cloudinary_uploaded_at = timezone.now()
+                                                                    print(f"✓ Uploaded to Cloudinary: {video.cloudinary_url[:50]}...")
+                                                                
+                                                                # Save video with metadata and Cloudinary URL
+                                                                video.save()
+                                                                
+                                                                # Add to Google Sheets if enabled
+                                                                sheet_result = add_video_to_sheet(video, video.cloudinary_url)
+                                                                if sheet_result and sheet_result.get('success'):
+                                                                    print(f"✓ Added to Google Sheets")
+                                                                else:
+                                                                    error_msg = sheet_result.get('error', 'Unknown error') if sheet_result else 'Google Sheets not configured'
+                                                                    print(f"⚠ Google Sheets sync failed: {error_msg}")
+                                                                    logger.warning(f"Google Sheets sync failed for video {video.id}: {error_msg}")
+                                                            except Exception as e:
+                                                                print(f"⚠ Error in post-processing (Cloudinary/Sheets): {str(e)}")
+                                                                import traceback
+                                                                traceback.print_exc()
                                                         else:
                                                             error_msg = f"ffmpeg combine failed: {result.stderr[:500] if result.stderr else 'Unknown error'}"
                                                             print(f"✗ Step 5b (ffmpeg) failed: {error_msg}")
@@ -1335,9 +1565,10 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                                                 video.synthesis_error = error_msg
                                                 video.save()
                             else:
-                                print("TTS not available, skipping audio generation")
+                                error_msg = 'TTS service not available. Please install Coqui TTS: pip install TTS (requires Python 3.9-3.11, NOT 3.12+)'
+                                print(f"ERROR: {error_msg}")
                                 video.synthesis_status = 'failed'
-                                video.synthesis_error = 'TTS service not available'
+                                video.synthesis_error = error_msg
                                 video.save()
                         except Exception as e:
                             print(f"TTS generation error during reprocess: {e}")
@@ -1447,6 +1678,230 @@ class AISettingsViewSet(viewsets.ViewSet):
         return Response({"status": "saved", "provider": provider})
 
 
+class CloudinarySettingsViewSet(viewsets.ViewSet):
+    """ViewSet for Cloudinary Settings"""
+
+    def list(self, request):
+        """Get current Cloudinary settings"""
+        settings = CloudinarySettings.objects.first()
+        if not settings:
+            return Response({
+                "cloud_name": "",
+                "api_key": "",
+                "api_secret": "",
+                "enabled": False
+            })
+
+        serializer = CloudinarySettingsSerializer(settings)
+        return Response(serializer.data)
+
+    def create(self, request):
+        """Update Cloudinary settings"""
+        cloud_name = request.data.get('cloud_name', '')
+        api_key = request.data.get('api_key', '')
+        api_secret = request.data.get('api_secret', '')
+        enabled = request.data.get('enabled', False)
+
+        settings, created = CloudinarySettings.objects.get_or_create(
+            id=1,
+            defaults={
+                "cloud_name": cloud_name,
+                "api_key": api_key,
+                "api_secret": api_secret,
+                "enabled": enabled
+            }
+        )
+
+        if not created:
+            settings.cloud_name = cloud_name
+            settings.api_key = api_key
+            settings.api_secret = api_secret
+            settings.enabled = enabled
+            settings.save()
+
+        return Response({"status": "saved", "enabled": enabled})
+
+
+class GoogleSheetsSettingsViewSet(viewsets.ViewSet):
+    """ViewSet for Google Sheets Settings"""
+
+    def list(self, request):
+        """Get current Google Sheets settings"""
+        settings = GoogleSheetsSettings.objects.first()
+        if not settings:
+            return Response({
+                "spreadsheet_id": "",
+                "sheet_name": "Sheet1",
+                "credentials_json": "",
+                "enabled": False
+            })
+
+        serializer = GoogleSheetsSettingsSerializer(settings)
+        return Response(serializer.data)
+
+    def create(self, request):
+        """Update Google Sheets settings"""
+        spreadsheet_id = request.data.get('spreadsheet_id', '')
+        sheet_name = request.data.get('sheet_name', 'Sheet1')
+        credentials_json = request.data.get('credentials_json', '')
+        enabled = request.data.get('enabled', False)
+
+        settings, created = GoogleSheetsSettings.objects.get_or_create(
+            id=1,
+            defaults={
+                "spreadsheet_id": spreadsheet_id,
+                "sheet_name": sheet_name,
+                "credentials_json": credentials_json,
+                "enabled": enabled
+            }
+        )
+
+        if not created:
+            settings.spreadsheet_id = spreadsheet_id
+            settings.sheet_name = sheet_name
+            settings.credentials_json = credentials_json
+            settings.enabled = enabled
+            settings.save()
+
+        return Response({"status": "saved", "enabled": enabled})
+
+
+@api_view(['GET', 'POST'])
+def test_google_sheets(request):
+    """Test endpoint for Google Sheets configuration"""
+    from .google_sheets_service import get_google_sheets_service, ensure_header_row, extract_spreadsheet_id
+    from .models import GoogleSheetsSettings
+    import json
+    
+    results = {
+        'success': False,
+        'errors': [],
+        'warnings': [],
+        'info': {}
+    }
+    
+    try:
+        sheets_settings = GoogleSheetsSettings.objects.first()
+        
+        if not sheets_settings:
+            results['errors'].append("Google Sheets settings not found. Please configure in Settings.")
+            return Response(results, status=status.HTTP_400_BAD_REQUEST)
+        
+        results['info']['enabled'] = sheets_settings.enabled
+        results['info']['has_spreadsheet_id'] = bool(sheets_settings.spreadsheet_id)
+        results['info']['has_credentials'] = bool(sheets_settings.credentials_json)
+        results['info']['sheet_name'] = sheets_settings.sheet_name
+        
+        if not sheets_settings.enabled:
+            results['errors'].append("Google Sheets is disabled. Enable it in Settings.")
+            return Response(results, status=status.HTTP_400_BAD_REQUEST)
+        
+        if not sheets_settings.spreadsheet_id:
+            results['errors'].append("Spreadsheet ID is missing. Add it in Settings.")
+            return Response(results, status=status.HTTP_400_BAD_REQUEST)
+        
+        if not sheets_settings.credentials_json:
+            results['errors'].append("Service Account credentials are missing. Add them in Settings.")
+            return Response(results, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Test spreadsheet ID extraction
+        extracted_id = extract_spreadsheet_id(sheets_settings.spreadsheet_id)
+        results['info']['extracted_spreadsheet_id'] = extracted_id
+        
+        if not extracted_id:
+            results['errors'].append("Could not extract spreadsheet ID from the provided value.")
+            return Response(results, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Test credentials JSON
+        try:
+            credentials_dict = json.loads(sheets_settings.credentials_json)
+            results['info']['service_account_email'] = credentials_dict.get('client_email', 'N/A')
+            results['info']['project_id'] = credentials_dict.get('project_id', 'N/A')
+        except json.JSONDecodeError as e:
+            results['errors'].append(f"Invalid JSON in credentials: {str(e)}")
+            return Response(results, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Test service creation
+        sheets_config = get_google_sheets_service()
+        if not sheets_config:
+            results['errors'].append("Failed to create Google Sheets service. Check credentials.")
+            return Response(results, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+        # Test read access
+        try:
+            service = sheets_config['service']
+            spreadsheet_id = sheets_config['spreadsheet_id']
+            sheet_name = sheets_config['sheet_name']
+            
+            range_name = f'{sheet_name}!A1:J1'
+            result = service.spreadsheets().values().get(
+                spreadsheetId=spreadsheet_id,
+                range=range_name
+            ).execute()
+            
+            values = result.get('values', [])
+            if values:
+                results['info']['header_row'] = values[0]
+            else:
+                results['warnings'].append("No header row found. It will be created on first sync.")
+            
+        except Exception as e:
+            error_str = str(e)
+            service_account_email = credentials_dict.get('client_email', 'N/A')
+            
+            if 'PERMISSION_DENIED' in error_str or '403' in error_str or 'does not have permission' in error_str.lower():
+                results['errors'].append(
+                    f"❌ Permission Denied: The service account does not have access to the Google Sheet."
+                )
+                results['info']['service_account_email'] = service_account_email
+                results['info']['fix_instructions'] = [
+                    f"1. Open your Google Sheet: https://docs.google.com/spreadsheets/d/{extracted_id}/edit",
+                    f"2. Click the 'Share' button (top right)",
+                    f"3. Add this email address: {service_account_email}",
+                    f"4. Give it 'Editor' access (not just Viewer)",
+                    f"5. Click 'Send' or 'Done'",
+                    f"6. Try testing the connection again"
+                ]
+            elif 'NOT_FOUND' in error_str or '404' in error_str:
+                results['errors'].append(f"Spreadsheet not found. Check the Spreadsheet ID: {extracted_id}")
+            else:
+                results['errors'].append(f"Read access error: {error_str}")
+            return Response(results, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+        # Test write access
+        try:
+            ensure_header_row(sheets_config)
+            results['info']['write_access'] = True
+        except Exception as e:
+            error_str = str(e)
+            service_account_email = credentials_dict.get('client_email', 'N/A')
+            
+            if 'PERMISSION_DENIED' in error_str or '403' in error_str or 'does not have permission' in error_str.lower():
+                results['errors'].append(
+                    f"❌ Write Permission Denied: The service account does not have write access to the Google Sheet."
+                )
+                results['info']['service_account_email'] = service_account_email
+                results['info']['fix_instructions'] = [
+                    f"1. Open your Google Sheet: https://docs.google.com/spreadsheets/d/{extracted_id}/edit",
+                    f"2. Click the 'Share' button (top right)",
+                    f"3. Add this email address: {service_account_email}",
+                    f"4. Give it 'Editor' access (not just Viewer)",
+                    f"5. Click 'Send' or 'Done'",
+                    f"6. Try testing the connection again"
+                ]
+            else:
+                results['errors'].append(f"Write access error: {error_str}")
+            return Response(results, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+        results['success'] = True
+        results['info']['message'] = "Google Sheets is properly configured and ready to use!"
+        return Response(results)
+        
+    except Exception as e:
+        results['errors'].append(f"Unexpected error: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return Response(results, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @api_view(['GET'])

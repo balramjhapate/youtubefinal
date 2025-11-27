@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import VideoDownload, AIProviderSettings, ClonedVoice
+from .models import VideoDownload, AIProviderSettings, ClonedVoice, CloudinarySettings, GoogleSheetsSettings
 
 
 class AIProviderSettingsSerializer(serializers.ModelSerializer):
@@ -21,19 +21,69 @@ class AIProviderSettingsSerializer(serializers.ModelSerializer):
                 data['api_key_masked'] = '*' * len(api_key)
         return data
 
+
+class CloudinarySettingsSerializer(serializers.ModelSerializer):
+    """Serializer for Cloudinary Settings"""
+
+    class Meta:
+        model = CloudinarySettings
+        fields = ['id', 'cloud_name', 'api_key', 'api_secret', 'enabled']
+
+    def to_representation(self, instance):
+        """Mask API key and secret in responses"""
+        data = super().to_representation(instance)
+        if data.get('api_key'):
+            api_key = data['api_key']
+            if len(api_key) > 4:
+                data['api_key_masked'] = '*' * (len(api_key) - 4) + api_key[-4:]
+            else:
+                data['api_key_masked'] = '*' * len(api_key)
+        if data.get('api_secret'):
+            api_secret = data['api_secret']
+            if len(api_secret) > 4:
+                data['api_secret_masked'] = '*' * (len(api_secret) - 4) + api_secret[-4:]
+            else:
+                data['api_secret_masked'] = '*' * len(api_secret)
+        return data
+
+
+class GoogleSheetsSettingsSerializer(serializers.ModelSerializer):
+    """Serializer for Google Sheets Settings"""
+
+    class Meta:
+        model = GoogleSheetsSettings
+        fields = ['id', 'spreadsheet_id', 'sheet_name', 'credentials_json', 'enabled']
+
+    def to_representation(self, instance):
+        """Mask credentials JSON in responses"""
+        data = super().to_representation(instance)
+        if data.get('credentials_json'):
+            # Don't show credentials JSON in responses for security
+            data['credentials_json'] = '***hidden***'
+        return data
+
 class ClonedVoiceSerializer(serializers.ModelSerializer):
     file_url = serializers.SerializerMethodField()
     
     class Meta:
         model = ClonedVoice
-        fields = ['id', 'name', 'file', 'file_url', 'created_at']
+        fields = ['id', 'name', 'file', 'file_url', 'is_default', 'created_at']
+        read_only_fields = ['created_at']
     
     def get_file_url(self, obj):
         if obj.file:
-            request = self.context.get('request')
-            if request:
-                return request.build_absolute_uri(obj.file.url)
-            return obj.file.url
+            try:
+                request = self.context.get('request')
+                if request:
+                    try:
+                        return request.build_absolute_uri(obj.file.url)
+                    except Exception:
+                        # Fallback if build_absolute_uri fails
+                        return obj.file.url
+                return obj.file.url
+            except Exception:
+                # Fallback if file.url fails
+                return None
         return None
 
 
@@ -52,6 +102,7 @@ class VideoDownloadSerializer(serializers.ModelSerializer):
     tts_speed = serializers.SerializerMethodField()
     tts_temperature = serializers.SerializerMethodField()
     tts_repetition_penalty = serializers.SerializerMethodField()
+    synthesized_audio_url = serializers.SerializerMethodField()
     review_status = serializers.SerializerMethodField()
     review_notes = serializers.SerializerMethodField()
     reviewed_at = serializers.SerializerMethodField()
@@ -79,9 +130,15 @@ class VideoDownloadSerializer(serializers.ModelSerializer):
             # TTS Parameters
             'tts_speed', 'tts_temperature', 'tts_repetition_penalty',
             # Synthesis
-            'synthesis_status', 'synthesis_error', 'synthesized_audio', 'voice_profile',
+            'synthesis_status', 'synthesis_error', 'synthesized_audio', 'synthesized_audio_url', 'voice_profile',
             # Review
             'review_status', 'review_notes', 'reviewed_at',
+            # Cloudinary
+            'cloudinary_url', 'cloudinary_uploaded_at',
+            # Generated Metadata
+            'generated_title', 'generated_description', 'generated_tags',
+            # Google Sheets
+            'google_sheets_synced', 'google_sheets_synced_at',
         ]
         read_only_fields = [
             'id', 'video_id', 'created_at', 'updated_at',
@@ -181,6 +238,15 @@ class VideoDownloadSerializer(serializers.ModelSerializer):
             return getattr(obj, 'tts_repetition_penalty', 5.0)
         except (AttributeError, ValueError):
             return 5.0
+    
+    def get_synthesized_audio_url(self, obj):
+        """Get full URL for synthesized audio file"""
+        if obj.synthesized_audio:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.synthesized_audio.url)
+            return obj.synthesized_audio.url
+        return None
     
     def get_review_status(self, obj):
         """Safely get review_status field"""
