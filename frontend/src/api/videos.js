@@ -19,6 +19,16 @@ export const videosApi = {
     return response.data;
   },
 
+  // Upload local video file
+  uploadFile: async (formData) => {
+    const response = await apiClient.post('/videos/extract/', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    return response.data;
+  },
+
   // Download video to local storage
   download: async (id) => {
     const response = await apiClient.post(`/videos/${id}/download/`);
@@ -59,16 +69,37 @@ export const videosApi = {
   },
 
   // Update voice profile for video
-  updateVoiceProfile: async (id, voiceProfileId) => {
-    const response = await apiClient.patch(`/videos/${id}/update_voice_profile/`, {
-      voice_profile_id: voiceProfileId,
+  updateVoiceProfile: async (id, profileId) => {
+    const response = await apiClient.patch(`/videos/${id}/`, {
+      voice_profile: profileId,
     });
+    return response.data;
+  },
+
+  // Manually trigger Cloudinary upload and Google Sheets sync
+  uploadAndSync: async (id) => {
+    const response = await apiClient.post(`/videos/${id}/upload_and_sync/`);
     return response.data;
   },
 
   // Delete video
   delete: async (id) => {
     const response = await apiClient.delete(`/videos/${id}/delete/`);
+    return response.data;
+  },
+
+  // Review video
+  review: async (id, reviewStatus, reviewNotes = '') => {
+    const response = await apiClient.post(`/videos/${id}/review/`, {
+      review_status: reviewStatus,
+      review_notes: reviewNotes,
+    });
+    return response.data;
+  },
+
+  // Reprocess video
+  reprocess: async (id) => {
+    const response = await apiClient.post(`/videos/${id}/reprocess/`);
     return response.data;
   },
 

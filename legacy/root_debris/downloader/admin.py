@@ -5,7 +5,7 @@ from django.contrib import messages
 from django.db import IntegrityError
 from django.utils import timezone
 from django.shortcuts import render, redirect, get_object_or_404
-from .models import VideoDownload, AIProviderSettings
+from .models import VideoDownload, AIProviderSettings, ClonedVoice, CloudinarySettings, GoogleSheetsSettings
 from .utils import (
     perform_extraction, extract_video_id, translate_text, download_file,
     process_video_with_ai, transcribe_video, add_caption_to_video,
@@ -35,6 +35,76 @@ class AIProviderSettingsAdmin(admin.ModelAdmin):
     def has_delete_permission(self, request, obj=None):
         # Don't allow deletion of the settings record
         return False
+
+
+@admin.register(CloudinarySettings)
+class CloudinarySettingsAdmin(admin.ModelAdmin):
+    """Admin interface for Cloudinary Settings"""
+    list_display = ['id', 'cloud_name', 'enabled', 'api_key_display']
+    fields = ['cloud_name', 'api_key', 'api_secret', 'enabled']
+
+    def api_key_display(self, obj):
+        if obj.api_key:
+            return f"{obj.api_key[:10]}..." if len(obj.api_key) > 10 else obj.api_key
+        return "-"
+    api_key_display.short_description = "API Key"
+
+    def has_add_permission(self, request):
+        # Only allow one settings record
+        return not CloudinarySettings.objects.exists()
+
+    def has_delete_permission(self, request, obj=None):
+        # Don't allow deletion of the settings record
+        return False
+
+
+@admin.register(GoogleSheetsSettings)
+class GoogleSheetsSettingsAdmin(admin.ModelAdmin):
+    """Admin interface for Google Sheets Settings"""
+    list_display = ['id', 'spreadsheet_id', 'sheet_name', 'enabled']
+    fields = ['spreadsheet_id', 'sheet_name', 'credentials_json', 'enabled']
+
+    def has_add_permission(self, request):
+        # Only allow one settings record
+        return not GoogleSheetsSettings.objects.exists()
+
+    def has_delete_permission(self, request, obj=None):
+        # Don't allow deletion of the settings record
+        return False
+
+
+@admin.register(ClonedVoice)
+class ClonedVoiceAdmin(admin.ModelAdmin):
+    """Admin interface for Cloned Voices"""
+    list_display = ['name', 'is_default_badge', 'created_at', 'audio_player']
+    list_filter = ['is_default', 'created_at']
+    search_fields = ['name']
+    fields = ['name', 'file', 'is_default']
+    readonly_fields = ['created_at']
+    
+    def is_default_badge(self, obj):
+        if obj.is_default:
+            return format_html(
+                '<span style="background-color: #ffc107; color: #000; padding: 3px 10px; border-radius: 10px; font-size: 12px; font-weight: bold;">⭐ DEFAULT</span>'
+            )
+        return format_html('<span style="color: #6c757d;">-</span>')
+    is_default_badge.short_description = "Default"
+    
+    def audio_player(self, obj):
+        if obj.file:
+            return format_html(
+                '<audio controls src="{}" style="width: 200px; height: 30px;"></audio>',
+                obj.file.url
+            )
+        return "-"
+    audio_player.short_description = "Preview"
+    
+    def save_model(self, request, obj, form, change):
+        """Override save to ensure only one default voice exists"""
+        if obj.is_default:
+            # Unset all other defaults
+            ClonedVoice.objects.filter(is_default=True).exclude(pk=obj.pk).update(is_default=False)
+        super().save_model(request, obj, form, change)
 
 @admin.register(VideoDownload)
 class VideoDownloadAdmin(admin.ModelAdmin):
@@ -74,6 +144,7 @@ class VideoDownloadAdmin(admin.ModelAdmin):
     list_display = [
         'thumbnail_display',
         'title_display',
+        'video_source',
         'status_badge',
         'transcription_status_badge',
         'ai_status_badge',
@@ -87,6 +158,15 @@ class VideoDownloadAdmin(admin.ModelAdmin):
         'original_title',
         'url',
         'video_id'
+    ]
+    
+    list_filter = [
+        'video_source',
+        'status',
+        'transcription_status',
+        'ai_processing_status',
+        'extraction_method',
+        'created_at'
     ]
 
     readonly_fields = [
@@ -121,7 +201,7 @@ class VideoDownloadAdmin(admin.ModelAdmin):
 
     fieldsets = [
         ('Video Information', {
-            'fields': ('url', 'video_id', 'thumbnail_preview')
+            'fields': ('url', 'video_id', 'video_source', 'thumbnail_preview')
         }),
         ('Content (Translated)', {
             'fields': ('title', 'description')
@@ -130,7 +210,12 @@ class VideoDownloadAdmin(admin.ModelAdmin):
             'fields': ('original_title', 'original_description')
         }),
         ('Media Details', {
-            'fields': ('video_url', 'cover_url', 'local_file', 'is_downloaded')
+            'fields': ('video_url', 'cover_url', 'local_file', 'is_downloaded', 'duration', 'voice_removed_video_url', 'final_processed_video_url'),
+            'description': '1. Downloaded video (original with audio) | 2. Voice removed video (no audio) | 3. Final processed video (with new Hindi audio)'
+        }),
+        ('Voice Profile', {
+            'fields': ('voice_profile',),
+            'description': 'Voice profile used for TTS. If not set, the default voice will be used.'
         }),
         ('Extraction Status', {
             'fields': ('extraction_method', 'status', 'error_message')

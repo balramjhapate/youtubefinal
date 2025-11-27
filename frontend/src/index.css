@@ -114,7 +114,7 @@ body {
   background: rgba(255, 36, 66, 0.7);
 }
 
-/* Status Badge Colors */
+/* Status Badge Colors - Each status has unique color */
 .badge-success {
   background: rgba(34, 197, 94, 0.2);
   color: #22c55e;
@@ -143,6 +143,43 @@ body {
   background: rgba(107, 114, 128, 0.2);
   color: #9ca3af;
   border: 1px solid rgba(107, 114, 128, 0.3);
+}
+
+/* Additional unique colors for different statuses - No color repeats */
+.badge-transcribed {
+  background: rgba(59, 130, 246, 0.2);
+  color: #3b82f6;
+  border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+.badge-processed {
+  background: rgba(168, 85, 247, 0.2);
+  color: #a855f7;
+  border: 1px solid rgba(168, 85, 247, 0.3);
+}
+
+.badge-script {
+  background: rgba(99, 102, 241, 0.2);
+  color: #6366f1;
+  border: 1px solid rgba(99, 102, 241, 0.3);
+}
+
+.badge-downloaded {
+  background: rgba(6, 182, 212, 0.2);
+  color: #06b6d4;
+  border: 1px solid rgba(6, 182, 212, 0.3);
+}
+
+.badge-cloudinary {
+  background: rgba(59, 130, 246, 0.2);
+  color: #3b82f6;
+  border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+.badge-sheets {
+  background: rgba(16, 185, 129, 0.2);
+  color: #10b981;
+  border: 1px solid rgba(16, 185, 129, 0.3);
 }
 
 /* Button Styles */

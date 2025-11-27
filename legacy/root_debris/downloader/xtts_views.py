@@ -5,6 +5,7 @@ from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
 from rest_framework.views import APIView
 from rest_framework import viewsets
+from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.parsers import MultiPartParser, FormParser
@@ -31,9 +32,23 @@ class XTTSGenerateView(APIView):
             )
         
         text = request.data.get('text')
-        language = request.data.get('language')
+        language = request.data.get('language', '').strip()
         reference_audio = request.FILES.get('reference_audio')
         voice_id = request.data.get('voice_id')
+        
+        # Normalize language code - handle display names sent from frontend
+        language_map = {
+            'english': 'en', 'hindi': 'hi', 'spanish': 'es', 'french': 'fr',
+            'german': 'de', 'italian': 'it', 'portuguese': 'pt', 'polish': 'pl',
+            'turkish': 'tr', 'russian': 'ru', 'dutch': 'nl', 'czech': 'cs',
+            'arabic': 'ar', 'chinese': 'zh-cn', 'japanese': 'ja', 'hungarian': 'hu',
+            'korean': 'ko'
+        }
+        # Convert to lowercase for lookup
+        language_lower = language.lower()
+        if language_lower in language_map:
+            language = language_map[language_lower]
+            logger.info(f"Converted language '{request.data.get('language')}' to code '{language}'")
         
         # Advanced parameters
         speed = float(request.data.get('speed', 1.0))
@@ -115,13 +130,17 @@ class XTTSGenerateView(APIView):
                 status=status.HTTP_503_SERVICE_UNAVAILABLE
             )
         except Exception as e:
-            logger.error(f"XTTS Generation Error: {str(e)}", exc_info=True)
+            import traceback
+            error_traceback = traceback.format_exc()
+            logger.error(f"XTTS Generation Error: {str(e)}\n{error_traceback}")
             error_message = str(e)
             # Provide more user-friendly error messages
             if 'model' in error_message.lower() or 'load' in error_message.lower():
                 error_message = f"Failed to load XTTS model: {error_message}"
+            elif 'download' in error_message.lower() or 'downloading' in error_message.lower():
+                error_message = f"Model is still downloading. Please wait a few minutes and try again. Error: {error_message}"
             return Response(
-                {'error': error_message},
+                {'error': error_message, 'details': error_traceback if settings.DEBUG else None},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
@@ -132,7 +151,7 @@ class XTTSLanguagesView(APIView):
         return Response(service.get_languages(), status=status.HTTP_200_OK)
 
 class ClonedVoiceViewSet(viewsets.ModelViewSet):
-    queryset = ClonedVoice.objects.all().order_by('-created_at')
+    queryset = ClonedVoice.objects.all().order_by('-is_default', '-created_at')
     serializer_class = ClonedVoiceSerializer
     parser_classes = (MultiPartParser, FormParser)
     
@@ -175,13 +194,70 @@ class ClonedVoiceViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
+    def update(self, request, *args, **kwargs):
+        """Update a cloned voice (full update)"""
+        try:
+            instance = self.get_object()
+            # Handle file update if provided
+            if 'file' in request.FILES:
+                # Delete old file if it exists
+                if instance.file:
+                    instance.file.delete(save=False)
+            return super().update(request, *args, **kwargs)
+        except Exception as e:
+            logger.error(f"Error updating voice: {str(e)}", exc_info=True)
+            return Response(
+                {'error': f'Failed to update voice: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def partial_update(self, request, *args, **kwargs):
+        """Update a cloned voice (partial update)"""
+        try:
+            instance = self.get_object()
+            # Handle file update if provided
+            if 'file' in request.FILES:
+                # Delete old file if it exists
+                if instance.file:
+                    instance.file.delete(save=False)
+            return super().partial_update(request, *args, **kwargs)
+        except Exception as e:
+            logger.error(f"Error updating voice: {str(e)}", exc_info=True)
+            return Response(
+                {'error': f'Failed to update voice: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
     def destroy(self, request, *args, **kwargs):
         """Delete a cloned voice"""
         try:
+            instance = self.get_object()
+            # Delete the file if it exists
+            if instance.file:
+                instance.file.delete(save=False)
             return super().destroy(request, *args, **kwargs)
         except Exception as e:
             logger.error(f"Error deleting voice: {str(e)}", exc_info=True)
             return Response(
                 {'error': f'Failed to delete voice: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=True, methods=['post'])
+    def set_default(self, request, pk=None):
+        """Set a voice as default (only one default can exist)"""
+        try:
+            voice = self.get_object()
+            # Unset all other defaults
+            ClonedVoice.objects.filter(is_default=True).update(is_default=False)
+            # Set this voice as default
+            voice.is_default = True
+            voice.save()
+            serializer = self.get_serializer(voice)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error(f"Error setting default voice: {str(e)}", exc_info=True)
+            return Response(
+                {'error': f'Failed to set default voice: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )

@@ -35,7 +35,6 @@ if ! command -v node &> /dev/null || ! command -v npm &> /dev/null; then
 fi
 
 # Install Python dependencies
-echo "Installing Python dependencies..."
 cd legacy/root_debris
 
 # Check for Python 3.10 (recommended) or 3.11, 3.9 (required for TTS per guide)
@@ -101,64 +100,164 @@ if [ ! -d "venv" ]; then
 fi
 
 source venv/bin/activate
-echo "Upgrading pip..."
-pip install --upgrade pip > /dev/null 2>&1
 
-echo "Installing Python dependencies (this may take a few minutes)..."
-pip install -r requirements.txt
-if [ $? -ne 0 ]; then
-    echo "Error: Failed to install Python dependencies."
-    echo "You may need to install system dependencies:"
-    echo "  macOS: brew install ffmpeg portaudio"
-    exit 1
+# Check if dependencies need to be installed
+NEEDS_INSTALL=false
+if [ ! -f "venv/.deps_installed" ]; then
+    NEEDS_INSTALL=true
+else
+    # Check if requirements.txt has changed
+    if [ "requirements.txt" -nt "venv/.deps_installed" ]; then
+        NEEDS_INSTALL=true
+    fi
 fi
-echo "✓ Python dependencies installed successfully."
+
+# Quick check if Django is installed (as a proxy for all dependencies)
+if pip show django > /dev/null 2>&1; then
+    if [ "$NEEDS_INSTALL" = false ]; then
+        echo "✓ Python dependencies already installed"
+    else
+        # requirements.txt changed, need to update
+        echo "Updating Python dependencies..."
+        pip install --upgrade pip > /dev/null 2>&1
+        # Run pip install and capture output
+        PIP_OUTPUT=$(pip install -r requirements.txt 2>&1)
+        PIP_EXIT=$?
+        # Only show output if there are actual changes (not just "already satisfied")
+        echo "$PIP_OUTPUT" | grep -v "Requirement already satisfied" | grep -v "^$" || true
+        if [ $PIP_EXIT -ne 0 ]; then
+            echo "Error: Failed to update Python dependencies."
+            exit 1
+        fi
+        touch venv/.deps_installed
+        echo "✓ Python dependencies updated."
+    fi
+else
+    # Dependencies not installed
+    echo "Installing Python dependencies (this may take a few minutes)..."
+    pip install --upgrade pip > /dev/null 2>&1
+    # Show progress for initial installation, filter out "already satisfied"
+    PIP_OUTPUT=$(pip install -r requirements.txt 2>&1)
+    PIP_EXIT=$?
+    echo "$PIP_OUTPUT" | grep -v "Requirement already satisfied" | grep -v "^$" || true
+    if [ $PIP_EXIT -ne 0 ]; then
+        echo "Error: Failed to install Python dependencies."
+        echo "You may need to install system dependencies:"
+        echo "  macOS: brew install ffmpeg portaudio"
+        exit 1
+    fi
+    touch venv/.deps_installed
+    echo "✓ Python dependencies installed successfully."
+fi
+
+# Ensure PyTorch is installed with GPU support (MPS for Mac, CUDA for NVIDIA)
+echo "Installing/updating PyTorch with GPU support..."
+pip install torch torchvision torchaudio > /dev/null 2>&1
+if [ $? -eq 0 ]; then
+    echo "✓ PyTorch installed/updated successfully"
+else
+    echo "⚠️  Warning: PyTorch installation had issues, but continuing..."
+fi
+
+# Install AI Provider SDKs (for metadata generation and AI features)
+echo "Installing AI Provider SDKs..."
+pip install google-generativeai openai anthropic > /dev/null 2>&1
+if [ $? -eq 0 ]; then
+    echo "✓ AI Provider SDKs installed/updated successfully"
+else
+    echo "⚠️  Warning: AI Provider SDKs installation had issues, but continuing..."
+    echo "   Note: REST API fallback will be used if SDKs are not available"
+fi
+
 cd ../..
 
 # Install npm dependencies
-echo "Installing npm dependencies..."
 cd frontend
 if [ ! -d "node_modules" ]; then
-    echo "Installing npm packages (this may take a few minutes)..."
+    echo "Installing npm dependencies (this may take a few minutes)..."
     npm install
     if [ $? -ne 0 ]; then
         echo "Error: Failed to install npm dependencies."
         exit 1
     fi
+    echo "✓ npm dependencies installed successfully."
 else
-    echo "npm dependencies already installed, skipping..."
+    # Check if package.json has changed
+    if [ "package.json" -nt "node_modules/.package-lock.json" ] 2>/dev/null || [ ! -f "node_modules/.package-lock.json" ]; then
+        echo "Updating npm dependencies..."
+        npm install > /dev/null 2>&1
+        touch node_modules/.package-lock.json
+        echo "✓ npm dependencies updated."
+    else
+        echo "✓ npm dependencies already installed"
+    fi
 fi
 cd ..
-echo "npm dependencies installed."
 
 # Start NCA Toolkit (Docker)
-echo "Starting NCA Toolkit (Transcription Service)..."
+echo "Starting NCA Toolkit..."
 # Remove any existing container with same name to avoid conflict
 docker rm -f nca-toolkit &> /dev/null
-# Run container
-docker run --rm -d -p 8080:8080 --name nca-toolkit -e API_KEY=test_api_key stephengpope/no-code-architects-toolkit
+# Run container (suppress warnings)
+docker run --rm -d -p 8080:8080 --name nca-toolkit -e API_KEY=test_api_key stephengpope/no-code-architects-toolkit 2>&1 | grep -v "WARNING" || true
 if [ $? -ne 0 ]; then
     echo "Error: Failed to start NCA Toolkit container."
     echo "Please ensure Docker is running and you have permissions."
     exit 1
 fi
-echo "NCA Toolkit started on port 8080."
-
 # Wait a moment for NCA Toolkit to be ready
-sleep 2
+sleep 1
 
 # Check if ports are available
 DJANGO_PORT=8000
 REACT_PORT=5173
 
 if lsof -ti:$DJANGO_PORT &> /dev/null; then
-    echo "Warning: Port $DJANGO_PORT is already in use."
-    echo "Django will try to start, but may fail. Please free the port or stop the conflicting service."
+    PORT_PID=$(lsof -ti:$DJANGO_PORT | head -1)
+    PORT_PROCESS=$(ps -p $PORT_PID -o comm= 2>/dev/null || echo "unknown")
+    PORT_CMD=$(ps -p $PORT_PID -o args= 2>/dev/null | head -c 80 || echo "unknown")
+    
+    # Check if it's a previous Django instance
+    if echo "$PORT_CMD" | grep -qE "(manage.py|runserver|django)" 2>/dev/null; then
+        echo "⚠️  Port $DJANGO_PORT is already in use by a previous Django instance (PID: $PORT_PID)"
+        echo "   Killing previous instance..."
+        kill $PORT_PID 2>/dev/null
+        sleep 1
+        # Verify it's killed
+        if lsof -ti:$DJANGO_PORT &> /dev/null; then
+            echo "   Failed to kill process. Please manually kill it: kill $PORT_PID"
+        else
+            echo "   ✓ Previous instance killed"
+        fi
+    else
+        echo "⚠️  Port $DJANGO_PORT is already in use by: $PORT_PROCESS (PID: $PORT_PID)"
+        echo "   Command: $PORT_CMD"
+        echo "   Django will try to start, but may fail. To free the port, run: kill $PORT_PID"
+    fi
 fi
 
 if lsof -ti:$REACT_PORT &> /dev/null; then
-    echo "Warning: Port $REACT_PORT is already in use."
-    echo "React will try to start, but may fail. Please free the port or stop the conflicting service."
+    PORT_PID=$(lsof -ti:$REACT_PORT | head -1)
+    PORT_PROCESS=$(ps -p $PORT_PID -o comm= 2>/dev/null || echo "unknown")
+    PORT_CMD=$(ps -p $PORT_PID -o args= 2>/dev/null | head -c 80 || echo "unknown")
+    
+    # Check if it's a previous React/Vite instance
+    if echo "$PORT_CMD" | grep -qE "(vite|node.*dev|react)" 2>/dev/null; then
+        echo "⚠️  Port $REACT_PORT is already in use by a previous React/Vite instance (PID: $PORT_PID)"
+        echo "   Killing previous instance..."
+        kill $PORT_PID 2>/dev/null
+        sleep 1
+        # Verify it's killed
+        if lsof -ti:$REACT_PORT &> /dev/null; then
+            echo "   Failed to kill process. Please manually kill it: kill $PORT_PID"
+        else
+            echo "   ✓ Previous instance killed"
+        fi
+    else
+        echo "⚠️  Port $REACT_PORT is already in use by: $PORT_PROCESS (PID: $PORT_PID)"
+        echo "   Command: $PORT_CMD"
+        echo "   React will try to start, but may fail. To free the port, run: kill $PORT_PID"
+    fi
 fi
 
 # Start Django Backend
@@ -166,26 +265,27 @@ echo "Starting Django Backend..."
 cd legacy/root_debris
 source venv/bin/activate
 
-# Run migrations if needed
-echo "Running Django migrations..."
-python3 manage.py migrate --noinput > /dev/null 2>&1
+# Run migrations
+echo "Running database migrations..."
+python3 manage.py migrate --noinput
 if [ $? -ne 0 ]; then
-    echo "Warning: Migrations may have failed, but continuing..."
+    echo "Error: Database migrations failed."
+    echo "Please check the error messages above."
+    exit 1
 fi
+echo "✓ Migrations completed"
 
 # Start Django server
 python3 manage.py runserver 0.0.0.0:$DJANGO_PORT > /tmp/django.log 2>&1 &
 DJANGO_PID=$!
 
 # Wait for Django to be ready (check if port is listening)
-echo "Waiting for Django to start..."
 MAX_WAIT=30
 WAIT_COUNT=0
 while [ $WAIT_COUNT -lt $MAX_WAIT ]; do
     if lsof -ti:$DJANGO_PORT &> /dev/null; then
         # Port is listening, check if it's responding
         if curl -s http://localhost:$DJANGO_PORT/admin/ > /dev/null 2>&1; then
-            echo "Django is ready on port $DJANGO_PORT"
             break
         fi
     fi
@@ -207,7 +307,7 @@ cd ../..
 # Start React Frontend
 echo "Starting React Frontend..."
 cd frontend
-npm run dev -- --host &
+npm run dev -- --host > /dev/null 2>&1 &
 REACT_PID=$!
 sleep 2
 # Check if React started successfully

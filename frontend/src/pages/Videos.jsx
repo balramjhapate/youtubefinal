@@ -32,7 +32,6 @@ export function Videos() {
   const { data: videos, isLoading } = useQuery({
     queryKey: ['videos', filters],
     queryFn: () => videosApi.getAll(filters),
-    refetchInterval: 5000,
   });
 
   // Filter videos locally for search

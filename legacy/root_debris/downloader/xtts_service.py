@@ -34,20 +34,45 @@ class XTTSService:
             cls._instance = super(XTTSService, cls).__new__(cls)
         return cls._instance
 
+    @staticmethod
+    def get_device():
+        """
+        Determine the best available device for PyTorch.
+        Priority: MPS (Apple Silicon GPU) > CUDA (NVIDIA GPU) > CPU
+        """
+        if not TTS_AVAILABLE or torch is None:
+            return "cpu"
+        
+        # Check for Apple Silicon GPU (MPS) - for Mac with M1/M2/M3/M4 chips
+        if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+            return "mps"
+        
+        # Check for NVIDIA GPU (CUDA)
+        if torch.cuda.is_available():
+            return "cuda"
+        
+        # Fallback to CPU
+        return "cpu"
+
     def load_model(self):
         if not TTS_AVAILABLE:
             raise ImportError("TTS library is not available. Please check your Python version (requires 3.9-3.11, NOT 3.12+) and ensure all dependencies are installed.")
         if self._model is None:
             try:
-                device = "cuda" if torch.cuda.is_available() else "cpu"
-                logger.info(f"Loading XTTS v2 model on {device}...")
+                device = self.get_device()
+                device_name = {
+                    "mps": "Apple Silicon GPU (MPS)",
+                    "cuda": "NVIDIA GPU (CUDA)",
+                    "cpu": "CPU"
+                }.get(device, device)
+                logger.info(f"Loading XTTS v2 model on {device_name} ({device})...")
                 # Redirect stdin to auto-accept license prompt
                 old_stdin = sys.stdin
                 sys.stdin = StringIO('y\n')
                 try:
                     # This will download the model on first run
                     self._model = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(device)
-                    logger.info("XTTS v2 model loaded successfully.")
+                    logger.info(f"XTTS v2 model loaded successfully on {device_name}.")
                 finally:
                     sys.stdin = old_stdin
             except Exception as e:

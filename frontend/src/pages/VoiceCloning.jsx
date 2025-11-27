@@ -10,6 +10,9 @@ import {
     ChevronDown,
     ChevronUp,
     Settings2,
+    Edit,
+    Star,
+    StarOff,
 } from 'lucide-react';
 import { Button, Input, Textarea, Select, AudioPlayer, LoadingSpinner } from '../components/common';
 import { xttsApi } from '../api';
@@ -35,6 +38,11 @@ export function VoiceCloning() {
     // Voice saving
     const [voiceName, setVoiceName] = useState('');
     const [saveVoiceAfterGen, setSaveVoiceAfterGen] = useState(false);
+    
+    // Voice editing
+    const [editingVoice, setEditingVoice] = useState(null);
+    const [editVoiceName, setEditVoiceName] = useState('');
+    const [editVoiceFile, setEditVoiceFile] = useState(null);
 
     // Progress tracking
     const [isGenerating, setIsGenerating] = useState(false);
@@ -49,12 +57,19 @@ export function VoiceCloning() {
         queryFn: xttsApi.getLanguages,
     });
 
-    // Fetch saved voices
-    const { data: savedVoices = [], isLoading: voicesLoading, error: voicesError } = useQuery({
+    // Fetch saved voices - sort with default first
+    const { data: savedVoicesRaw = [], isLoading: voicesLoading, error: voicesError } = useQuery({
         queryKey: ['xtts-voices'],
         queryFn: xttsApi.getVoices,
         retry: false,
     });
+    
+    // Sort voices: default first, then by creation date
+    const savedVoices = savedVoicesRaw ? [...savedVoicesRaw].sort((a, b) => {
+        if (a.is_default && !b.is_default) return -1;
+        if (!a.is_default && b.is_default) return 1;
+        return new Date(b.created_at) - new Date(a.created_at);
+    }) : [];
     
     // Check if TTS service is unavailable
     const [ttsUnavailable, setTtsUnavailable] = useState(false);
@@ -172,6 +187,53 @@ export function VoiceCloning() {
         },
     });
 
+    // Update voice mutation
+    const updateVoiceMutation = useMutation({
+        mutationFn: async ({ voiceId, formData }) => {
+            return await xttsApi.updateVoice(voiceId, formData);
+        },
+        onSuccess: () => {
+            showSuccess('Success!', 'Voice updated successfully!');
+            queryClient.invalidateQueries(['xtts-voices']);
+            setEditingVoice(null);
+            setEditVoiceName('');
+            setEditVoiceFile(null);
+        },
+        onError: (error) => {
+            let errorMessage = 'Failed to update voice';
+            if (error.response?.data?.error) {
+                errorMessage = error.response.data.error;
+            } else if (error.data?.error) {
+                errorMessage = error.data.error;
+            } else if (error.message) {
+                errorMessage = error.message;
+            }
+            showError('Update Failed', errorMessage);
+        },
+    });
+
+    // Set default voice mutation
+    const setDefaultVoiceMutation = useMutation({
+        mutationFn: async (voiceId) => {
+            return await xttsApi.setDefaultVoice(voiceId);
+        },
+        onSuccess: () => {
+            showSuccess('Success!', 'Default voice set successfully!');
+            queryClient.invalidateQueries(['xtts-voices']);
+        },
+        onError: (error) => {
+            let errorMessage = 'Failed to set default voice';
+            if (error.response?.data?.error) {
+                errorMessage = error.response.data.error;
+            } else if (error.data?.error) {
+                errorMessage = error.data.error;
+            } else if (error.message) {
+                errorMessage = error.message;
+            }
+            showError('Set Default Failed', errorMessage);
+        },
+    });
+
     const handleGenerate = () => {
         if (!text.trim()) {
             showWarning('Validation Error', 'Please enter text to generate');
@@ -244,6 +306,37 @@ export function VoiceCloning() {
         setTopK(50);
         setTopP(0.85);
         showSuccess('Settings Reset', 'Settings have been reset to defaults');
+    };
+
+    const handleEditVoice = (voice) => {
+        setEditingVoice(voice.id);
+        setEditVoiceName(voice.name);
+        setEditVoiceFile(null);
+    };
+
+    const handleCancelEdit = () => {
+        setEditingVoice(null);
+        setEditVoiceName('');
+        setEditVoiceFile(null);
+    };
+
+    const handleSaveEdit = () => {
+        if (!editVoiceName.trim()) {
+            showWarning('Validation Error', 'Please enter a voice name');
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append('name', editVoiceName);
+        if (editVoiceFile) {
+            formData.append('file', editVoiceFile);
+        }
+
+        updateVoiceMutation.mutate({ voiceId: editingVoice, formData });
+    };
+
+    const handleSetDefault = (voiceId) => {
+        setDefaultVoiceMutation.mutate(voiceId);
     };
 
     const formatTime = (seconds) => {
@@ -319,7 +412,11 @@ export function VoiceCloning() {
                             <Select
                                 label="Language"
                                 value={language}
-                                onChange={(e) => setLanguage(e.target.value)}
+                                onChange={(e) => {
+                                    const selectedValue = e.target.value;
+                                    console.log('Language selected:', selectedValue, 'from options:', languageOptions.find(opt => opt.value === selectedValue));
+                                    setLanguage(selectedValue);
+                                }}
                                 options={languageOptions}
                                 className="mb-4"
                             />
@@ -337,16 +434,73 @@ export function VoiceCloning() {
                                 </label>
 
                                 {useExistingVoice ? (
-                                    <Select
-                                        label="Select Voice"
-                                        value={selectedVoiceId}
-                                        onChange={(e) => setSelectedVoiceId(e.target.value)}
-                                        options={savedVoices.map(v => ({
-                                            value: v.id,
-                                            label: v.name,
-                                        }))}
-                                        placeholder="Choose a saved voice..."
-                                    />
+                                    <div className="space-y-3">
+                                        {savedVoices.length === 0 ? (
+                                            <div className="p-4 bg-gray-900/50 rounded-lg border border-gray-700 text-center text-gray-400">
+                                                <p className="text-sm">No saved voices available. Please save a voice first.</p>
+                                            </div>
+                                        ) : (
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-64 overflow-y-auto">
+                                                {savedVoices.map((voice) => {
+                                                    const voiceIdStr = voice.id.toString();
+                                                    const isSelected = selectedVoiceId === voiceIdStr || selectedVoiceId === voice.id;
+                                                    return (
+                                                        <div
+                                                            key={voice.id}
+                                                            onClick={() => setSelectedVoiceId(voiceIdStr)}
+                                                            className={`p-3 rounded-lg border-2 cursor-pointer transition-all ${
+                                                                isSelected
+                                                                    ? 'border-purple-500 bg-purple-500/20'
+                                                                    : voice.is_default
+                                                                    ? 'border-yellow-500/50 bg-yellow-900/10 hover:border-yellow-500'
+                                                                    : 'border-gray-700 bg-gray-900/50 hover:border-purple-500/50'
+                                                            }`}
+                                                        >
+                                                            <div className="flex items-center justify-between mb-2">
+                                                                <div className="flex items-center gap-2 flex-1 min-w-0">
+                                                                    <h4 className="text-white font-semibold text-sm truncate">{voice.name}</h4>
+                                                                    {voice.is_default && (
+                                                                        <span className="px-2 py-0.5 text-xs bg-yellow-500/20 text-yellow-300 rounded-full border border-yellow-500/30 flex items-center gap-1 flex-shrink-0">
+                                                                            <Star className="w-3 h-3" />
+                                                                            Default
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+                                                                {isSelected && (
+                                                                    <div className="w-5 h-5 rounded-full bg-purple-500 flex items-center justify-center flex-shrink-0 ml-2">
+                                                                        <span className="text-white text-xs">✓</span>
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                            <div className="flex items-center gap-2 mb-2">
+                                                                {!voice.is_default && (
+                                                                    <button
+                                                                        onClick={(e) => {
+                                                                            e.stopPropagation();
+                                                                            handleSetDefault(voice.id);
+                                                                        }}
+                                                                        className="text-yellow-400 hover:text-yellow-300 transition-colors text-xs flex items-center gap-1"
+                                                                        title="Set as default"
+                                                                        disabled={setDefaultVoiceMutation.isPending}
+                                                                    >
+                                                                        <StarOff className="w-4 h-4" />
+                                                                        <span>Set Default</span>
+                                                                    </button>
+                                                                )}
+                                                            </div>
+                                                            <audio
+                                                                controls
+                                                                src={voice.file_url || voice.file}
+                                                                className="w-full"
+                                                                style={{ height: '32px' }}
+                                                                onClick={(e) => e.stopPropagation()}
+                                                            />
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        )}
+                                    </div>
                                 ) : (
                                     <>
                                         <Input
@@ -601,29 +755,111 @@ export function VoiceCloning() {
                                     {savedVoices.map((voice) => (
                                         <div
                                             key={voice.id}
-                                            className="p-4 bg-gray-900/50 rounded-lg border border-gray-700 hover:border-purple-500 transition-colors"
+                                            className={`p-4 bg-gray-900/50 rounded-lg border transition-colors ${
+                                                voice.is_default 
+                                                    ? 'border-yellow-500/50 bg-yellow-900/20' 
+                                                    : 'border-gray-700 hover:border-purple-500'
+                                            }`}
                                         >
                                             <div className="flex items-start justify-between mb-3">
                                                 <div className="flex-1">
-                                                    <h4 className="text-white font-semibold mb-1">{voice.name}</h4>
+                                                    <div className="flex items-center gap-2 mb-1">
+                                                        <h4 className="text-white font-semibold">{voice.name}</h4>
+                                                        {voice.is_default && (
+                                                            <span className="px-2 py-0.5 text-xs bg-yellow-500/20 text-yellow-300 rounded-full border border-yellow-500/30 flex items-center gap-1">
+                                                                <Star className="w-3 h-3" />
+                                                                Default
+                                                            </span>
+                                                        )}
+                                                    </div>
                                                     <p className="text-gray-400 text-sm">
                                                         {new Date(voice.created_at).toLocaleDateString()}
                                                     </p>
                                                 </div>
-                                                <button
-                                                    onClick={() => deleteVoiceMutation.mutate(voice.id)}
-                                                    className="text-red-400 hover:text-red-300 transition-colors"
-                                                    title="Delete voice"
-                                                >
-                                                    <Trash2 className="w-5 h-5" />
-                                                </button>
+                                                <div className="flex items-center gap-2">
+                                                    {!voice.is_default && (
+                                                        <button
+                                                            onClick={() => handleSetDefault(voice.id)}
+                                                            className="text-yellow-400 hover:text-yellow-300 transition-colors"
+                                                            title="Set as default"
+                                                            disabled={setDefaultVoiceMutation.isPending}
+                                                        >
+                                                            <StarOff className="w-5 h-5" />
+                                                        </button>
+                                                    )}
+                                                    <button
+                                                        onClick={() => handleEditVoice(voice)}
+                                                        className="text-blue-400 hover:text-blue-300 transition-colors"
+                                                        title="Edit voice"
+                                                    >
+                                                        <Edit className="w-5 h-5" />
+                                                    </button>
+                                                    <button
+                                                        onClick={() => {
+                                                            if (window.confirm(`Are you sure you want to delete "${voice.name}"?`)) {
+                                                                deleteVoiceMutation.mutate(voice.id);
+                                                            }
+                                                        }}
+                                                        className="text-red-400 hover:text-red-300 transition-colors"
+                                                        title="Delete voice"
+                                                        disabled={deleteVoiceMutation.isPending}
+                                                    >
+                                                        <Trash2 className="w-5 h-5" />
+                                                    </button>
+                                                </div>
                                             </div>
-                                            <audio
-                                                controls
-                                                src={voice.file}
-                                                className="w-full mt-2"
-                                                style={{ height: '40px' }}
-                                            />
+                                            
+                                            {editingVoice === voice.id ? (
+                                                <div className="space-y-3 mt-3 p-3 bg-gray-800/50 rounded-lg border border-purple-500/30">
+                                                    <Input
+                                                        label="Voice Name"
+                                                        value={editVoiceName}
+                                                        onChange={(e) => setEditVoiceName(e.target.value)}
+                                                        placeholder="Enter voice name"
+                                                    />
+                                                    <Input
+                                                        type="file"
+                                                        label="Voice File (optional)"
+                                                        accept="audio/*"
+                                                        onChange={(e) => setEditVoiceFile(e.target.files[0])}
+                                                    />
+                                                    <div className="flex gap-2">
+                                                        <Button
+                                                            size="sm"
+                                                            onClick={handleSaveEdit}
+                                                            disabled={updateVoiceMutation.isPending}
+                                                            className="flex-1 bg-purple-600 hover:bg-purple-700"
+                                                        >
+                                                            {updateVoiceMutation.isPending ? (
+                                                                <>
+                                                                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                                                    Saving...
+                                                                </>
+                                                            ) : (
+                                                                <>
+                                                                    <Save className="w-4 h-4 mr-2" />
+                                                                    Save
+                                                                </>
+                                                            )}
+                                                        </Button>
+                                                        <Button
+                                                            size="sm"
+                                                            variant="secondary"
+                                                            onClick={handleCancelEdit}
+                                                            disabled={updateVoiceMutation.isPending}
+                                                        >
+                                                            Cancel
+                                                        </Button>
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <audio
+                                                    controls
+                                                    src={voice.file_url || voice.file}
+                                                    className="w-full mt-2"
+                                                    style={{ height: '40px' }}
+                                                />
+                                            )}
                                         </div>
                                     ))}
                                 </div>

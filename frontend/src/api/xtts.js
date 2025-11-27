@@ -33,6 +33,20 @@ export const xttsApi = {
         const response = await apiClient.delete(`/xtts/voices/${voiceId}/`);
         return response.data;
     },
+
+    async updateVoice(voiceId, formData) {
+        const response = await apiClient.patch(`/xtts/voices/${voiceId}/`, formData, {
+            headers: {
+                'Content-Type': 'multipart/form-data',
+            },
+        });
+        return response.data;
+    },
+
+    async setDefaultVoice(voiceId) {
+        const response = await apiClient.post(`/xtts/voices/${voiceId}/set_default/`);
+        return response.data;
+    },
 };
 
 export default xttsApi;

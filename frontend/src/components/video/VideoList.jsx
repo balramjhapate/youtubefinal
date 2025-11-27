@@ -35,23 +35,9 @@ export function VideoList({ videos, isLoading }) {
       return videosApi.download(videoId);
     },
     onSuccess: (data, videoId) => {
-      // Poll for completion
-      const checkInterval = setInterval(() => {
-        queryClient.invalidateQueries(['videos']);
-        queryClient.invalidateQueries(['video', videoId]);
-        const video = videos?.find((v) => v.id === videoId);
-        if (video?.is_downloaded) {
-          clearInterval(checkInterval);
-          completeProcessing(videoId);
-          toast.success('Video downloaded successfully');
-        }
-      }, 1000);
-
-      // Timeout after 60 seconds
-      setTimeout(() => {
-        clearInterval(checkInterval);
-        completeProcessing(videoId);
-      }, 60000);
+      queryClient.invalidateQueries(['videos']);
+      queryClient.invalidateQueries(['video', videoId]);
+      toast.success('Download started');
     },
     onError: (error, videoId) => {
       completeProcessing(videoId);
@@ -65,33 +51,15 @@ export function VideoList({ videos, isLoading }) {
       return videosApi.transcribe(videoId);
     },
     onSuccess: (data, videoId) => {
-      toast.success('Transcription started');
       queryClient.invalidateQueries(['videos']);
       queryClient.invalidateQueries(['video', videoId]);
-      
-      // Poll for completion
-      const checkInterval = setInterval(() => {
-        queryClient.invalidateQueries(['videos']);
-        queryClient.invalidateQueries(['video', videoId]);
-        const video = videos?.find((v) => v.id === videoId);
-        if (video?.transcription_status === 'transcribed' || video?.transcription_status === 'failed') {
-          clearInterval(checkInterval);
-          completeProcessing(videoId);
-          if (video.transcription_status === 'transcribed') {
-            toast.success('Transcription completed');
-          }
-        }
-      }, 2000);
-
-      // Timeout after 5 minutes
-      setTimeout(() => {
-        clearInterval(checkInterval);
-        completeProcessing(videoId);
-      }, 300000);
+      completeProcessing(videoId);
+      toast.success('Transcription, AI processing, and script generation completed!');
     },
     onError: (error, videoId) => {
       completeProcessing(videoId);
-      toast.error(error?.response?.data?.error || 'Transcription failed');
+      const errorMessage = error?.response?.data?.error || error?.message || 'Processing failed';
+      toast.error(errorMessage);
     },
   });
 
@@ -103,26 +71,7 @@ export function VideoList({ videos, isLoading }) {
     onSuccess: (data, videoId) => {
       queryClient.invalidateQueries(['videos']);
       queryClient.invalidateQueries(['video', videoId]);
-      
-      // Poll for completion
-      const checkInterval = setInterval(() => {
-        queryClient.invalidateQueries(['videos']);
-        queryClient.invalidateQueries(['video', videoId]);
-        const video = videos?.find((v) => v.id === videoId);
-        if (video?.ai_processing_status === 'processed' || video?.ai_processing_status === 'failed') {
-          clearInterval(checkInterval);
-          completeProcessing(videoId);
-          if (video.ai_processing_status === 'processed') {
-            toast.success('AI processing completed');
-          }
-        }
-      }, 2000);
-
-      // Timeout after 2 minutes
-      setTimeout(() => {
-        clearInterval(checkInterval);
-        completeProcessing(videoId);
-      }, 120000);
+      toast.success('AI processing started');
     },
     onError: (error, videoId) => {
       completeProcessing(videoId);
@@ -142,10 +91,14 @@ export function VideoList({ videos, isLoading }) {
   const deleteMutation = useMutation({
     mutationFn: videosApi.delete,
     onSuccess: () => {
-      toast.success('Video deleted');
+      toast.success('Video deleted successfully');
       queryClient.invalidateQueries(['videos']);
+      queryClient.invalidateQueries(['dashboard-stats']);
     },
-    onError: (error) => toast.error(error),
+    onError: (error) => {
+      const errorMessage = error?.response?.data?.error || error?.message || error || 'Failed to delete video';
+      toast.error(errorMessage);
+    },
   });
 
   // Bulk mutations
@@ -322,8 +275,8 @@ export function VideoList({ videos, isLoading }) {
         </span>
       </div>
 
-      {/* Video grid */}
-      <div className="space-y-4">
+      {/* Video grid - 2 columns */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {videos.map((video) => (
           <VideoCard
             key={video.id}
