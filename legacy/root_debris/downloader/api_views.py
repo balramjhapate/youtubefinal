@@ -967,29 +967,22 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
 
         except Exception as e:
             import traceback
-<<<<<<< HEAD
-            error_msg = str(e)
+            error_details = str(e)
+            print(f"Transcription exception: {error_details}")
             traceback.print_exc()
             
             # Check if it's a "no audio stream" error
-            if 'no audio stream' in error_msg.lower() or 'video-only' in error_msg.lower():
+            if 'no audio stream' in error_details.lower() or 'video-only' in error_details.lower():
                 video.transcription_status = 'skipped'
                 video.transcript_error_message = 'Video has no audio stream - transcription skipped'
                 video.save()
                 return Response({
                     "status": "skipped",
                     "message": "Video has no audio stream. Transcription skipped. You can still process other steps if you have an existing transcript.",
-                    "error": error_msg,
+                    "error": error_details,
                     "step": "transcription",
                     "video_id": video.id
                 }, status=status.HTTP_200_OK)
-            
-            video.transcription_status = 'failed'
-            video.transcript_error_message = error_msg
-=======
-            error_details = str(e)
-            print(f"Transcription exception: {error_details}")
-            traceback.print_exc()
             
             # Provide more detailed error message
             if 'whisper' in error_details.lower():
@@ -1003,16 +996,11 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
             
             video.transcription_status = 'failed'
             video.transcript_error_message = error_details
->>>>>>> dd01845a9edf790183474bf32e70509ec6ff3925
             video.save()
 
             return Response({
                 "status": "failed",
-<<<<<<< HEAD
-                "error": error_msg,
-=======
                 "error": error_details,
->>>>>>> dd01845a9edf790183474bf32e70509ec6ff3925
                 "step": "transcription"
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
