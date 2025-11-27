@@ -106,6 +106,17 @@ class VideoDownloadSerializer(serializers.ModelSerializer):
     review_status = serializers.SerializerMethodField()
     review_notes = serializers.SerializerMethodField()
     reviewed_at = serializers.SerializerMethodField()
+    # Whisper transcription fields
+    whisper_transcription_status = serializers.SerializerMethodField()
+    whisper_transcript = serializers.SerializerMethodField()
+    whisper_transcript_without_timestamps = serializers.SerializerMethodField()
+    whisper_transcript_hindi = serializers.SerializerMethodField()
+    whisper_transcript_language = serializers.SerializerMethodField()
+    whisper_model_used = serializers.SerializerMethodField()
+    whisper_confidence_avg = serializers.SerializerMethodField()
+    whisper_transcript_started_at = serializers.SerializerMethodField()
+    whisper_transcript_processed_at = serializers.SerializerMethodField()
+    whisper_transcript_error_message = serializers.SerializerMethodField()
 
     class Meta:
         model = VideoDownload
@@ -121,10 +132,15 @@ class VideoDownloadSerializer(serializers.ModelSerializer):
             'extraction_method', 'status', 'error_message',
             # AI Processing
             'ai_processing_status', 'ai_processed_at', 'ai_summary', 'ai_tags', 'ai_error_message',
-            # Transcription
+            # Transcription (NCA)
             'transcription_status', 'transcript', 'transcript_without_timestamps', 'transcript_hindi',
             'transcript_language', 'transcript_started_at', 'transcript_processed_at',
             'transcript_error_message',
+            # Whisper Transcription
+            'whisper_transcription_status', 'whisper_transcript', 'whisper_transcript_without_timestamps',
+            'whisper_transcript_hindi', 'whisper_transcript_language', 'whisper_model_used',
+            'whisper_confidence_avg', 'whisper_transcript_started_at', 'whisper_transcript_processed_at',
+            'whisper_transcript_error_message',
             # Script Generation
             'script_status', 'hindi_script', 'clean_script_for_tts', 'script_error_message', 'script_generated_at',
             # TTS Parameters
@@ -268,6 +284,77 @@ class VideoDownloadSerializer(serializers.ModelSerializer):
             return getattr(obj, 'reviewed_at', None)
         except (AttributeError, ValueError):
             return None
+    
+    # Whisper transcription getters
+    def get_whisper_transcription_status(self, obj):
+        """Safely get whisper_transcription_status field"""
+        try:
+            return getattr(obj, 'whisper_transcription_status', 'not_transcribed')
+        except (AttributeError, ValueError):
+            return 'not_transcribed'
+    
+    def get_whisper_transcript(self, obj):
+        """Safely get whisper_transcript field"""
+        try:
+            return getattr(obj, 'whisper_transcript', '')
+        except (AttributeError, ValueError):
+            return ''
+    
+    def get_whisper_transcript_without_timestamps(self, obj):
+        """Safely get whisper_transcript_without_timestamps field"""
+        try:
+            return getattr(obj, 'whisper_transcript_without_timestamps', '')
+        except (AttributeError, ValueError):
+            return ''
+    
+    def get_whisper_transcript_hindi(self, obj):
+        """Safely get whisper_transcript_hindi field"""
+        try:
+            return getattr(obj, 'whisper_transcript_hindi', '')
+        except (AttributeError, ValueError):
+            return ''
+    
+    def get_whisper_transcript_language(self, obj):
+        """Safely get whisper_transcript_language field"""
+        try:
+            return getattr(obj, 'whisper_transcript_language', '')
+        except (AttributeError, ValueError):
+            return ''
+    
+    def get_whisper_model_used(self, obj):
+        """Safely get whisper_model_used field"""
+        try:
+            return getattr(obj, 'whisper_model_used', '')
+        except (AttributeError, ValueError):
+            return ''
+    
+    def get_whisper_confidence_avg(self, obj):
+        """Safely get whisper_confidence_avg field"""
+        try:
+            return getattr(obj, 'whisper_confidence_avg', None)
+        except (AttributeError, ValueError):
+            return None
+    
+    def get_whisper_transcript_started_at(self, obj):
+        """Safely get whisper_transcript_started_at field"""
+        try:
+            return getattr(obj, 'whisper_transcript_started_at', None)
+        except (AttributeError, ValueError):
+            return None
+    
+    def get_whisper_transcript_processed_at(self, obj):
+        """Safely get whisper_transcript_processed_at field"""
+        try:
+            return getattr(obj, 'whisper_transcript_processed_at', None)
+        except (AttributeError, ValueError):
+            return None
+    
+    def get_whisper_transcript_error_message(self, obj):
+        """Safely get whisper_transcript_error_message field"""
+        try:
+            return getattr(obj, 'whisper_transcript_error_message', '')
+        except (AttributeError, ValueError):
+            return ''
 
 
 class VideoDownloadListSerializer(serializers.ModelSerializer):

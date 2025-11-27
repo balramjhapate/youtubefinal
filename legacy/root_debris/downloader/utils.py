@@ -1,15 +1,21 @@
-import re
 import os
+import re
 import json
-import requests
-import subprocess
 import tempfile
+import subprocess
+from io import BytesIO
 from urllib.parse import urlparse
 from pathlib import Path
-from django.core.files.base import ContentFile
 from django.conf import settings
+from django.core.files.base import ContentFile
 from deep_translator import GoogleTranslator
+import requests
+
+# Import NCA Toolkit client
 from .nca_toolkit_client import get_nca_client
+
+# Import new Whisper transcription module
+from . import whisper_transcribe
 
 def detect_video_source(url):
     """Detect video source/platform from URL"""
@@ -1106,7 +1112,9 @@ def extract_audio_from_video(video_path, output_audio_path=None):
 
 def transcribe_audio_local(audio_path, language=None, model_size='base'):
     """
-    Transcribe audio file locally using OpenAI Whisper
+    Transcribe audio file locally using OpenAI Whisper with enhanced features.
+    Now uses the whisper_transcribe module for better language detection,
+    time-aligned segments, and confidence checking.
     
     Args:
         audio_path: Path to audio file
@@ -1119,65 +1127,101 @@ def transcribe_audio_local(audio_path, language=None, model_size='base'):
         dict: {
             'text': str (full transcript),
             'language': str (detected language code),
+            'segments': List[Dict] (segments with timestamps and confidence),
             'status': 'success' or 'failed',
             'error': str (if failed)
         }
     """
     try:
-        # Import whisper (lazy import to avoid errors if not installed)
-        try:
-            import whisper
-        except ImportError:
-            return {
-                'text': '',
-                'language': '',
-                'status': 'failed',
-                'error': 'Whisper library not installed. Please install: pip install openai-whisper'
-            }
-        
         if not os.path.exists(audio_path):
             return {
                 'text': '',
                 'language': '',
+                'segments': [],
                 'status': 'failed',
                 'error': f'Audio file not found: {audio_path}'
             }
         
+        # Get configuration from settings
+        model_size = getattr(settings, 'WHISPER_MODEL_SIZE', model_size)
+        confidence_threshold = getattr(settings, 'WHISPER_CONFIDENCE_THRESHOLD', -1.5)
+        retry_enabled = getattr(settings, 'WHISPER_RETRY_WITH_LARGER_MODEL', True)
+        whisperx_enabled = getattr(settings, 'WHISPERX_ENABLED', False)
+        device = getattr(settings, 'WHISPER_DEVICE', 'cpu')
+        
         print(f"Loading Whisper model: {model_size}")
-        # Load Whisper model (will download on first use)
-        model = whisper.load_model(model_size)
+        print(f"Configuration: confidence_threshold={confidence_threshold}, "
+              f"retry_enabled={retry_enabled}, whisperx_enabled={whisperx_enabled}")
         
-        print(f"Transcribing audio: {audio_path}")
+        # Use WhisperX if enabled (better timestamps and diarization)
+        if whisperx_enabled:
+            print("Using WhisperX for improved alignment...")
+            result = whisper_transcribe.transcribe_with_whisperx(
+                model_name=model_size,
+                audio_path=audio_path,
+                device=device,
+                language=language
+            )
+            
+            if result['status'] == 'success':
+                return result
+            else:
+                print(f"WhisperX failed: {result.get('error')}. Falling back to standard Whisper.")
+        
+        # Load standard Whisper model
+        model = whisper_transcribe.load_whisper_model(model_size)
+        
         # Transcribe with optional language specification
-        transcribe_options = {}
-        if language and language != 'auto':
-            transcribe_options['language'] = language
-        
-        result = model.transcribe(
-            audio_path,
-            **transcribe_options,
-            task='transcribe'  # Can also use 'translate' to translate to English
+        print(f"Transcribing audio: {audio_path}")
+        result = whisper_transcribe.transcribe_with_whisper(
+            model=model,
+            audio_path=audio_path,
+            task='transcribe',
+            language=language if language and language != 'auto' else None
         )
         
-        # Extract transcript text
-        transcript_text = result.get('text', '').strip()
+        if result['status'] != 'success':
+            return result
+        
+        # Check segment confidence and retry if needed
+        if retry_enabled and result.get('segments'):
+            high_conf, low_conf = whisper_transcribe.check_segment_confidence(
+                result['segments'],
+                threshold=confidence_threshold
+            )
+            
+            if low_conf:
+                print(f"Found {len(low_conf)} low-confidence segments. Attempting retry...")
+                retry_result = whisper_transcribe.retry_low_confidence_segments(
+                    audio_path=audio_path,
+                    segments=result['segments'],
+                    current_model_name=model_size,
+                    threshold=confidence_threshold
+                )
+                
+                if retry_result.get('improved'):
+                    print(f"Retry improved {retry_result.get('retry_count')} segments")
+                    result['segments'] = retry_result['segments']
+                    # Regenerate text from improved segments
+                    result['text'] = whisper_transcribe.format_segments_to_plain_text(result['segments'])
+        
         detected_language = result.get('language', 'unknown')
+        segments = result.get('segments', [])
         
-        print(f"Transcription completed. Language: {detected_language}, Length: {len(transcript_text)} chars")
+        print(f"Transcription completed. Language: {detected_language}, "
+              f"Length: {len(result['text'])} chars, Segments: {len(segments)}")
         
-        return {
-            'text': transcript_text,
-            'language': detected_language,
-            'status': 'success',
-            'error': None
-        }
+        return result
         
     except Exception as e:
         error_msg = str(e)
         print(f"Transcription error: {error_msg}")
+        import traceback
+        traceback.print_exc()
         return {
             'text': '',
             'language': '',
+            'segments': [],
             'status': 'failed',
             'error': error_msg
         }
@@ -1186,6 +1230,8 @@ def transcribe_video(video_download):
     """
     Transcribe video using NCA Toolkit API (fast) or local Whisper (fallback)
     Also translates the transcript to Hindi automatically
+    
+    If DUAL_TRANSCRIPTION_ENABLED is True, runs both NCA and Whisper in parallel for comparison.
     
     Args:
         video_download: VideoDownload model instance
@@ -1199,6 +1245,13 @@ def transcribe_video(video_download):
             'error': str (if failed)
         }
     """
+    # Check if dual transcription is enabled
+    if getattr(settings, 'DUAL_TRANSCRIPTION_ENABLED', False):
+        print("🔄 Dual transcription mode enabled - running both NCA and Whisper...")
+        from . import dual_transcribe
+        return dual_transcribe.transcribe_video_dual(video_download)
+    
+    # Original single transcription logic (NCA or Whisper fallback)
     # Try NCA Toolkit API first (much faster)
     if getattr(settings, 'NCA_API_ENABLED', False):
         nca_client = get_nca_client()
@@ -1533,13 +1586,52 @@ def transcribe_video(video_download):
                 model_size='base'  # Good balance of speed and accuracy
             )
             
-            # Translate to Hindi if transcription was successful
-            if transcript_result.get('status') == 'success' and transcript_result.get('text'):
+            # Process segments and generate SRT if available
+            if transcript_result.get('status') == 'success':
+                segments = transcript_result.get('segments', [])
+                if segments:
+                    # Generate timestamped text from segments
+                    timestamped_lines = []
+                    plain_lines = []
+                    for seg in segments:
+                        start = seg.get('start', 0)
+                        text = seg.get('text', '').strip()
+                        if text:
+                            # Convert seconds to HH:MM:SS
+                            hours = int(start // 3600)
+                            minutes = int((start % 3600) // 60)
+                            seconds = int(start % 60)
+                            timestamp = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+                            timestamped_lines.append(f"{timestamp} {text}")
+                            plain_lines.append(text)
+                    
+                    if timestamped_lines:
+                        transcript_result['transcript_with_timestamps'] = '\n'.join(timestamped_lines)
+                        transcript_result['transcript_without_timestamps'] = ' '.join(plain_lines)
+                    
+                    # Generate SRT file
+                    try:
+                        srt_filename = f"transcript_{video_download.pk}.srt"
+                        srt_path = os.path.join(settings.MEDIA_ROOT, 'transcripts', srt_filename)
+                        srt_file_path = write_srt(segments, srt_path)
+                        if srt_file_path:
+                            # Read SRT content
+                            with open(srt_file_path, 'r', encoding='utf-8') as f:
+                                transcript_result['srt'] = f.read()
+                    except Exception as e:
+                        print(f"Warning: Could not generate SRT file: {e}")
+                
+                # Translate to Hindi if transcription was successful
                 transcript_text = transcript_result.get('text', '')
-                print(f"Translating transcript to Hindi...")
-                hindi_translation = translate_text(transcript_text, target='hi')
-                transcript_result['text_hindi'] = hindi_translation
-                print(f"Translation complete. Original: {len(transcript_text)} chars, Hindi: {len(hindi_translation)} chars")
+                if transcript_text:
+                    print(f"Translating transcript to Hindi (detected language: {transcript_result.get('language', 'unknown')})...")
+                    hindi_translation = translate_text(transcript_text, target='hi')
+                    transcript_result['text_hindi'] = hindi_translation
+                    print(f"Translation complete. Original: {len(transcript_text)} chars, Hindi: {len(hindi_translation)} chars")
+            
+            # If transcription failed, return the error
+            if transcript_result.get('status') != 'success':
+                return transcript_result
             
             return transcript_result
             
@@ -1555,11 +1647,28 @@ def transcribe_video(video_download):
     except Exception as e:
         error_msg = str(e)
         print(f"Error in local transcription: {error_msg}")
+        import traceback
+        traceback.print_exc()
+        
+        # Provide more detailed error messages
+        error_details = error_msg
+        if 'whisper' in error_msg.lower() or 'model' in error_msg.lower():
+            error_details = f"Whisper model error: {error_msg}. Please ensure Whisper is properly installed."
+        elif 'ffmpeg' in error_msg.lower() or 'audio' in error_msg.lower():
+            error_details = f"Audio extraction error: {error_msg}. Please check if ffmpeg is installed and the video file is valid."
+        elif 'file' in error_msg.lower() or 'not found' in error_msg.lower():
+            error_details = f"File error: {error_msg}. Please ensure the video file exists and is accessible."
+        elif 'permission' in error_msg.lower():
+            error_details = f"Permission error: {error_msg}. Please check file permissions."
+        else:
+            error_details = f"Transcription failed: {error_msg}"
+        
         return {
             'text': '',
             'language': '',
+            'segments': [],
             'status': 'failed',
-            'error': error_msg
+            'error': error_details
         }
 
 def add_caption_to_video(video_download, caption_options=None):
@@ -2332,40 +2441,69 @@ def remove_questions_from_script(script):
 
 def format_hindi_script(raw_script, title):
     """
-    Format the Hindi script with proper structure including title, voice prompt, and main content
+    Format the Hindi script - remove title/voice prompt sections and make it kid-friendly
     
     Args:
         raw_script: Raw script text from AI
-        title: Video title
+        title: Video title (not used anymore, kept for compatibility)
         
     Returns:
-        str: Formatted script with sections
+        str: Formatted script without headers, kid-friendly
     """
-    # Check if script already has the format
-    if '**शीर्षक:**' in raw_script and '**आवाज़:**' in raw_script:
-        # Ensure final CTA is present
-        if 'आपकी मम्मी कसम सब्सक्राइब' not in raw_script:
-            return raw_script + "\n\nआपकी मम्मी कसम सब्सक्राइब जरूर करे"
-        return raw_script
+    # Remove title and voice prompt sections if present
+    lines = raw_script.split('\n')
+    clean_lines = []
+    skip_headers = False
     
-    # Extract title for header - use a question format if it's a statement
-    script_title = title if title else "वीडियो"
-    # If title doesn't end with ?, make it a question format
-    if script_title and not script_title.strip().endswith('?'):
-        # Try to convert to question format, but keep original if it's already good
-        pass
+    for line in lines:
+        line_stripped = line.strip()
+        
+        # Skip title and voice prompt headers
+        if line_stripped.startswith('**शीर्षक:**') or line_stripped.startswith('**आवाज़:**'):
+            skip_headers = True
+            continue
+        
+        # Skip empty lines after headers
+        if skip_headers and not line_stripped:
+            continue
+        
+        # Start collecting content after headers
+        if skip_headers and line_stripped:
+            skip_headers = False
+        
+        # Skip voice prompt content patterns
+        if ('माँ बाप की कसम' in line_stripped or 
+            'subscribe और like कर के जाओ' in line_stripped or
+            'अगर माँ बाप से प्यार' in line_stripped):
+            continue
+        
+        # Add the line if it's not a header
+        if not line_stripped.startswith('**'):
+            clean_lines.append(line)
     
-    # Default voice prompt
-    voice_prompt = "माँ बाप की कसम, subscribe और like कर के जाओ अगर माँ बाप से प्यार करते हो तो! धन्यवाद!"
+    # Join lines and ensure "Dekho" at the start
+    processed_script = '\n'.join(clean_lines).strip()
     
-    # Format the script - CTA will be added later to ensure it's always at the end
-    formatted = f"""**शीर्षक:** {script_title}
-
-**आवाज़:** {voice_prompt}
-
-{raw_script}"""
+    # Add "Dekho" at the start of the first content line if not present
+    lines = processed_script.split('\n')
+    for i, line in enumerate(lines):
+        line_stripped = line.strip()
+        if line_stripped:
+            # This is the first content line
+            if not (line_stripped.startswith('देखो') or line_stripped.startswith('Dekho') or 
+                    re.match(r'^\d{1,2}:\d{2}:\d{2}\s+देखो', line_stripped)):
+                # Add "देखो" at the start
+                if re.match(r'^\d{1,2}:\d{2}:\d{2}\s+', line_stripped):
+                    # Has timestamp, add "देखो" after timestamp
+                    lines[i] = re.sub(r'^(\d{1,2}:\d{2}:\d{2}\s+)(.+)', r'\1देखो \2', line_stripped)
+                else:
+                    # No timestamp, add "देखो" at start
+                    lines[i] = f"देखो {line_stripped}"
+            break
     
-    return formatted.strip()
+    processed_script = '\n'.join(lines)
+    
+    return processed_script.strip()
 
 
 def convert_srt_to_timestamped_text(srt_text):
@@ -2412,6 +2550,47 @@ def convert_srt_to_timestamped_text(srt_text):
                     lines.append(f"{timestamp} {text}")
     
     return '\n'.join(lines)
+
+def write_srt(segments, out_path="out.srt"):
+    """
+    Write SRT subtitle file from Whisper segments
+    
+    Args:
+        segments: List of segment dicts with 'start', 'end', and 'text' keys
+        out_path: Output file path for SRT file
+        
+    Returns:
+        str: Path to written SRT file, or None if failed
+    """
+    try:
+        # Ensure directory exists
+        out_path_obj = Path(out_path)
+        out_path_obj.parent.mkdir(parents=True, exist_ok=True)
+        
+        with open(out_path, "w", encoding="utf-8") as f:
+            for i, s in enumerate(segments, start=1):
+                def fmt(ts):
+                    """Format timestamp to SRT format: HH:MM:SS,mmm"""
+                    h = int(ts // 3600)
+                    m = int((ts % 3600) // 60)
+                    sec = int(ts % 60)
+                    ms = int((ts - int(ts)) * 1000)
+                    return f"{h:02d}:{m:02d}:{sec:02d},{ms:03d}"
+                
+                start_time = s.get('start', 0)
+                end_time = s.get('end', start_time + 1)
+                text = s.get('text', '').strip()
+                
+                if text:
+                    f.write(f"{i}\n")
+                    f.write(f"{fmt(start_time)} --> {fmt(end_time)}\n")
+                    f.write(text + "\n\n")
+        
+        print(f"SRT file written successfully: {out_path}")
+        return out_path
+    except Exception as e:
+        print(f"Error writing SRT file: {e}")
+        return None
 
 def get_clean_script_for_tts(formatted_script):
     """
@@ -2492,7 +2671,7 @@ def get_clean_script_for_tts(formatted_script):
                 skip_voice_prompt = False
         
         # Skip CTA line (we'll add it at the end)
-        if 'आपकी मम्मी कसम' in line or 'सब्सक्राइब' in line:
+        if 'आपकी मम्मी' in line or 'आपकी मम्मी पापा' in line or ('कसम' in line and 'सब्सक्राइब' in line) or ('अगर आपको ये वीडियो पसंद' in line):
             continue
         
         # Skip introductory text
@@ -2534,8 +2713,18 @@ def get_clean_script_for_tts(formatted_script):
     # Join all clean lines
     clean_script = '\n'.join(clean_lines).strip()
     
-    # ALWAYS add CTA at the end - append it properly formatted
-    cta_text = "आपकी मम्मी कसम सब्सक्राइब जरूर करे"
+    # Add "Dekho" at the start if not present
+    if clean_script and not clean_script.strip().startswith('देखो') and not clean_script.strip().startswith('Dekho'):
+        # Find the first non-empty line and add "देखो" to it
+        lines = clean_script.split('\n')
+        if lines:
+            first_line = lines[0].strip()
+            if first_line:
+                lines[0] = f"देखो {first_line}"
+                clean_script = '\n'.join(lines)
+    
+    # ALWAYS add CTA at the end - append it properly formatted (with mother and father)
+    cta_text = "आपकी मम्मी पापा कसम सब्सक्राइब जरूर करे"
     partial_cta = "आपकी मम्मी कसम सब्सक्राइब"
     
     if clean_script:
@@ -2549,9 +2738,18 @@ def get_clean_script_for_tts(formatted_script):
             return clean_script
         
         # Remove CTA from anywhere in the script (to avoid duplicates)
-        # Replace full CTA first
+        # Replace all old CTA formats
+        old_ctas = [
+            "अगर आपको ये वीडियो पसंद आया तो like और subscribe जरूर करें! धन्यवाद!",
+            "आपकी मम्मी कसम सब्सक्राइब जरूर करे",
+            "आपकी मम्मी कसम सब्सक्राइब"
+        ]
+        for old_cta in old_ctas:
+            if old_cta in clean_script:
+                clean_script = clean_script.replace(old_cta, "").strip()
+        
+        # Remove new CTA if already present
         if cta_text in clean_script:
-            # Remove it but preserve the rest of the content
             clean_script = clean_script.replace(cta_text, "").strip()
         
         # Remove partial CTA if full CTA is not present
@@ -2873,23 +3071,35 @@ def generate_hindi_script(video_download):
                         hindi_text = translate_text(line, target='hi')
                         timestamped_lines.append(hindi_text)
             
-            # Format the script with title, voice prompt, and timestamped content
-            script_parts = []
+            # Process timestamped content - add "Dekho" at the start of first line and make it kid-friendly
+            processed_lines = []
+            for i, line in enumerate(timestamped_lines):
+                if i == 0:
+                    # Add "Dekho" at the start of the first line
+                    # Extract timestamp and text
+                    timestamp_match = re.match(r'^(\d{1,2}:\d{2}:\d{2})\s+(.+)$', line)
+                    if timestamp_match:
+                        timestamp = timestamp_match.group(1)
+                        text = timestamp_match.group(2)
+                        # Add "Dekho" at the start if not already present
+                        if not text.strip().startswith('देखो') and not text.strip().startswith('Dekho'):
+                            text = f"देखो {text}"
+                        processed_lines.append(f"{timestamp} {text}")
+                    else:
+                        # No timestamp, just add "Dekho" at start
+                        if not line.strip().startswith('देखो') and not line.strip().startswith('Dekho'):
+                            processed_lines.append(f"देखो {line}")
+                        else:
+                            processed_lines.append(line)
+                else:
+                    processed_lines.append(line)
             
-            # Add title section
-            script_parts.append(f"**शीर्षक:** {title}")
+            # Add timestamped content (ensuring all keypoints are covered)
+            script_content = "\n".join(processed_lines)
             
-            # Add voice prompt section
-            script_parts.append(f"**आवाज़:** माँ बाप की कसम, subscribe और like कर के जाओ अगर माँ बाप से प्यार करते हो तो! धन्यवाद!")
-            
-            # Add timestamped content
-            script_parts.append("\n".join(timestamped_lines))
-            
-            # Add CTA at the end
-            cta_text = "आपकी मम्मी कसम सब्सक्राइब जरूर करे"
-            script_parts.append(cta_text)
-            
-            formatted_script = "\n\n".join(script_parts)
+            # Add CTA at the end with mother father reference
+            cta_text = "आपकी मम्मी पापा कसम सब्सक्राइब जरूर करे"
+            formatted_script = f"{script_content}\n\n{cta_text}"
             
             return {
                 'script': formatted_script,
@@ -2905,41 +3115,34 @@ def generate_hindi_script(video_download):
         if not content_for_script:
             content_for_script = f"{title}. {description}"
         
-        # Create system prompt for Hindi script generation
-        system_prompt = """आप एक विशेषज्ञ स्क्रिप्ट राइटर हैं जो वीडियो कंटेंट के लिए हिंदी में प्राकृतिक और आकर्षक स्क्रिप्ट बनाते हैं।
+        # Create system prompt for Hindi script generation (kid-friendly)
+        system_prompt = """आप एक विशेषज्ञ स्क्रिप्ट राइटर हैं जो बच्चों के लिए वीडियो कंटेंट के लिए हिंदी में मजेदार, आकर्षक और बच्चों को पसंद आने वाली स्क्रिप्ट बनाते हैं।
 
 आपका कार्य:
-1. वीडियो की सामग्री को समझकर एक प्राकृतिक हिंदी स्क्रिप्ट बनाएं
+1. वीडियो की सामग्री को समझकर एक मजेदार और बच्चों के लिए आकर्षक हिंदी स्क्रिप्ट बनाएं
 2. स्क्रिप्ट को वीडियो की अवधि के अनुसार समायोजित करें
-3. स्क्रिप्ट को बोलने योग्य, प्राकृतिक और आकर्षक बनाएं
-4. स्क्रिप्ट को निम्नलिखित फॉर्मेट में बनाएं:
+3. स्क्रिप्ट को बोलने योग्य, प्राकृतिक, मजेदार और बच्चों को पसंद आने वाला बनाएं
+4. **किसी भी header या title section न बनाएं - सीधे कंटेंट से शुरू करें**
 
-**शीर्षक:** [वीडियो का शीर्षक या एक आकर्षक हेडलाइन]
+[मुख्य स्क्रिप्ट सामग्री - वीडियो की सामग्री के आधार पर, बच्चों के लिए मजेदार और आकर्षक]
 
-**आवाज़:** [एक आकर्षक वॉयस प्रॉम्प्ट जैसे "माँ बाप की कसम, subscribe और like कर के जाओ अगर माँ बाप से प्यार करते हो तो! धन्यवाद!"]
+[अंत में CTA: "आपकी मम्मी पापा कसम सब्सक्राइब जरूर करे"]
 
-[मुख्य स्क्रिप्ट सामग्री - वीडियो की सामग्री के आधार पर]
-
-[अंत में CTA: "आपकी मम्मी कसम सब्सक्राइब जरूर करे"]
-
-महत्वपूर्ण निर्देश:
+महत्वपूर्ण निर्देश (बच्चों के लिए):
 - स्क्रिप्ट पूरी तरह से हिंदी (देवनागरी) में होनी चाहिए
-- **रोजमर्रा की बोलचाल की हिंदी इस्तेमाल करें - formal या शुद्ध हिंदी नहीं**
+- **बच्चों की बोलचाल की हिंदी इस्तेमाल करें - simple, fun, और engaging**
+- **मजेदार और रोचक भाषा का उपयोग करें - बच्चों को attract करने के लिए**
 - स्क्रिप्ट प्राकृतिक और बोलने योग्य होनी चाहिए
 - वीडियो की अवधि को ध्यान में रखते हुए स्क्रिप्ट की लंबाई निर्धारित करें
 - **सीधे बिंदु पर आएं - कोई ग्रीटिंग, नमस्कार, या परिचयात्मक वाक्य नहीं**
 - **धन्यवाद या समापन वाक्य नहीं - सीधे कंटेंट का वर्णन शुरू करें**
 - **स्क्रिप्ट सीधे वीडियो में हो रही एक्शन/घटना का वर्णन करे - सवाल बिल्कुल नहीं**
 - **कोई भी सवाल नहीं - सिर्फ वर्णन और एक्शन**
-- **पहली लाइन सीधे एक्शन से शुरू होनी चाहिए, सवाल नहीं**
-- **सिर्फ मुख्य कंटेंट - वीडियो में क्या हो रहा है उसका वर्णन, बाकी सब हटाएं**
-- उदाहरण (सही): "00:00:00 देखो इस लड़की ने अपनी सोई हुई दोस्तों के" - सीधे एक्शन
-- उदाहरण (गलत): "00:00:00 क्या आपने कभी इतनी छोटी बंदूक देखी है?" - सवाल नहीं
-- उदाहरण (गलत): "क्या आपको भी ये पसंद आई?" - सवाल नहीं
-- **शीर्षक:** और **आवाज़:** सेक्शन जरूर शामिल करें
-- अंत में "आपकी मम्मी कसम सब्सक्राइब जरूर करे" जरूर जोड़ें
-- **बिल्कुल बचें:** "क्या आपने...", "क्या आपको...", "क्या ये...", "नमस्कार दोस्तों", "दिल थाम के बैठिए", "आज हम देखेंगे", "चलिए शुरू करते हैं" जैसे वाक्यों से
-- **सिर्फ मुख्य कंटेंट - वीडियो में जो हो रहा है उसका सीधा वर्णन, कोई सवाल नहीं, कोई अतिरिक्त बात नहीं**"""
+- **पहली लाइन हमेशा "देखो" से शुरू होनी चाहिए** (जैसे "देखो इस लड़की ने...")
+- **किसी भी header (शीर्षक, आवाज़) section न बनाएं - सीधे कंटेंट से शुरू करें**
+- अंत में CTA जरूर जोड़ें: "आपकी मम्मी पापा कसम सब्सक्राइब जरूर करे"
+- **बिल्कुल बचें:** "क्या आपने...", "क्या आपको...", "क्या ये...", "नमस्कार दोस्तों", "दिल थाम के बैठिए", "आज हम देखेंगे", "चलिए शुरू करते हैं", "**शीर्षक:**", "**आवाज़:**" जैसे वाक्यों/headers से
+- **सिर्फ मुख्य कंटेंट - वीडियो में जो हो रहा है उसका सीधा वर्णन, कोई सवाल नहीं, कोई header नहीं, बच्चों को attract करने वाली मजेदार भाषा**"""
         
         # Create user message with video details
         duration_text = f"{int(duration)} सेकंड" if duration > 0 else "अज्ञात अवधि"
@@ -2951,21 +3154,22 @@ def generate_hindi_script(video_download):
 **मूल ट्रांसक्रिप्ट (Original Transcript):**
 {content_for_script[:4000]}
 
-**महत्वपूर्ण निर्देश:**
+**महत्वपूर्ण निर्देश (बच्चों के लिए):**
 1. **मूल ट्रांसक्रिप्ट का उपयोग करें - नई सामग्री न बनाएं**
 2. **अगर ट्रांसक्रिप्ट में टाइमस्टैम्प हैं (जैसे 00:00:00), तो उन्हें बनाए रखें**
 3. **अगर ट्रांसक्रिप्ट हिंदी में नहीं है, तो हिंदी में अनुवाद करें लेकिन टाइमस्टैम्प बनाए रखें**
 4. **अगर ट्रांसक्रिप्ट में टाइमस्टैम्प नहीं हैं, तो वीडियो की अवधि के अनुसार समय-आधारित सेगमेंट में विभाजित करें**
-5. **सीधे बिंदु पर आएं - कोई ग्रीटिंग या परिचय नहीं**
-6. **स्क्रिप्ट सीधे वीडियो में हो रही एक्शन/घटना का वर्णन करे - मूल ट्रांसक्रिप्ट के आधार पर**
-7. **रोजमर्रा की बोलचाल की हिंदी इस्तेमाल करें**
+5. **सीधे बिंदु पर आएं - कोई ग्रीटिंग या परिचय नहीं, कोई header नहीं**
+6. **स्क्रिप्ट सीधे वीडियो में हो रही एक्शन/घटना का वर्णन करे - मूल ट्रांसक्रिप्ट के आधार पर, बच्चों के लिए मजेदार और आकर्षक**
+7. **बच्चों की बोलचाल की simple और fun हिंदी इस्तेमाल करें - engaging और attractive**
+8. **किसी भी header (शीर्षक, आवाज़) section न बनाएं - सीधे कंटेंट से शुरू करें**
 
 **उदाहरण (मूल ट्रांसक्रिप्ट के आधार पर):**
 अगर मूल ट्रांसक्रिप्ट है:
-00:00:00 देखो घर पर मम्मी ना होने के कारण इस
+00:00:00 घर पर मम्मी ना होने के कारण इस
 00:00:01 बच्चे ने घर पर अंडे से खेलना शुरू कर दिया
 
-तो आउटपुट होना चाहिए (टाइमस्टैम्प बनाए रखें):
+तो आउटपुट होना चाहिए (टाइमस्टैम्प बनाए रखें, पहली लाइन "देखो" से शुरू):
 00:00:00 देखो घर पर मम्मी ना होने के कारण इस
 00:00:01 बच्चे ने घर पर अंडे से खेलना शुरू कर दिया
 
@@ -3004,10 +3208,12 @@ def generate_hindi_script(video_download):
             # Format the script with proper structure
             formatted_script = format_hindi_script(script, title)
             
-            # ALWAYS ensure CTA "आपकी मम्मी कसम सब्सक्राइब जरूर करे" is present at the end
+            # ALWAYS ensure CTA "आपकी मम्मी पापा कसम सब्सक्राइब जरूर करे" is present at the end
             # Remove any existing CTA at the end first, then add it
-            cta_text = "आपकी मम्मी कसम सब्सक्राइब जरूर करे"
-            cta_text_old = "आपकी मम्मी कसम सब्सक्राइब"  # Old version without जरूर करे
+            cta_text = "आपकी मम्मी पापा कसम सब्सक्राइब जरूर करे"
+            cta_text_old = "अगर आपको ये वीडियो पसंद आया तो like और subscribe जरूर करें! धन्यवाद!"  # New version to remove
+            cta_text_old2 = "आपकी मम्मी कसम सब्सक्राइब जरूर करे"  # Older version
+            cta_text_old3 = "आपकी मम्मी कसम सब्सक्राइब"  # Oldest version
             
             # Remove trailing CTA if it exists (to avoid duplicates)
             formatted_script = formatted_script.rstrip()
@@ -3019,15 +3225,19 @@ def generate_hindi_script(video_download):
                 formatted_script = formatted_script[:-len(cta_text + "\n")].rstrip()
             elif formatted_script.endswith("\n\n" + cta_text):
                 formatted_script = formatted_script[:-len("\n\n" + cta_text)].rstrip()
-            # Check for old CTA format (without जरूर करे)
-            elif formatted_script.endswith(cta_text_old):
-                formatted_script = formatted_script[:-len(cta_text_old)].rstrip()
-            elif formatted_script.endswith(cta_text_old + "\n"):
-                formatted_script = formatted_script[:-len(cta_text_old + "\n")].rstrip()
-            elif formatted_script.endswith("\n\n" + cta_text_old):
-                formatted_script = formatted_script[:-len("\n\n" + cta_text_old)].rstrip()
+            # Remove all old CTA formats
+            old_ctas = [cta_text_old, cta_text_old2, cta_text_old3]
+            for old_cta in old_ctas:
+                if formatted_script.endswith(old_cta):
+                    formatted_script = formatted_script[:-len(old_cta)].rstrip()
+                elif formatted_script.endswith(old_cta + "\n"):
+                    formatted_script = formatted_script[:-len(old_cta + "\n")].rstrip()
+                elif formatted_script.endswith("\n\n" + old_cta):
+                    formatted_script = formatted_script[:-len("\n\n" + old_cta)].rstrip()
+                # Also check if CTA appears anywhere in the script
+                formatted_script = formatted_script.replace(old_cta, "").strip()
             
-            # Always add CTA at the end
+            # Always add CTA at the end (with mother and father)
             formatted_script += f"\n\n{cta_text}"
             
             return {

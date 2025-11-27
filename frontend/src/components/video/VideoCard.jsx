@@ -9,6 +9,7 @@ import {
 	Trash2,
 	Eye,
 	RefreshCw,
+	Loader2,
 } from "lucide-react";
 import { StatusBadge, Button } from "../common";
 import { VideoProgressIndicator } from "./VideoProgressIndicator";
@@ -69,6 +70,14 @@ export function VideoCard({
 
 	// Get current processing state
 	const processingState = getProcessingState(video.id);
+
+	// Check if video is currently processing (any stage)
+	const isVideoProcessing = 
+		video.transcription_status === "transcribing" ||
+		video.ai_processing_status === "processing" ||
+		video.script_status === "generating" ||
+		video.synthesis_status === "synthesizing" ||
+		(!!processingState && processingState.type === "transcribe");
 
 	// Simulate progress for active processing
 	useEffect(() => {
@@ -204,14 +213,32 @@ export function VideoCard({
 
 					{/* Status badges - compact row - Each with unique color */}
 					<div className="flex flex-wrap gap-1.5 mt-1.5">
+						{/* Processing indicator - Show when video is processing */}
+						{isVideoProcessing && (
+							<span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-full bg-yellow-500/20 text-yellow-400 border border-yellow-500/30">
+								<Loader2 className="w-3 h-3 animate-spin" />
+								Processing...
+							</span>
+						)}
 						{/* Success status - Green */}
 						{video.status === "success" && (
 							<StatusBadge status={video.status} />
 						)}
-						{/* Transcribed status - Blue */}
-						{video.transcription_status !== "not_transcribed" && (
+					{/* Transcribed status - Blue */}
+					{video.transcription_status !== "not_transcribed" && (
+						<>
 							<StatusBadge status={video.transcription_status} />
-						)}
+							{/* Show error message if transcription failed */}
+							{video.transcription_status === "failed" && video.transcript_error_message && (
+								<span 
+									className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-full bg-red-500/20 text-red-400 border border-red-500/30"
+									title={video.transcript_error_message}
+								>
+									⚠️ Error
+								</span>
+							)}
+						</>
+					)}
 						{/* Processed status - Purple */}
 						{video.ai_processing_status !== "not_processed" && (
 							<StatusBadge status={video.ai_processing_status} />
@@ -335,6 +362,24 @@ export function VideoCard({
 								/>
 							</div>
 						)}
+					{!processingState &&
+						video.script_status === "generated" &&
+						video.synthesis_status === "synthesizing" && (
+							<div className="mt-2">
+								<VideoProgressIndicator
+									label="Synthesizing Audio..."
+									progress={progress}
+								/>
+							</div>
+						)}
+
+					{/* Error message display */}
+					{video.transcription_status === "failed" && video.transcript_error_message && (
+						<div className="mt-2 p-2 bg-red-500/10 border border-red-500/30 rounded-lg">
+							<p className="text-xs text-red-400 font-medium mb-1">Transcription Error:</p>
+							<p className="text-xs text-red-300/80 break-words">{video.transcript_error_message}</p>
+						</div>
+					)}
 
 					{/* Action buttons - Compact row */}
 					<div className="flex flex-wrap gap-1.5 mt-2">
@@ -395,7 +440,7 @@ export function VideoCard({
 										"processing" ||
 									video.script_status === "generating"
 								}>
-								Process
+								{video.transcription_status === "failed" ? "Retry" : "Process"}
 							</Button>
 						)}
 
@@ -421,15 +466,9 @@ export function VideoCard({
 										reprocessMutation.mutate();
 									}
 								}}
-								disabled={
-									!!processingState &&
-									processingState.type === "transcribe"
-								}
-								loading={
-									!!processingState &&
-									processingState.type === "transcribe"
-								}>
-								Reprocess
+								disabled={isVideoProcessing}
+								loading={isVideoProcessing}>
+								{isVideoProcessing ? 'Processing...' : 'Reprocess'}
 							</Button>
 						)}
 					</div>
