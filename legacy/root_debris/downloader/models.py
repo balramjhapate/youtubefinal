@@ -40,6 +40,17 @@ class VideoDownload(models.Model):
         ('seekin', 'Seekin API'),
         ('yt-dlp', 'yt-dlp'),
         ('requests', 'Direct Requests'),
+        ('local', 'Local Upload'),
+    ]
+    
+    VIDEO_SOURCE_CHOICES = [
+        ('rednote', 'RedNote/Xiaohongshu'),
+        ('youtube', 'YouTube'),
+        ('facebook', 'Facebook'),
+        ('instagram', 'Instagram'),
+        ('vimeo', 'Vimeo'),
+        ('local', 'Local Upload'),
+        ('other', 'Other'),
     ]
     
     AI_PROCESSING_STATUS_CHOICES = [
@@ -57,8 +68,14 @@ class VideoDownload(models.Model):
     ]
     
     # Core fields
-    url = models.URLField(max_length=500, help_text="Original Xiaohongshu URL")
-    video_id = models.CharField(max_length=100, blank=True, null=True, unique=True, help_text="Unique Video ID from XHS")
+    url = models.URLField(max_length=500, blank=True, null=True, help_text="Original video URL (optional for local uploads)")
+    video_id = models.CharField(max_length=100, blank=True, null=True, unique=True, help_text="Unique Video ID")
+    video_source = models.CharField(
+        max_length=20,
+        choices=VIDEO_SOURCE_CHOICES,
+        default='rednote',
+        help_text="Video source/platform"
+    )
     
     # Content
     title = models.CharField(max_length=500, blank=True, help_text="English Title (Translated)")
@@ -70,8 +87,13 @@ class VideoDownload(models.Model):
     # Media
     video_url = models.URLField(max_length=1000, blank=True, help_text="Extracted video URL")
     cover_url = models.URLField(max_length=1000, blank=True, help_text="Cover/thumbnail URL")
-    local_file = models.FileField(upload_to='videos/', blank=True, null=True, help_text="Locally downloaded video file")
+    local_file = models.FileField(upload_to='videos/', blank=True, null=True, help_text="1. Downloaded video file (original with audio)")
     is_downloaded = models.BooleanField(default=False, help_text="Is video saved locally?")
+    duration = models.FloatField(blank=True, null=True, help_text="Video duration in seconds")
+    voice_removed_video = models.FileField(upload_to='videos/voice_removed/', blank=True, null=True, help_text="2. Video file after removing original audio (no audio)")
+    voice_removed_video_url = models.URLField(max_length=1000, blank=True, help_text="2. Video URL after removing original audio (no audio)")
+    final_processed_video = models.FileField(upload_to='videos/final/', blank=True, null=True, help_text="3. Final video file after TTS audio replacement (with new Hindi audio)")
+    final_processed_video_url = models.URLField(max_length=1000, blank=True, help_text="3. Final video URL after TTS audio replacement (with new Hindi audio)")
     
     # Metadata
     extraction_method = models.CharField(
@@ -107,8 +129,9 @@ class VideoDownload(models.Model):
         default='not_transcribed',
         help_text="Transcription status"
     )
-    transcript = models.TextField(blank=True, help_text="Full transcript of video speech/audio")
-    transcript_hindi = models.TextField(blank=True, help_text="Hindi translation of the transcript")
+    transcript = models.TextField(blank=True, help_text="Full transcript of video speech/audio WITH timestamps (00:00:00 format)")
+    transcript_without_timestamps = models.TextField(blank=True, help_text="Full transcript of video speech/audio WITHOUT timestamps (plain text)")
+    transcript_hindi = models.TextField(blank=True, help_text="Hindi translation of the transcript (without timestamps)")
     transcript_language = models.CharField(max_length=10, blank=True, help_text="Detected language of transcript")
     transcript_started_at = models.DateTimeField(blank=True, null=True, help_text="When transcription started")
     transcript_processed_at = models.DateTimeField(blank=True, null=True, help_text="When transcription was completed")
@@ -153,3 +176,43 @@ class VideoDownload(models.Model):
     synthesis_error = models.TextField(blank=True, help_text="Synthesis error message if failed")
     synthesized_audio = models.FileField(upload_to='synthesized_audio/', blank=True, null=True, help_text="Synthesized audio file")
     voice_profile = models.ForeignKey('ClonedVoice', on_delete=models.SET_NULL, null=True, blank=True, help_text="Voice profile used for synthesis")
+    
+    # Hindi Script Generation
+    SCRIPT_STATUS_CHOICES = [
+        ('not_generated', 'Not Generated'),
+        ('generating', 'Generating'),
+        ('generated', 'Generated'),
+        ('failed', 'Failed'),
+    ]
+    
+    script_status = models.CharField(
+        max_length=20,
+        choices=SCRIPT_STATUS_CHOICES,
+        default='not_generated',
+        help_text="Hindi script generation status"
+    )
+    hindi_script = models.TextField(blank=True, help_text="AI-generated Hindi script for TTS")
+    script_error_message = models.TextField(blank=True, help_text="Script generation error message if failed")
+    script_generated_at = models.DateTimeField(blank=True, null=True, help_text="When script was generated")
+    
+    # TTS Parameters (calculated based on duration)
+    tts_speed = models.FloatField(default=1.0, help_text="TTS speed multiplier (calculated from duration)")
+    tts_temperature = models.FloatField(default=0.75, help_text="TTS temperature parameter")
+    tts_repetition_penalty = models.FloatField(default=5.0, help_text="TTS repetition penalty")
+    
+    # Video Review Status
+    REVIEW_STATUS_CHOICES = [
+        ('pending_review', 'Pending Review'),
+        ('approved', 'Approved'),
+        ('needs_revision', 'Needs Revision'),
+        ('rejected', 'Rejected'),
+    ]
+    
+    review_status = models.CharField(
+        max_length=20,
+        choices=REVIEW_STATUS_CHOICES,
+        default='pending_review',
+        help_text="Review status of final processed video"
+    )
+    review_notes = models.TextField(blank=True, help_text="Review notes or feedback")
+    reviewed_at = models.DateTimeField(blank=True, null=True, help_text="When video was reviewed")

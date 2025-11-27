@@ -110,8 +110,8 @@ class NCAToolkitClient:
                 'media_url': video_url,
                 'task': 'transcribe',
                 'include_text': True,
-                'include_srt': False,
-                'include_segments': False,
+                'include_srt': True,  # Include SRT format for timestamps
+                'include_segments': True,  # Include segments with timestamps
                 'response_type': 'direct'  # Direct response without cloud storage
             }
             if language:
@@ -150,10 +150,16 @@ class NCAToolkitClient:
                 response_data = data
             
             transcript = response_data.get('text') or response_data.get('transcript') or ''
+            # Get SRT format with timestamps
+            srt_text = response_data.get('srt') or response_data.get('srt_text') or ''
+            # Get segments with timestamps
+            segments = response_data.get('segments') or response_data.get('transcript_segments') or []
             # Language detection might be in a different field, check response structure
             detected_language = response_data.get('language') or data.get('language') or language or ''
             return {
                 'text': transcript,
+                'srt': srt_text,
+                'segments': segments,
                 'language': detected_language,
                 'status': 'success',
                 'error': None
@@ -352,6 +358,95 @@ class NCAToolkitClient:
         """
         response = self._make_request('GET', '/v1/toolkit/health')
         return response
+    
+    def remove_audio_from_video(self, video_url, output_format='mp4'):
+        """
+        Remove audio track from video using NCA Toolkit API
+        
+        Args:
+            video_url: URL of video
+            output_format: Output format (mp4, webm, etc.)
+        
+        Returns:
+            dict: {
+                'video_url': str (URL of video without audio),
+                'status': 'success' or 'failed',
+                'error': str (if failed)
+            }
+        """
+        payload = {
+            'video_url': video_url,
+            'output_format': output_format,
+            'remove_audio': True
+        }
+        
+        # Try /v1/video/process or /v1/media/process endpoint
+        response = self._make_request('POST', '/v1/video/process', json=payload)
+        
+        if not response.get('success'):
+            # Try alternative endpoint
+            response = self._make_request('POST', '/v1/media/process', json=payload)
+        
+        if response.get('success'):
+            data = response.get('data', {})
+            return {
+                'video_url': data.get('video_url') or data.get('output_url') or '',
+                'status': 'success',
+                'error': None
+            }
+        else:
+            return {
+                'video_url': '',
+                'status': 'failed',
+                'error': response.get('error', 'Unknown error')
+            }
+    
+    def combine_audio_video(self, video_url, audio_url, output_format='mp4', audio_offset=0):
+        """
+        Combine audio track with video using NCA Toolkit API
+        
+        Args:
+            video_url: URL of video (without audio or with audio to replace)
+            audio_url: URL of audio file to add
+            output_format: Output format (mp4, webm, etc.)
+            audio_offset: Offset in seconds to start audio (default: 0)
+        
+        Returns:
+            dict: {
+                'video_url': str (URL of video with new audio),
+                'status': 'success' or 'failed',
+                'error': str (if failed)
+            }
+        """
+        payload = {
+            'video_url': video_url,
+            'audio_url': audio_url,
+            'output_format': output_format
+        }
+        
+        if audio_offset > 0:
+            payload['audio_offset'] = audio_offset
+        
+        # Try /v1/video/combine or /v1/media/combine endpoint
+        response = self._make_request('POST', '/v1/video/combine', json=payload)
+        
+        if not response.get('success'):
+            # Try alternative endpoint
+            response = self._make_request('POST', '/v1/media/combine', json=payload)
+        
+        if response.get('success'):
+            data = response.get('data', {})
+            return {
+                'video_url': data.get('video_url') or data.get('output_url') or '',
+                'status': 'success',
+                'error': None
+            }
+        else:
+            return {
+                'video_url': '',
+                'status': 'failed',
+                'error': response.get('error', 'Unknown error')
+            }
 
 
 def get_nca_client():
