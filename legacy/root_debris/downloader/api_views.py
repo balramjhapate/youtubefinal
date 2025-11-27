@@ -6,9 +6,10 @@ import logging
 from django.utils import timezone
 from django.db.models import Count, Q
 from rest_framework import viewsets, status
-from rest_framework.decorators import api_view, action
+from rest_framework.decorators import api_view, action, permission_classes
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+from rest_framework.permissions import AllowAny
 
 logger = logging.getLogger(__name__)
 
@@ -526,15 +527,27 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
 
         try:
             # Transcribe video
-            result = transcribe_video(video)
+            transcribe_result = transcribe_video(video)
 
-            if result['status'] == 'success':
+            # Handle "no audio stream" case gracefully
+            if transcribe_result.get('no_audio_stream'):
+                video.transcription_status = 'skipped'
+                video.transcript_error_message = transcribe_result.get('error', 'Video has no audio stream')
+                video.save()
+                return Response({
+                    "status": "skipped",
+                    "message": "Video has no audio stream. Transcription skipped. You can still process other steps if you have an existing transcript.",
+                    "error": transcribe_result.get('error', 'Video has no audio stream'),
+                    "video_id": video.id
+                }, status=status.HTTP_200_OK)
+
+            if transcribe_result['status'] == 'success':
                 # Save transcript with timestamps AND without timestamps
                 video.transcription_status = 'transcribed'
-                transcript_text = result.get('text', '')
-                timestamped_text = result.get('transcript_with_timestamps', '')
-                transcript_without_timestamps = result.get('transcript_without_timestamps', transcript_text)
-                srt_text = result.get('srt', '')
+                transcript_text = transcribe_result.get('text', '')
+                timestamped_text = transcribe_result.get('transcript_with_timestamps', '')
+                transcript_without_timestamps = transcribe_result.get('transcript_without_timestamps', transcript_text)
+                srt_text = transcribe_result.get('srt', '')
                 
                 # Store transcript WITH timestamps (00:00:00 text format) - this is what user sees
                 # IMPORTANT: Store original transcript (may be in Arabic/Urdu/other languages) with timestamps
@@ -562,15 +575,15 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                 
                 # IMPORTANT: Ensure Hindi translation is properly stored
                 # If transcript is in Arabic/Urdu, translate it to Hindi
-                hindi_transcript = result.get('text_hindi', '')
+                hindi_transcript = transcribe_result.get('text_hindi', '')
                 if not hindi_transcript and transcript_without_timestamps:
                     # If Hindi translation not provided, translate the plain text
                     from .utils import translate_text
-                    print(f"Translating transcript to Hindi (language: {result.get('language', 'unknown')})...")
+                    print(f"Translating transcript to Hindi (language: {transcribe_result.get('language', 'unknown')})...")
                     hindi_transcript = translate_text(transcript_without_timestamps, target='hi')
                 
                 video.transcript_hindi = hindi_transcript
-                video.transcript_language = result.get('language', '')
+                video.transcript_language = transcribe_result.get('language', '')
                 video.transcript_processed_at = timezone.now()
                 video.transcript_error_message = ''
                 video.save()
@@ -930,7 +943,7 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                 serializer_data.update({
                     "status": "success",
                     "transcript_with_timestamps": timestamped_text if timestamped_text else video.transcript,
-                    "transcript_without_timestamps": result.get('transcript_without_timestamps', transcript_text),
+                    "transcript_without_timestamps": transcript_without_timestamps if transcript_without_timestamps else transcript_text,
                 })
                 
                 # Ensure video URLs are included (serializer should handle this, but add explicit checks)
@@ -943,23 +956,40 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                 return Response(serializer_data)
             else:
                 video.transcription_status = 'failed'
-                video.transcript_error_message = result.get('error', 'Unknown error')
+                video.transcript_error_message = transcribe_result.get('error', 'Unknown error')
                 video.save()
 
                 return Response({
                     "status": "failed",
-                    "error": result.get('error', 'Unknown error'),
+                    "error": transcribe_result.get('error', 'Unknown error'),
                     "step": "transcription"
                 }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         except Exception as e:
+            import traceback
+            error_msg = str(e)
+            traceback.print_exc()
+            
+            # Check if it's a "no audio stream" error
+            if 'no audio stream' in error_msg.lower() or 'video-only' in error_msg.lower():
+                video.transcription_status = 'skipped'
+                video.transcript_error_message = 'Video has no audio stream - transcription skipped'
+                video.save()
+                return Response({
+                    "status": "skipped",
+                    "message": "Video has no audio stream. Transcription skipped. You can still process other steps if you have an existing transcript.",
+                    "error": error_msg,
+                    "step": "transcription",
+                    "video_id": video.id
+                }, status=status.HTTP_200_OK)
+            
             video.transcription_status = 'failed'
-            video.transcript_error_message = str(e)
+            video.transcript_error_message = error_msg
             video.save()
 
             return Response({
                 "status": "failed",
-                "error": str(e),
+                "error": error_msg,
                 "step": "transcription"
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
@@ -1185,52 +1215,205 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
             }, status=status.HTTP_400_BAD_REQUEST)
         
         try:
-            # Reset all processing states
-            video.transcription_status = 'not_transcribed'
-            video.transcript = ''
-            video.transcript_without_timestamps = ''
-            video.transcript_hindi = ''
-            video.transcript_language = ''
-            video.transcript_started_at = None
-            video.transcript_processed_at = None
-            video.transcript_error_message = ''
+            # Smart Resume: Check which steps are already complete and only reset failed/pending steps
+            # This saves time by not redoing work that's already done
             
-            video.ai_processing_status = 'not_processed'
-            video.ai_summary = ''
-            video.ai_tags = ''
-            video.ai_processed_at = None
-            video.ai_error_message = ''
+            # Determine which steps are complete
+            transcription_complete = (
+                video.transcription_status == 'transcribed' and 
+                video.transcript and 
+                video.transcript_without_timestamps
+            )
             
-            video.script_status = 'not_generated'
-            video.hindi_script = ''
-            video.script_error_message = ''
-            video.script_generated_at = None
+            ai_processing_complete = (
+                video.ai_processing_status == 'processed' and 
+                video.ai_summary
+            )
             
-            video.synthesis_status = 'not_synthesized'
-            video.synthesis_error = ''
-            if video.synthesized_audio:
-                try:
-                    video.synthesized_audio.delete(save=False)
-                except Exception:
-                    pass
-                video.synthesized_audio = None
+            script_generation_complete = (
+                video.script_status == 'generated' and 
+                video.hindi_script
+            )
             
-            # Delete processed video files if they exist
-            if video.voice_removed_video:
-                try:
-                    video.voice_removed_video.delete(save=False)
-                except Exception:
-                    pass
-                video.voice_removed_video = None
-            video.voice_removed_video_url = ''
+            tts_synthesis_complete = (
+                video.synthesis_status == 'synthesized' and 
+                video.synthesized_audio
+            )
             
-            if video.final_processed_video:
-                try:
-                    video.final_processed_video.delete(save=False)
-                except Exception:
-                    pass
-                video.final_processed_video = None
-            video.final_processed_video_url = ''
+            # Determine where to start processing
+            start_from_step = None
+            
+            if not transcription_complete:
+                start_from_step = 'transcription'
+                # Reset transcription and all subsequent steps
+                video.transcription_status = 'not_transcribed'
+                video.transcript = ''
+                video.transcript_without_timestamps = ''
+                video.transcript_hindi = ''
+                video.transcript_language = ''
+                video.transcript_started_at = None
+                video.transcript_processed_at = None
+                video.transcript_error_message = ''
+                
+                video.ai_processing_status = 'not_processed'
+                video.ai_summary = ''
+                video.ai_tags = ''
+                video.ai_processed_at = None
+                video.ai_error_message = ''
+                
+                video.script_status = 'not_generated'
+                video.hindi_script = ''
+                video.script_error_message = ''
+                video.script_generated_at = None
+                
+                video.synthesis_status = 'not_synthesized'
+                video.synthesis_error = ''
+                if video.synthesized_audio:
+                    try:
+                        video.synthesized_audio.delete(save=False)
+                    except Exception:
+                        pass
+                    video.synthesized_audio = None
+                
+                # Delete processed video files
+                if video.voice_removed_video:
+                    try:
+                        video.voice_removed_video.delete(save=False)
+                    except Exception:
+                        pass
+                    video.voice_removed_video = None
+                video.voice_removed_video_url = ''
+                
+                if video.final_processed_video:
+                    try:
+                        video.final_processed_video.delete(save=False)
+                    except Exception:
+                        pass
+                    video.final_processed_video = None
+                video.final_processed_video_url = ''
+                
+            elif not ai_processing_complete:
+                start_from_step = 'ai_processing'
+                # Reset AI processing and all subsequent steps
+                video.ai_processing_status = 'not_processed'
+                video.ai_summary = ''
+                video.ai_tags = ''
+                video.ai_processed_at = None
+                video.ai_error_message = ''
+                
+                video.script_status = 'not_generated'
+                video.hindi_script = ''
+                video.script_error_message = ''
+                video.script_generated_at = None
+                
+                video.synthesis_status = 'not_synthesized'
+                video.synthesis_error = ''
+                if video.synthesized_audio:
+                    try:
+                        video.synthesized_audio.delete(save=False)
+                    except Exception:
+                        pass
+                    video.synthesized_audio = None
+                
+                # Delete processed video files
+                if video.voice_removed_video:
+                    try:
+                        video.voice_removed_video.delete(save=False)
+                    except Exception:
+                        pass
+                    video.voice_removed_video = None
+                video.voice_removed_video_url = ''
+                
+                if video.final_processed_video:
+                    try:
+                        video.final_processed_video.delete(save=False)
+                    except Exception:
+                        pass
+                    video.final_processed_video = None
+                video.final_processed_video_url = ''
+                
+            elif not script_generation_complete:
+                start_from_step = 'script_generation'
+                # Reset script generation and all subsequent steps
+                video.script_status = 'not_generated'
+                video.hindi_script = ''
+                video.script_error_message = ''
+                video.script_generated_at = None
+                
+                video.synthesis_status = 'not_synthesized'
+                video.synthesis_error = ''
+                if video.synthesized_audio:
+                    try:
+                        video.synthesized_audio.delete(save=False)
+                    except Exception:
+                        pass
+                    video.synthesized_audio = None
+                
+                # Delete processed video files
+                if video.voice_removed_video:
+                    try:
+                        video.voice_removed_video.delete(save=False)
+                    except Exception:
+                        pass
+                    video.voice_removed_video = None
+                video.voice_removed_video_url = ''
+                
+                if video.final_processed_video:
+                    try:
+                        video.final_processed_video.delete(save=False)
+                    except Exception:
+                        pass
+                    video.final_processed_video = None
+                video.final_processed_video_url = ''
+                
+            elif not tts_synthesis_complete:
+                start_from_step = 'tts_synthesis'
+                # Reset TTS synthesis and video processing
+                video.synthesis_status = 'not_synthesized'
+                video.synthesis_error = ''
+                if video.synthesized_audio:
+                    try:
+                        video.synthesized_audio.delete(save=False)
+                    except Exception:
+                        pass
+                    video.synthesized_audio = None
+                
+                # Delete processed video files
+                if video.voice_removed_video:
+                    try:
+                        video.voice_removed_video.delete(save=False)
+                    except Exception:
+                        pass
+                    video.voice_removed_video = None
+                video.voice_removed_video_url = ''
+                
+                if video.final_processed_video:
+                    try:
+                        video.final_processed_video.delete(save=False)
+                    except Exception:
+                        pass
+                    video.final_processed_video = None
+                video.final_processed_video_url = ''
+                
+            else:
+                # All steps complete, just reset video processing
+                start_from_step = 'video_processing'
+                # Delete processed video files
+                if video.voice_removed_video:
+                    try:
+                        video.voice_removed_video.delete(save=False)
+                    except Exception:
+                        pass
+                    video.voice_removed_video = None
+                video.voice_removed_video_url = ''
+                
+                if video.final_processed_video:
+                    try:
+                        video.final_processed_video.delete(save=False)
+                    except Exception:
+                        pass
+                    video.final_processed_video = None
+                video.final_processed_video_url = ''
             
             # Reset review status
             video.review_status = 'pending_review'
@@ -1239,58 +1422,94 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
             
             video.save()
             
-            # Trigger the full transcription pipeline by calling the transcribe action's logic
-            # This will automatically run: transcription -> AI processing -> script generation -> TTS -> video processing
-            try:
-                # Set status to transcribing
-                video.transcription_status = 'transcribing'
-                video.transcript_started_at = timezone.now()
-                video.save()
-                
-                # Call transcribe_video which will trigger the full pipeline in the transcribe action
-                # We'll run this in a way that triggers the full automated pipeline
-                # The transcribe action handles the full pipeline automatically, so we'll just
-                # trigger it by calling the same logic
-                result = transcribe_video(video)
-                
-                if result['status'] == 'success':
-                    # Save transcript data
-                    transcript_text = result.get('text', '')
-                    timestamped_text = result.get('transcript_with_timestamps', '')
-                    transcript_without_timestamps = result.get('transcript_without_timestamps', transcript_text)
-                    srt_text = result.get('srt', '')
-                    
-                    if timestamped_text:
-                        video.transcript = timestamped_text
-                    elif srt_text:
-                        from .utils import convert_srt_to_timestamped_text
-                        video.transcript = convert_srt_to_timestamped_text(srt_text) or srt_text
-                    else:
-                        video.transcript = transcript_text
-                    
-                    if transcript_without_timestamps:
-                        video.transcript_without_timestamps = transcript_without_timestamps
-                    elif timestamped_text:
-                        import re
-                        plain_text = re.sub(r'^\d{2}:\d{2}:\d{2}\s+', '', timestamped_text, flags=re.MULTILINE)
-                        plain_text = '\n'.join([line.strip() for line in plain_text.split('\n') if line.strip()])
-                        video.transcript_without_timestamps = plain_text
-                    else:
-                        video.transcript_without_timestamps = transcript_text
-                    
-                    hindi_transcript = result.get('text_hindi', '')
-                    if not hindi_transcript and transcript_without_timestamps:
-                        from .utils import translate_text
-                        print(f"Translating transcript to Hindi (language: {result.get('language', 'unknown')})...")
-                        hindi_transcript = translate_text(transcript_without_timestamps, target='hi')
-                    
-                    video.transcript_hindi = hindi_transcript
-                    video.transcript_language = result.get('language', '')
-                    video.transcription_status = 'transcribed'
-                    video.transcript_processed_at = timezone.now()
-                    video.transcript_error_message = ''
+            print(f"Smart Resume: Starting from step '{start_from_step}'")
+            
+            # Execute the pipeline starting from the determined step
+            
+            # Step 1: Transcription (only if needed)
+            if start_from_step == 'transcription':
+                try:
+                    # Set status to transcribing
+                    video.transcription_status = 'transcribing'
+                    video.transcript_started_at = timezone.now()
                     video.save()
                     
+                    # Call transcribe_video which will trigger the full pipeline in the transcribe action
+                    # We'll run this in a way that triggers the full automated pipeline
+                    # The transcribe action handles the full pipeline automatically, so we'll just
+                    # trigger it by calling the same logic
+                    result = transcribe_video(video)
+                
+                    if result['status'] == 'success':
+                        # Save transcript data
+                        transcript_text = result.get('text', '')
+                        timestamped_text = result.get('transcript_with_timestamps', '')
+                        transcript_without_timestamps = result.get('transcript_without_timestamps', transcript_text)
+                        srt_text = result.get('srt', '')
+                        
+                        if timestamped_text:
+                            video.transcript = timestamped_text
+                        elif srt_text:
+                            from .utils import convert_srt_to_timestamped_text
+                            video.transcript = convert_srt_to_timestamped_text(srt_text) or srt_text
+                        else:
+                            video.transcript = transcript_text
+                        
+                        if transcript_without_timestamps:
+                            video.transcript_without_timestamps = transcript_without_timestamps
+                        elif timestamped_text:
+                            import re
+                            plain_text = re.sub(r'^\d{2}:\d{2}:\d{2}\s+', '', timestamped_text, flags=re.MULTILINE)
+                            plain_text = '\n'.join([line.strip() for line in plain_text.split('\n') if line.strip()])
+                            video.transcript_without_timestamps = plain_text
+                        else:
+                            video.transcript_without_timestamps = transcript_text
+                        
+                        hindi_transcript = result.get('text_hindi', '')
+                        if not hindi_transcript and transcript_without_timestamps:
+                            from .utils import translate_text
+                            print(f"Translating transcript to Hindi (language: {result.get('language', 'unknown')})...")
+                            hindi_transcript = translate_text(transcript_without_timestamps, target='hi')
+                        
+                        video.transcript_hindi = hindi_transcript
+                        video.transcript_language = result.get('language', '')
+                        video.transcription_status = 'transcribed'
+                        video.transcript_processed_at = timezone.now()
+                        video.transcript_error_message = ''
+                        video.save()
+                except Exception as e:
+                    import traceback
+                    error_msg = str(e)
+                    print(f"Transcription error during reprocess: {error_msg}")
+                    traceback.print_exc()
+                    video.transcription_status = 'failed'
+                    video.transcript_error_message = error_msg
+                    video.save()
+                    # Don't return error immediately - continue with other steps if possible
+                    # Some steps can work without transcription (e.g., if transcript already exists)
+                    if not video.transcript and not video.transcript_without_timestamps:
+                        # Check if it's a "no audio stream" error - in that case, we can still continue
+                        if 'no audio stream' in error_msg.lower() or 'video-only' in error_msg.lower():
+                            print("Video has no audio stream. Continuing with other steps using existing data if available...")
+                            # Mark transcription as skipped instead of failed
+                            video.transcription_status = 'skipped'
+                            video.transcript_error_message = 'Video has no audio stream - transcription skipped'
+                            video.save()
+                        else:
+                            # If we have no transcript at all and it's not a no-audio issue, we can't continue
+                            return Response({
+                                "status": "failed",
+                                "error": f"Transcription failed: {error_msg}. Cannot continue processing without transcript.",
+                                "step": "transcription"
+                            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                    else:
+                        # If we have existing transcript, continue with other steps
+                        print("Transcription failed but existing transcript found. Continuing with other steps...")
+            
+            # Step 2: AI Processing (only if transcription is complete and AI processing is needed)
+            # Continue even if transcription failed but we have existing transcript
+            if start_from_step in ['transcription', 'ai_processing']:
+                if video.transcription_status == 'transcribed' or (video.transcript or video.transcript_without_timestamps):
                     # Continue with AI processing, script generation, TTS, and video processing
                     # This is the same logic as in the transcribe action
                     try:
@@ -1315,7 +1534,10 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                         video.ai_processing_status = 'failed'
                         video.ai_error_message = str(e)
                         video.save()
-                    
+            
+            # Step 3: Script Generation (only if AI processing is complete and script generation is needed)
+            if start_from_step in ['transcription', 'ai_processing', 'script_generation']:
+                if video.ai_processing_status == 'processed':
                     # Script generation
                     try:
                         video.script_status = 'generating'
@@ -1338,19 +1560,21 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                         video.script_status = 'failed'
                         video.script_error_message = str(e)
                         video.save()
-                    
+            
+            # Step 4: TTS Generation (only if script generation is complete and TTS is needed)
+            if start_from_step in ['transcription', 'ai_processing', 'script_generation', 'tts_synthesis']:
+                if video.script_status == 'generated' and video.hindi_script:
                     # Step 4: TTS Generation (automatically after script generation)
-                    if video.script_status == 'generated' and video.hindi_script:
-                        try:
-                            video.synthesis_status = 'synthesizing'
-                            video.save()
-                            
-                            from .utils import get_clean_script_for_tts
-                            clean_script = get_clean_script_for_tts(video.hindi_script)
-                            
-                            # Use XTTS service for TTS generation
-                            from .xtts_service import XTTSService, TTS_AVAILABLE
-                            if TTS_AVAILABLE:
+                    try:
+                        video.synthesis_status = 'synthesizing'
+                        video.save()
+                        
+                        from .utils import get_clean_script_for_tts
+                        clean_script = get_clean_script_for_tts(video.hindi_script)
+                        
+                        # Use XTTS service for TTS generation
+                        from .xtts_service import XTTSService, TTS_AVAILABLE
+                        if TTS_AVAILABLE:
                                 service = XTTSService()
                                 
                                 import tempfile
@@ -1564,46 +1788,52 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                                                 traceback.print_exc()
                                                 video.synthesis_error = error_msg
                                                 video.save()
-                            else:
-                                error_msg = 'TTS service not available. Please install Coqui TTS: pip install TTS (requires Python 3.9-3.11, NOT 3.12+)'
-                                print(f"ERROR: {error_msg}")
-                                video.synthesis_status = 'failed'
-                                video.synthesis_error = error_msg
-                                video.save()
-                        except Exception as e:
-                            print(f"TTS generation error during reprocess: {e}")
-                            import traceback
-                            traceback.print_exc()
-                            video.synthesis_status = 'failed'
-                            video.synthesis_error = str(e)
-                            video.save()
-                    
-                    return Response({
-                        "status": "success",
-                        "message": "Video reprocessing completed successfully.",
-                        "video_id": video.id
-                    })
-                else:
-                    video.transcription_status = 'failed'
-                    video.transcript_error_message = result.get('error', 'Unknown error')
-                    video.save()
-                    return Response({
-                        "status": "failed",
-                        "error": result.get('error', 'Unknown error'),
-                        "step": "transcription"
-                    }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-                    
-            except Exception as e:
-                print(f"Error during reprocess: {e}")
-                import traceback
-                traceback.print_exc()
-                video.transcription_status = 'failed'
-                video.transcript_error_message = str(e)
-                video.save()
-                return Response({
-                    "status": "failed",
-                    "error": f"Error starting reprocess: {str(e)}"
-                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                                        else:
+                                            error_msg = 'ffmpeg not found or video file not available'
+                                            print(f"ERROR: {error_msg}")
+                                            video.synthesis_status = 'failed'
+                                            video.synthesis_error = error_msg
+                                            video.save()
+                                    else:
+                                        error_msg = 'TTS service not available. Please install Coqui TTS: pip install TTS (requires Python 3.9-3.11, NOT 3.12+)'
+                                        print(f"ERROR: {error_msg}")
+                                        video.synthesis_status = 'failed'
+                                        video.synthesis_error = error_msg
+                                        video.save()
+                    except Exception as e:
+                        print(f"TTS generation error during reprocess: {e}")
+                        import traceback
+                        traceback.print_exc()
+                        video.synthesis_status = 'failed'
+                        video.synthesis_error = str(e)
+                        video.save()
+            
+            # Collect status of all steps
+            steps_status = {
+                "transcription": video.transcription_status,
+                "ai_processing": video.ai_processing_status,
+                "script_generation": video.script_status,
+                "tts_synthesis": video.synthesis_status,
+                "final_video": "ready" if video.final_processed_video_url else "pending"
+            }
+            
+            # Determine overall status
+            has_failures = (
+                video.transcription_status == 'failed' or
+                video.ai_processing_status == 'failed' or
+                video.script_status == 'failed' or
+                video.synthesis_status == 'failed'
+            )
+            
+            # Return response with detailed status
+            return Response({
+                "status": "completed" if not has_failures else "completed_with_errors",
+                "message": f"Video reprocessing completed (started from {start_from_step}).",
+                "video_id": video.id,
+                "resumed_from": start_from_step,
+                "steps_status": steps_status,
+                "warnings": [] if not has_failures else ["Some processing steps failed. Check individual step status."]
+            })
             
         except Exception as e:
             print(f"Error during reprocess: {e}")
@@ -1767,6 +1997,7 @@ class GoogleSheetsSettingsViewSet(viewsets.ViewSet):
 
 
 @api_view(['GET', 'POST'])
+@permission_classes([AllowAny])
 def test_google_sheets(request):
     """Test endpoint for Google Sheets configuration"""
     from .google_sheets_service import get_google_sheets_service, ensure_header_row, extract_spreadsheet_id

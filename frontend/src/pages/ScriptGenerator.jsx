@@ -9,7 +9,6 @@ import {
     RefreshCw,
     MessageSquare,
     Tag,
-    FileTextIcon,
     ChevronDown,
     ChevronUp
 } from 'lucide-react';
@@ -194,7 +193,7 @@ export function ScriptGenerator() {
                                                     {video.description && (
                                                         <div>
                                                             <h4 className="text-xs font-semibold text-gray-400 mb-1 flex items-center gap-1">
-                                                                <FileTextIcon className="w-3 h-3" />
+                                                                <FileText className="w-3 h-3" />
                                                                 Description
                                                             </h4>
                                                             <p className="text-sm text-gray-300 line-clamp-3">{video.description}</p>

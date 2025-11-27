@@ -1,0 +1,10 @@
+Django>=4.2,<5.0
+django-jazzmin>=2.6.0
+deep-translator>=1.11.4
+requests
+beautifulsoup4
+yt-dlp
+deep-translator
+django-cors-headers
+djangorestframework
+django-jazzmin>=0.2.0
