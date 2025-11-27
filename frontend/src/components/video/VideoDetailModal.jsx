@@ -315,30 +315,6 @@ export function VideoDetailModal() {
                 {video.duration && (
                   <p>Duration: {formatDuration(video.duration)}</p>
                 )}
-                {video.is_downloaded && (
-                  <p className="text-green-400">✓ Downloaded locally</p>
-                )}
-                {video.script_status === 'generated' && (
-                  <p className="text-indigo-400">✓ Hindi Script Generated</p>
-                )}
-                {video.script_status === 'generating' && (
-                  <p className="text-yellow-400 animate-pulse">⏳ Generating Script...</p>
-                )}
-                {video.synthesis_status === 'synthesized' && (
-                  <p className="text-green-400">✓ TTS Audio Generated</p>
-                )}
-                {video.synthesis_status === 'synthesizing' && (
-                  <p className="text-yellow-400 animate-pulse">⏳ Generating Voice...</p>
-                )}
-                {video.voice_removed_video_url && (
-                  <p className="text-yellow-400">✓ Voice Removed Video Ready</p>
-                )}
-                {video.final_processed_video_url && (
-                  <p className="text-green-400">✓ Final Video with New Hindi Audio Ready</p>
-                )}
-                {video.tts_speed && (
-                  <p className="text-xs">TTS Speed: {video.tts_speed}x | Temp: {video.tts_temperature}</p>
-                )}
               </div>
 
               {/* Progress Indicators */}
@@ -375,139 +351,225 @@ export function VideoDetailModal() {
                   )}
                 </div>
               )}
+            </div>
+          </div>
 
-              {/* Action buttons - Organized */}
-              <div className="space-y-2">
-                <div className="grid grid-cols-2 gap-2">
-                  {!video.is_downloaded && video.status === 'success' && (
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      icon={Download}
-                      onClick={() => downloadMutation.mutate()}
-                      loading={!!processingState && processingState.type === 'download'}
-                      disabled={!!processingState && processingState.type === 'download'}
-                    >
-                      {processingState?.type === 'download' ? 'Downloading...' : 'Download'}
-                    </Button>
-                  )}
-
-                  {(video.transcription_status === 'not_transcribed' || video.transcription_status === 'failed') && (
-                    <Button
-                      size="sm"
-                      variant={video.transcription_status === 'failed' ? 'danger' : 'secondary'}
-                      icon={FileText}
-                      onClick={() => transcribeMutation.mutate()}
-                      loading={!!processingState && processingState.type === 'transcribe'}
-                      disabled={!!processingState && processingState.type === 'transcribe'}
-                    >
-                      {video.transcription_status === 'failed' ? 'Retry Process' : 'Process Video'}
-                    </Button>
-                  )}
-
-                  {(video.ai_processing_status === 'not_processed' || video.ai_processing_status === 'failed') && (
-                    <Button
-                      size="sm"
-                      variant={video.ai_processing_status === 'failed' ? 'danger' : 'primary'}
-                      icon={Brain}
-                      onClick={() => processAIMutation.mutate()}
-                      loading={!!processingState && processingState.type === 'processAI'}
-                      disabled={!!processingState && processingState.type === 'processAI'}
-                      className="col-span-2"
-                    >
-                      {video.ai_processing_status === 'failed' ? 'Retry AI Summary' : 'Generate AI Summary'}
-                    </Button>
-                  )}
-
-                  {/* Reprocess Button - Show when final video is ready */}
-                  {video.final_processed_video_url && (
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      icon={RefreshCw}
-                      onClick={() => {
-                        if (window.confirm('Are you sure you want to reprocess this video? This will reset all processing and regenerate the video with new audio.')) {
-                          reprocessMutation.mutate();
-                        }
-                      }}
-                      loading={!!processingState && processingState.type === 'transcribe'}
-                      disabled={!!processingState && processingState.type === 'transcribe'}
-                      className="col-span-2"
-                    >
-                      {processingState?.type === 'transcribe' ? 'Reprocessing...' : 'Reprocess Video'}
-                    </Button>
-                  )}
-                </div>
-
+          {/* Processing Checklist and TTS Parameters - Below video */}
+          <div className="bg-white/5 rounded-lg p-4 border border-white/10">
+            <div className="grid md:grid-cols-2 gap-6">
+              {/* Processing Checklist */}
+              <div>
+                <h4 className="text-sm font-semibold text-gray-300 mb-3">Processing Status</h4>
                 <div className="space-y-2">
-                  <div className="text-xs text-gray-400 mb-2 font-semibold">Video Versions:</div>
-                  
-                  {/* 1. Downloaded Video (original with audio) */}
-                  {(video.local_file_url || video.video_url) && (
-                    <a
-                      href={video.local_file_url || video.video_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg bg-blue-500/20 text-blue-300 hover:bg-blue-500/30 border border-blue-500/30 w-full justify-center"
-                    >
-                      <ExternalLink className="w-4 h-4" />
-                      1. Downloaded Video (Original with Audio)
-                    </a>
+                  {video.is_downloaded && (
+                    <p className="text-sm text-green-400 flex items-center gap-2">
+                      <span>✓</span>
+                      <span>Downloaded locally</span>
+                    </p>
                   )}
-                  
-                  {/* 2. Voice Removed Video (no audio) */}
+                  {video.script_status === 'generated' && (
+                    <p className="text-sm text-indigo-400 flex items-center gap-2">
+                      <span>✓</span>
+                      <span>Hindi Script Generated</span>
+                    </p>
+                  )}
+                  {video.script_status === 'generating' && (
+                    <p className="text-sm text-yellow-400 animate-pulse flex items-center gap-2">
+                      <span>⏳</span>
+                      <span>Generating Script...</span>
+                    </p>
+                  )}
+                  {video.synthesis_status === 'synthesized' && (
+                    <p className="text-sm text-green-400 flex items-center gap-2">
+                      <span>✓</span>
+                      <span>TTS Audio Generated</span>
+                    </p>
+                  )}
+                  {video.synthesis_status === 'synthesizing' && (
+                    <p className="text-sm text-yellow-400 animate-pulse flex items-center gap-2">
+                      <span>⏳</span>
+                      <span>Generating Voice...</span>
+                    </p>
+                  )}
                   {video.voice_removed_video_url && (
-                    <a
-                      href={video.voice_removed_video_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg bg-yellow-500/20 text-yellow-300 hover:bg-yellow-500/30 border border-yellow-500/30 w-full justify-center"
-                    >
-                      <ExternalLink className="w-4 h-4" />
-                      2. Voice Removed Video (No Audio)
-                    </a>
+                    <p className="text-sm text-yellow-400 flex items-center gap-2">
+                      <span>✓</span>
+                      <span>Voice Removed Video Ready</span>
+                    </p>
                   )}
-                  
-                  {/* 3. Final Processed Video (with new Hindi audio) */}
                   {video.final_processed_video_url && (
-                    <>
-                      <a
-                        href={video.final_processed_video_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg bg-green-500/20 text-green-300 hover:bg-green-500/30 border border-green-500/30 w-full justify-center"
-                      >
-                        <ExternalLink className="w-4 h-4" />
-                        3. Final Processed Video (with New Hindi Audio)
-                      </a>
-                      
-                      {/* Reprocess Button - Show immediately after final video is ready */}
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        icon={RefreshCw}
-                        onClick={() => {
-                          if (window.confirm('Are you sure you want to reprocess this video? This will reset all processing and regenerate the video with new audio.')) {
-                            reprocessMutation.mutate();
-                          }
-                        }}
-                        loading={!!processingState && processingState.type === 'transcribe'}
-                        disabled={!!processingState && processingState.type === 'transcribe'}
-                        className="w-full"
-                      >
-                        {processingState?.type === 'transcribe' ? 'Reprocessing...' : 'Reprocess Video'}
-                      </Button>
-                    </>
-                  )}
-                  
-                  {/* Show processing status if videos are not ready yet */}
-                  {video.synthesis_status === 'synthesized' && !video.voice_removed_video_url && !video.final_processed_video_url && (
-                    <div className="text-xs text-yellow-400 p-2 bg-yellow-500/10 rounded border border-yellow-500/30">
-                      ⏳ Processing video files... (This may take a few moments)
-                    </div>
+                    <p className="text-sm text-green-400 flex items-center gap-2">
+                      <span>✓</span>
+                      <span>Final Video with New Hindi Audio Ready</span>
+                    </p>
                   )}
                 </div>
               </div>
+
+              {/* TTS Parameters */}
+              <div>
+                <h4 className="text-sm font-semibold text-gray-300 mb-3">TTS Parameters</h4>
+                {video.tts_speed ? (
+                  <div className="space-y-2">
+                    <p className="text-sm text-gray-300">
+                      <span className="text-gray-400">Speed:</span> {video.tts_speed}x
+                    </p>
+                    {video.tts_temperature !== undefined && video.tts_temperature !== null && (
+                      <p className="text-sm text-gray-300">
+                        <span className="text-gray-400">Temperature:</span> {video.tts_temperature}
+                      </p>
+                    )}
+                    {video.tts_repetition_penalty !== undefined && video.tts_repetition_penalty !== null && (
+                      <p className="text-sm text-gray-300">
+                        <span className="text-gray-400">Repetition Penalty:</span> {video.tts_repetition_penalty}
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-sm text-gray-500">TTS parameters will be shown after processing</p>
+                )}
+                {video.tts_speed && (
+                  <div className="mt-3 pt-3 border-t border-white/10">
+                    <p className="text-xs text-gray-400">
+                      TTS Speed: {video.tts_speed}x | Temp: {video.tts_temperature || '0.75'}
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Action buttons and Video Versions - Below video */}
+          <div className="space-y-4 pt-4 border-t border-white/10">
+            {/* Action buttons */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+              {!video.is_downloaded && video.status === 'success' && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  icon={Download}
+                  onClick={() => downloadMutation.mutate()}
+                  loading={!!processingState && processingState.type === 'download'}
+                  disabled={!!processingState && processingState.type === 'download'}
+                >
+                  {processingState?.type === 'download' ? 'Downloading...' : 'Download'}
+                </Button>
+              )}
+
+              {(video.transcription_status === 'not_transcribed' || video.transcription_status === 'failed') && (
+                <Button
+                  size="sm"
+                  variant={video.transcription_status === 'failed' ? 'danger' : 'secondary'}
+                  icon={FileText}
+                  onClick={() => transcribeMutation.mutate()}
+                  loading={!!processingState && processingState.type === 'transcribe'}
+                  disabled={!!processingState && processingState.type === 'transcribe'}
+                >
+                  {video.transcription_status === 'failed' ? 'Retry Process' : 'Process Video'}
+                </Button>
+              )}
+
+              {(video.ai_processing_status === 'not_processed' || video.ai_processing_status === 'failed') && (
+                <Button
+                  size="sm"
+                  variant={video.ai_processing_status === 'failed' ? 'danger' : 'primary'}
+                  icon={Brain}
+                  onClick={() => processAIMutation.mutate()}
+                  loading={!!processingState && processingState.type === 'processAI'}
+                  disabled={!!processingState && processingState.type === 'processAI'}
+                >
+                  {video.ai_processing_status === 'failed' ? 'Retry AI Summary' : 'Generate AI Summary'}
+                </Button>
+              )}
+
+              {/* Reprocess Button - Show when video has been transcribed (allows reprocessing at any stage) */}
+              {(video.transcription_status === 'transcribed' || 
+                video.transcription_status === 'failed' ||
+                video.script_status === 'generated' || 
+                video.script_status === 'failed' ||
+                video.synthesis_status === 'synthesized' ||
+                video.synthesis_status === 'failed' ||
+                video.final_processed_video_url) && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  icon={RefreshCw}
+                  onClick={() => {
+                    if (window.confirm('Are you sure you want to reprocess this video? This will reset all processing and regenerate the video with new audio.')) {
+                      reprocessMutation.mutate();
+                    }
+                  }}
+                  loading={!!processingState && processingState.type === 'transcribe'}
+                  disabled={!!processingState && processingState.type === 'transcribe'}
+                >
+                  {processingState?.type === 'transcribe' ? 'Reprocessing...' : 'Reprocess Video'}
+                </Button>
+              )}
+            </div>
+
+            {/* Video Versions */}
+            <div className="space-y-2">
+              <div className="text-sm font-semibold text-gray-300 mb-3">Video Versions:</div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                {/* 1. Downloaded Video (original with audio) */}
+                {(video.local_file_url || video.video_url) && (
+                  <a
+                    href={video.local_file_url || video.video_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 px-4 py-3 text-sm rounded-lg bg-blue-500/20 text-blue-300 hover:bg-blue-500/30 border border-blue-500/30 w-full justify-center transition-colors"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                    <span className="text-center">Downloaded Video (Original with Audio)</span>
+                  </a>
+                )}
+                
+                {/* 2. Voice Removed Video (no audio) */}
+                {video.voice_removed_video_url && (
+                  <a
+                    href={video.voice_removed_video_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 px-4 py-3 text-sm rounded-lg bg-yellow-500/20 text-yellow-300 hover:bg-yellow-500/30 border border-yellow-500/30 w-full justify-center transition-colors"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                    <span className="text-center">Voice Removed Video (No Audio)</span>
+                  </a>
+                )}
+                
+                {/* 2b. Synthesized TTS Audio (Hindi) */}
+                {video.synthesized_audio_url && (
+                  <a
+                    href={video.synthesized_audio_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 px-4 py-3 text-sm rounded-lg bg-purple-500/20 text-purple-300 hover:bg-purple-500/30 border border-purple-500/30 w-full justify-center transition-colors"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                    <span className="text-center">🎵 Synthesized TTS Audio (Hindi)</span>
+                  </a>
+                )}
+                
+                {/* 3. Final Processed Video (with new Hindi audio) */}
+                {video.final_processed_video_url && (
+                  <a
+                    href={video.final_processed_video_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 px-4 py-3 text-sm rounded-lg bg-green-500/20 text-green-300 hover:bg-green-500/30 border border-green-500/30 w-full justify-center transition-colors"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                    <span className="text-center">Final Processed Video (with New Hindi Audio)</span>
+                  </a>
+                )}
+              </div>
+              
+              {/* Show processing status if videos are not ready yet */}
+              {video.synthesis_status === 'synthesized' && !video.voice_removed_video_url && !video.final_processed_video_url && (
+                <div className="text-xs text-yellow-400 p-3 bg-yellow-500/10 rounded-lg border border-yellow-500/30">
+                  ⏳ Processing video files... (This may take a few moments)
+                </div>
+              )}
             </div>
           </div>
 
@@ -529,26 +591,277 @@ export function VideoDetailModal() {
             </div>
           </div>
 
+          {/* Additional Info Section - Between video and tabs */}
+          <div className="grid md:grid-cols-3 gap-4 pt-4 border-t border-white/10">
+            {/* Processing Statistics */}
+            <div className="bg-white/5 rounded-lg p-4 border border-white/10">
+              <h4 className="text-xs font-semibold text-gray-400 mb-3 uppercase tracking-wide">Processing Status</h4>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-gray-400">Download</span>
+                  <span className={`text-xs px-2 py-0.5 rounded ${video.is_downloaded ? 'bg-green-500/20 text-green-300' : 'bg-gray-500/20 text-gray-400'}`}>
+                    {video.is_downloaded ? '✓ Complete' : 'Pending'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-gray-400">Transcription</span>
+                  <span className={`text-xs px-2 py-0.5 rounded ${
+                    video.transcription_status === 'transcribed' ? 'bg-green-500/20 text-green-300' :
+                    video.transcription_status === 'transcribing' ? 'bg-yellow-500/20 text-yellow-300' :
+                    video.transcription_status === 'failed' ? 'bg-red-500/20 text-red-300' :
+                    'bg-gray-500/20 text-gray-400'
+                  }`}>
+                    {video.transcription_status === 'transcribed' ? '✓ Complete' :
+                     video.transcription_status === 'transcribing' ? '⏳ Processing' :
+                     video.transcription_status === 'failed' ? '✗ Failed' : 'Pending'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-gray-400">AI Processing</span>
+                  <span className={`text-xs px-2 py-0.5 rounded ${
+                    video.ai_processing_status === 'processed' ? 'bg-green-500/20 text-green-300' :
+                    video.ai_processing_status === 'processing' ? 'bg-yellow-500/20 text-yellow-300' :
+                    video.ai_processing_status === 'failed' ? 'bg-red-500/20 text-red-300' :
+                    'bg-gray-500/20 text-gray-400'
+                  }`}>
+                    {video.ai_processing_status === 'processed' ? '✓ Complete' :
+                     video.ai_processing_status === 'processing' ? '⏳ Processing' :
+                     video.ai_processing_status === 'failed' ? '✗ Failed' : 'Pending'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-gray-400">Script Generation</span>
+                  <span className={`text-xs px-2 py-0.5 rounded ${
+                    video.script_status === 'generated' ? 'bg-green-500/20 text-green-300' :
+                    video.script_status === 'generating' ? 'bg-yellow-500/20 text-yellow-300' :
+                    video.script_status === 'failed' ? 'bg-red-500/20 text-red-300' :
+                    'bg-gray-500/20 text-gray-400'
+                  }`}>
+                    {video.script_status === 'generated' ? '✓ Complete' :
+                     video.script_status === 'generating' ? '⏳ Processing' :
+                     video.script_status === 'failed' ? '✗ Failed' : 'Pending'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-gray-400">TTS Synthesis</span>
+                  <span className={`text-xs px-2 py-0.5 rounded ${
+                    video.synthesis_status === 'synthesized' ? 'bg-green-500/20 text-green-300' :
+                    video.synthesis_status === 'synthesizing' ? 'bg-yellow-500/20 text-yellow-300' :
+                    video.synthesis_status === 'failed' ? 'bg-red-500/20 text-red-300' :
+                    'bg-gray-500/20 text-gray-400'
+                  }`}>
+                    {video.synthesis_status === 'synthesized' ? '✓ Complete' :
+                     video.synthesis_status === 'synthesizing' ? '⏳ Processing' :
+                     video.synthesis_status === 'failed' ? '✗ Failed' : 'Pending'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-gray-400">Final Video</span>
+                  <span className={`text-xs px-2 py-0.5 rounded ${video.final_processed_video_url ? 'bg-green-500/20 text-green-300' : 'bg-gray-500/20 text-gray-400'}`}>
+                    {video.final_processed_video_url ? '✓ Ready' : 'Pending'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Video Metadata */}
+            <div className="bg-white/5 rounded-lg p-4 border border-white/10">
+              <h4 className="text-xs font-semibold text-gray-400 mb-3 uppercase tracking-wide">Video Information</h4>
+              <div className="space-y-2">
+                {video.duration && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-gray-400">Duration</span>
+                    <span className="text-xs text-gray-300 font-mono">{formatDuration(video.duration)}</span>
+                  </div>
+                )}
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-gray-400">Source</span>
+                  <span className="text-xs text-gray-300">
+                    {video.video_source ? (video.video_source === 'rednote' ? 'RedNote' : 
+                     video.video_source === 'youtube' ? 'YouTube' :
+                     video.video_source === 'facebook' ? 'Facebook' :
+                     video.video_source === 'instagram' ? 'Instagram' :
+                     video.video_source === 'vimeo' ? 'Vimeo' :
+                     video.video_source === 'local' ? 'Local' :
+                     video.video_source) : '-'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-gray-400">Method</span>
+                  <span className="text-xs text-gray-300">{video.extraction_method || '-'}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-gray-400">Language</span>
+                  <span className="text-xs text-gray-300">{video.transcript_language || 'Unknown'}</span>
+                </div>
+                {video.video_id && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-gray-400">Video ID</span>
+                    <span className="text-xs text-gray-300 font-mono truncate max-w-[120px]" title={video.video_id}>
+                      {video.video_id}
+                    </span>
+                  </div>
+                )}
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-gray-400">Created</span>
+                  <span className="text-xs text-gray-300">{formatDate(video.created_at)}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* TTS Parameters & Settings */}
+            <div className="bg-white/5 rounded-lg p-4 border border-white/10">
+              <h4 className="text-xs font-semibold text-gray-400 mb-3 uppercase tracking-wide">TTS Settings</h4>
+              <div className="space-y-2">
+                {video.tts_speed ? (
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-gray-400">Speed</span>
+                    <span className="text-xs text-gray-300 font-mono">{video.tts_speed}x</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-gray-400">Speed</span>
+                    <span className="text-xs text-gray-500">Default (1.0x)</span>
+                  </div>
+                )}
+                {video.tts_temperature !== undefined && video.tts_temperature !== null ? (
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-gray-400">Temperature</span>
+                    <span className="text-xs text-gray-300 font-mono">{video.tts_temperature}</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-gray-400">Temperature</span>
+                    <span className="text-xs text-gray-500">Default (0.75)</span>
+                  </div>
+                )}
+                {video.tts_repetition_penalty !== undefined && video.tts_repetition_penalty !== null ? (
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-gray-400">Repetition Penalty</span>
+                    <span className="text-xs text-gray-300 font-mono">{video.tts_repetition_penalty}</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-gray-400">Repetition Penalty</span>
+                    <span className="text-xs text-gray-500">Default (5.0)</span>
+                  </div>
+                )}
+                {video.voice_profile ? (
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-gray-400">Voice Profile</span>
+                    <span className="text-xs text-green-300">✓ Assigned</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-gray-400">Voice Profile</span>
+                    <span className="text-xs text-gray-500">Default</span>
+                  </div>
+                )}
+                {video.transcript_hindi && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-gray-400">Hindi Translation</span>
+                    <span className="text-xs text-purple-300">✓ Available</span>
+                  </div>
+                )}
+                {video.hindi_script && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-gray-400">Hindi Script</span>
+                    <span className="text-xs text-indigo-300">✓ Generated</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
           {/* Tab content */}
-          <div className="min-h-[200px]">
+          <div className="min-h-[300px]">
             {activeTab === 'info' && (
-              <div className="space-y-4">
-                <div>
-                  <h4 className="text-sm font-medium text-gray-400 mb-2">Description</h4>
-                  <p className="text-sm">
-                    {video.description || 'No description available'}
+              <div className="space-y-6">
+                {/* Description Section */}
+                <div className="bg-white/5 rounded-lg p-4 border border-white/10">
+                  <h4 className="text-sm font-semibold text-gray-300 mb-3 flex items-center gap-2">
+                    <FileText className="w-4 h-4" />
+                    Description
+                  </h4>
+                  <p className="text-sm text-gray-300 leading-relaxed">
+                    {video.description || <span className="text-gray-500 italic">No description available</span>}
                   </p>
                 </div>
+
+                {/* Original Description */}
                 {video.original_description && (
-                  <div>
-                    <h4 className="text-sm font-medium text-gray-400 mb-2">Original Description</h4>
-                    <p className="text-sm text-gray-400">
+                  <div className="bg-white/5 rounded-lg p-4 border border-white/10">
+                    <h4 className="text-sm font-semibold text-gray-300 mb-3 flex items-center gap-2">
+                      <Globe className="w-4 h-4" />
+                      Original Description
+                    </h4>
+                    <p className="text-sm text-gray-400 leading-relaxed">
                       {video.original_description}
                     </p>
                   </div>
                 )}
-                <div>
-                  <h4 className="text-sm font-medium text-gray-400 mb-2">Original URL</h4>
+
+                {/* Processing Timeline */}
+                <div className="bg-white/5 rounded-lg p-4 border border-white/10">
+                  <h4 className="text-sm font-semibold text-gray-300 mb-3 flex items-center gap-2">
+                    <RefreshCw className="w-4 h-4" />
+                    Processing Timeline
+                  </h4>
+                  <div className="space-y-3">
+                    {video.created_at && (
+                      <div className="flex items-start gap-3">
+                        <div className="w-2 h-2 rounded-full bg-blue-400 mt-1.5"></div>
+                        <div className="flex-1">
+                          <p className="text-xs font-medium text-gray-300">Video Added</p>
+                          <p className="text-xs text-gray-500">{formatDate(video.created_at)}</p>
+                        </div>
+                      </div>
+                    )}
+                    {video.transcript_processed_at && (
+                      <div className="flex items-start gap-3">
+                        <div className="w-2 h-2 rounded-full bg-green-400 mt-1.5"></div>
+                        <div className="flex-1">
+                          <p className="text-xs font-medium text-gray-300">Transcription Completed</p>
+                          <p className="text-xs text-gray-500">{formatDate(video.transcript_processed_at)}</p>
+                        </div>
+                      </div>
+                    )}
+                    {video.script_generated_at && (
+                      <div className="flex items-start gap-3">
+                        <div className="w-2 h-2 rounded-full bg-indigo-400 mt-1.5"></div>
+                        <div className="flex-1">
+                          <p className="text-xs font-medium text-gray-300">Hindi Script Generated</p>
+                          <p className="text-xs text-gray-500">{formatDate(video.script_generated_at)}</p>
+                        </div>
+                      </div>
+                    )}
+                    {video.synthesized_at && (
+                      <div className="flex items-start gap-3">
+                        <div className="w-2 h-2 rounded-full bg-purple-400 mt-1.5"></div>
+                        <div className="flex-1">
+                          <p className="text-xs font-medium text-gray-300">TTS Audio Synthesized</p>
+                          <p className="text-xs text-gray-500">{formatDate(video.synthesized_at)}</p>
+                        </div>
+                      </div>
+                    )}
+                    {video.final_processed_video_url && (
+                      <div className="flex items-start gap-3">
+                        <div className="w-2 h-2 rounded-full bg-green-500 mt-1.5"></div>
+                        <div className="flex-1">
+                          <p className="text-xs font-medium text-gray-300">Final Video Ready</p>
+                          <p className="text-xs text-gray-500">Processing complete</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Original URL */}
+                <div className="bg-white/5 rounded-lg p-4 border border-white/10">
+                  <h4 className="text-sm font-semibold text-gray-300 mb-3 flex items-center gap-2">
+                    <ExternalLink className="w-4 h-4" />
+                    Original URL
+                  </h4>
                   <div className="flex items-center gap-2 p-3 bg-white/5 rounded-lg group">
                     <p className="text-sm text-gray-300 truncate flex-1 font-mono">
                       {video.url}
@@ -573,6 +886,42 @@ export function VideoDetailModal() {
                     </a>
                   </div>
                 </div>
+
+                {/* File Information */}
+                {(video.local_file_url || video.voice_removed_video_url || video.final_processed_video_url || video.synthesized_audio_url) && (
+                  <div className="bg-white/5 rounded-lg p-4 border border-white/10">
+                    <h4 className="text-sm font-semibold text-gray-300 mb-3 flex items-center gap-2">
+                      <Download className="w-4 h-4" />
+                      Generated Files
+                    </h4>
+                    <div className="grid grid-cols-2 gap-2">
+                      {video.local_file_url && (
+                        <div className="text-xs">
+                          <span className="text-gray-400">Original:</span>
+                          <span className="text-green-300 ml-1">✓ Available</span>
+                        </div>
+                      )}
+                      {video.voice_removed_video_url && (
+                        <div className="text-xs">
+                          <span className="text-gray-400">Voice Removed:</span>
+                          <span className="text-yellow-300 ml-1">✓ Available</span>
+                        </div>
+                      )}
+                      {video.synthesized_audio_url && (
+                        <div className="text-xs">
+                          <span className="text-gray-400">TTS Audio:</span>
+                          <span className="text-purple-300 ml-1">✓ Available</span>
+                        </div>
+                      )}
+                      {video.final_processed_video_url && (
+                        <div className="text-xs">
+                          <span className="text-gray-400">Final Video:</span>
+                          <span className="text-green-300 ml-1">✓ Available</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

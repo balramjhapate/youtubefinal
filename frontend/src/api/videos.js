@@ -69,10 +69,16 @@ export const videosApi = {
   },
 
   // Update voice profile for video
-  updateVoiceProfile: async (id, voiceProfileId) => {
-    const response = await apiClient.patch(`/videos/${id}/update_voice_profile/`, {
-      voice_profile_id: voiceProfileId,
+  updateVoiceProfile: async (id, profileId) => {
+    const response = await apiClient.patch(`/videos/${id}/`, {
+      voice_profile: profileId,
     });
+    return response.data;
+  },
+
+  // Manually trigger Cloudinary upload and Google Sheets sync
+  uploadAndSync: async (id) => {
+    const response = await apiClient.post(`/videos/${id}/upload_and_sync/`);
     return response.data;
   },
 

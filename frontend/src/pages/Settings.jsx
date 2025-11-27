@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import { Save, Eye, EyeOff, Info, ExternalLink } from 'lucide-react';
+import { Save, Eye, EyeOff, Info, ExternalLink, Cloud, FileSpreadsheet, TestTube } from 'lucide-react';
 import { Button, Input, Select, LoadingSpinner } from '../components/common';
 import { settingsApi } from '../api';
 import { AI_PROVIDERS } from '../utils/constants';
@@ -10,12 +10,38 @@ export function Settings() {
   const [provider, setProvider] = useState('gemini');
   const [apiKey, setApiKey] = useState('');
   const [showApiKey, setShowApiKey] = useState(false);
+  
+  // Cloudinary state
+  const [cloudName, setCloudName] = useState('');
+  const [cloudinaryApiKey, setCloudinaryApiKey] = useState('');
+  const [cloudinaryApiSecret, setCloudinaryApiSecret] = useState('');
+  const [cloudinaryEnabled, setCloudinaryEnabled] = useState(false);
+  const [showCloudinarySecret, setShowCloudinarySecret] = useState(false);
+  
+  // Google Sheets state
+  const [spreadsheetId, setSpreadsheetId] = useState('');
+  const [sheetName, setSheetName] = useState('Sheet1');
+  const [credentialsJson, setCredentialsJson] = useState('');
+  const [googleSheetsEnabled, setGoogleSheetsEnabled] = useState(false);
+  const [testResult, setTestResult] = useState(null);
+  const [serviceAccountEmail, setServiceAccountEmail] = useState('');
+  
   const queryClient = useQueryClient();
 
   // Fetch current settings
   const { data: settings, isLoading } = useQuery({
     queryKey: ['ai-settings'],
     queryFn: settingsApi.getAISettings,
+  });
+
+  const { data: cloudinarySettings } = useQuery({
+    queryKey: ['cloudinary-settings'],
+    queryFn: settingsApi.getCloudinarySettings,
+  });
+
+  const { data: googleSheetsSettings } = useQuery({
+    queryKey: ['google-sheets-settings'],
+    queryFn: settingsApi.getGoogleSheetsSettings,
   });
 
   // Update state when settings load
@@ -26,19 +52,138 @@ export function Settings() {
     }
   }, [settings]);
 
-  // Save mutation
-  const saveMutation = useMutation({
+  useEffect(() => {
+    if (cloudinarySettings) {
+      setCloudName(cloudinarySettings.cloud_name || '');
+      setCloudinaryApiKey(cloudinarySettings.api_key || '');
+      setCloudinaryApiSecret(cloudinarySettings.api_secret || '');
+      setCloudinaryEnabled(cloudinarySettings.enabled || false);
+    }
+  }, [cloudinarySettings]);
+
+  useEffect(() => {
+    if (googleSheetsSettings) {
+      setSpreadsheetId(googleSheetsSettings.spreadsheet_id || '');
+      setSheetName(googleSheetsSettings.sheet_name || 'Sheet1');
+      setCredentialsJson(googleSheetsSettings.credentials_json || '');
+      setGoogleSheetsEnabled(googleSheetsSettings.enabled || false);
+      
+      // Extract service account email from credentials
+      if (googleSheetsSettings.credentials_json) {
+        try {
+          const creds = JSON.parse(googleSheetsSettings.credentials_json);
+          setServiceAccountEmail(creds.client_email || '');
+        } catch (e) {
+          setServiceAccountEmail('');
+        }
+      }
+    }
+  }, [googleSheetsSettings]);
+
+  // Extract service account email when credentials JSON changes
+  useEffect(() => {
+    if (credentialsJson) {
+      try {
+        const creds = JSON.parse(credentialsJson);
+        setServiceAccountEmail(creds.client_email || '');
+      } catch (e) {
+        setServiceAccountEmail('');
+      }
+    } else {
+      setServiceAccountEmail('');
+    }
+  }, [credentialsJson]);
+
+  // Save mutations
+  const saveAIMutation = useMutation({
     mutationFn: () => settingsApi.saveAISettings(provider, apiKey),
     onSuccess: () => {
-      toast.success('Settings saved successfully');
+      toast.success('AI settings saved successfully');
       queryClient.invalidateQueries(['ai-settings']);
     },
-    onError: (error) => toast.error(error),
+    onError: (error) => toast.error(error.message || 'Failed to save AI settings'),
   });
 
-  const handleSubmit = (e) => {
+  const saveCloudinaryMutation = useMutation({
+    mutationFn: () => settingsApi.saveCloudinarySettings(cloudName, cloudinaryApiKey, cloudinaryApiSecret, cloudinaryEnabled),
+    onSuccess: () => {
+      toast.success('Cloudinary settings saved successfully');
+      queryClient.invalidateQueries(['cloudinary-settings']);
+    },
+    onError: (error) => toast.error(error.message || 'Failed to save Cloudinary settings'),
+  });
+
+  const saveGoogleSheetsMutation = useMutation({
+    mutationFn: () => settingsApi.saveGoogleSheetsSettings(spreadsheetId, sheetName, credentialsJson, googleSheetsEnabled),
+    onSuccess: () => {
+      toast.success('Google Sheets settings saved successfully');
+      queryClient.invalidateQueries(['google-sheets-settings']);
+    },
+    onError: (error) => toast.error(error.message || 'Failed to save Google Sheets settings'),
+  });
+
+  const testGoogleSheetsMutation = useMutation({
+    mutationFn: () => settingsApi.testGoogleSheets(),
+    onSuccess: (data) => {
+      setTestResult(data);
+      if (data.success) {
+        toast.success('Google Sheets connection test passed!', {
+          duration: 5000,
+        });
+        // Show detailed info
+        if (data.info) {
+          console.log('Google Sheets Test Results:', data.info);
+        }
+      } else {
+        const errorMessages = data.errors || ['Test failed'];
+        errorMessages.forEach(error => toast.error(error, { duration: 7000 }));
+        
+        if (data.warnings) {
+          data.warnings.forEach(warning => toast(warning, { icon: '⚠️', duration: 5000 }));
+        }
+      }
+    },
+    onError: (error) => {
+      const errorData = error?.response?.data;
+      setTestResult(errorData || { success: false, errors: ['Failed to test connection'] });
+      if (errorData?.errors) {
+        errorData.errors.forEach(err => toast.error(err, { duration: 7000 }));
+      } else {
+        toast.error('Failed to test Google Sheets connection');
+      }
+    },
+  });
+
+  const handleAISubmit = (e) => {
     e.preventDefault();
-    saveMutation.mutate();
+    saveAIMutation.mutate();
+  };
+
+  const handleCloudinarySubmit = (e) => {
+    e.preventDefault();
+    saveCloudinaryMutation.mutate();
+  };
+
+  const handleGoogleSheetsSubmit = (e) => {
+    e.preventDefault();
+    saveGoogleSheetsMutation.mutate();
+  };
+
+  // Extract spreadsheet ID from Google Sheets URL
+  const handleSpreadsheetUrlChange = (url) => {
+    if (url) {
+      // Extract ID from Google Sheets URL
+      // Format: https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/edit
+      const match = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+      if (match) {
+        setSpreadsheetId(match[1]);
+      } else {
+        // If it doesn't match the pattern, assume it's just the ID
+        setSpreadsheetId(url);
+      }
+    } else {
+      setSpreadsheetId('');
+    }
   };
 
   if (isLoading) {
@@ -59,11 +204,13 @@ export function Settings() {
         </p>
       </div>
 
-      {/* AI Settings Card */}
-      <div className="glass-card p-6 max-w-2xl">
+      {/* Settings Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
+        {/* AI Settings Card */}
+        <div className="glass-card p-6">
         <h2 className="text-lg font-semibold text-white mb-6">AI Provider Settings</h2>
 
-        <form onSubmit={handleSubmit} className="space-y-6">
+        <form onSubmit={handleAISubmit} className="space-y-6">
           <div>
             <Select
               label="AI Provider"
@@ -106,15 +253,332 @@ export function Settings() {
             type="submit"
             variant="primary"
             icon={Save}
-            loading={saveMutation.isPending}
+            loading={saveAIMutation.isPending}
           >
-            Save Settings
+            Save AI Settings
           </Button>
         </form>
       </div>
 
+        {/* Cloudinary Settings Card */}
+        <div className="glass-card p-6">
+        <div className="flex items-center gap-2 mb-6">
+          <Cloud className="w-5 h-5 text-blue-400" />
+          <h2 className="text-lg font-semibold text-white">Cloudinary Settings</h2>
+        </div>
+        <p className="text-sm text-gray-400 mb-4">
+          Configure Cloudinary to automatically upload final processed videos. Videos will be uploaded after processing is complete.
+        </p>
+
+        <form onSubmit={handleCloudinarySubmit} className="space-y-6">
+          <div className="flex items-center gap-3">
+            <input
+              type="checkbox"
+              id="cloudinary-enabled"
+              checked={cloudinaryEnabled}
+              onChange={(e) => setCloudinaryEnabled(e.target.checked)}
+              className="w-4 h-4 rounded"
+            />
+            <label htmlFor="cloudinary-enabled" className="text-sm font-medium text-gray-300">
+              Enable Cloudinary uploads
+            </label>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-1.5">
+              Cloud Name
+            </label>
+            <Input
+              type="text"
+              value={cloudName}
+              onChange={(e) => setCloudName(e.target.value)}
+              placeholder="your-cloud-name"
+              disabled={!cloudinaryEnabled}
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-1.5">
+              API Key
+            </label>
+            <div className="relative">
+              <input
+                type={showApiKey ? 'text' : 'password'}
+                value={cloudinaryApiKey}
+                onChange={(e) => setCloudinaryApiKey(e.target.value)}
+                placeholder="Enter your Cloudinary API key"
+                disabled={!cloudinaryEnabled}
+                className="w-full px-4 py-2.5 pr-12 rounded-lg input-dark disabled:opacity-50"
+              />
+              <button
+                type="button"
+                onClick={() => setShowApiKey(!showApiKey)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 p-1 hover:bg-white/10 rounded"
+              >
+                {showApiKey ? (
+                  <EyeOff className="w-4 h-4 text-gray-400" />
+                ) : (
+                  <Eye className="w-4 h-4 text-gray-400" />
+                )}
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-1.5">
+              API Secret
+            </label>
+            <div className="relative">
+              <input
+                type={showCloudinarySecret ? 'text' : 'password'}
+                value={cloudinaryApiSecret}
+                onChange={(e) => setCloudinaryApiSecret(e.target.value)}
+                placeholder="Enter your Cloudinary API secret"
+                disabled={!cloudinaryEnabled}
+                className="w-full px-4 py-2.5 pr-12 rounded-lg input-dark disabled:opacity-50"
+              />
+              <button
+                type="button"
+                onClick={() => setShowCloudinarySecret(!showCloudinarySecret)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 p-1 hover:bg-white/10 rounded"
+              >
+                {showCloudinarySecret ? (
+                  <EyeOff className="w-4 h-4 text-gray-400" />
+                ) : (
+                  <Eye className="w-4 h-4 text-gray-400" />
+                )}
+              </button>
+            </div>
+          </div>
+
+          <Button
+            type="submit"
+            variant="primary"
+            icon={Save}
+            loading={saveCloudinaryMutation.isPending}
+            disabled={!cloudinaryEnabled}
+          >
+            Save Cloudinary Settings
+          </Button>
+        </form>
+
+        <div className="mt-4 p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg">
+          <p className="text-xs text-gray-400">
+            Get your Cloudinary credentials from{' '}
+            <a
+              href="https://cloudinary.com/console"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-400 hover:underline"
+            >
+              Cloudinary Dashboard <ExternalLink className="w-3 h-3 inline" />
+            </a>
+          </p>
+        </div>
+      </div>
+
+        {/* Google Sheets Settings Card */}
+        <div className="glass-card p-6">
+        <div className="flex items-center gap-2 mb-6">
+          <FileSpreadsheet className="w-5 h-5 text-green-400" />
+          <h2 className="text-lg font-semibold text-white">Google Sheets Settings</h2>
+        </div>
+        <p className="text-sm text-gray-400 mb-4">
+          Configure Google Sheets to automatically track video data. Title, description, tags, and video links will be added to your sheet.
+        </p>
+
+        <form onSubmit={handleGoogleSheetsSubmit} className="space-y-6">
+          <div className="flex items-center gap-3">
+            <input
+              type="checkbox"
+              id="google-sheets-enabled"
+              checked={googleSheetsEnabled}
+              onChange={(e) => setGoogleSheetsEnabled(e.target.checked)}
+              className="w-4 h-4 rounded"
+            />
+            <label htmlFor="google-sheets-enabled" className="text-sm font-medium text-gray-300">
+              Enable Google Sheets tracking
+            </label>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-1.5">
+              Google Sheets URL or Spreadsheet ID
+            </label>
+            <Input
+              type="text"
+              value={spreadsheetId}
+              onChange={(e) => handleSpreadsheetUrlChange(e.target.value)}
+              placeholder="https://docs.google.com/spreadsheets/d/... or spreadsheet ID"
+              disabled={!googleSheetsEnabled}
+            />
+            <p className="mt-1 text-xs text-gray-500">
+              Paste the full Google Sheets URL or just the spreadsheet ID
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-1.5">
+              Sheet Name
+            </label>
+            <Input
+              type="text"
+              value={sheetName}
+              onChange={(e) => setSheetName(e.target.value)}
+              placeholder="Sheet1"
+              disabled={!googleSheetsEnabled}
+            />
+            <p className="mt-1 text-xs text-gray-500">
+              Name of the sheet tab where data will be written (default: Sheet1)
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-1.5">
+              Service Account JSON Credentials
+            </label>
+            <textarea
+              value={credentialsJson}
+              onChange={(e) => setCredentialsJson(e.target.value)}
+              placeholder='{"type": "service_account", "project_id": "...", ...}'
+              disabled={!googleSheetsEnabled}
+              rows={6}
+              className="w-full px-4 py-2.5 rounded-lg input-dark font-mono text-xs disabled:opacity-50"
+            />
+            <p className="mt-1 text-xs text-gray-500">
+              Paste the complete JSON credentials from your Google Service Account
+            </p>
+            {serviceAccountEmail && (
+              <div className="mt-2 p-2 bg-blue-500/10 border border-blue-500/20 rounded">
+                <p className="text-xs text-gray-300 mb-1">
+                  <strong>Service Account Email:</strong>
+                </p>
+                <p className="text-xs text-white font-mono bg-black/20 p-2 rounded break-all">
+                  {serviceAccountEmail}
+                </p>
+                <p className="text-xs text-yellow-300 mt-1">
+                  ⚠️ Make sure to share your Google Sheet with this email address and give it "Editor" access!
+                </p>
+              </div>
+            )}
+          </div>
+
+          <div className="flex gap-3">
+            <Button
+              type="submit"
+              variant="primary"
+              icon={Save}
+              loading={saveGoogleSheetsMutation.isPending}
+              disabled={!googleSheetsEnabled}
+            >
+              Save Google Sheets Settings
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              icon={TestTube}
+              onClick={() => testGoogleSheetsMutation.mutate()}
+              loading={testGoogleSheetsMutation.isPending}
+              disabled={!googleSheetsEnabled || !spreadsheetId || !credentialsJson}
+            >
+              Test Connection
+            </Button>
+          </div>
+        </form>
+
+        {/* Test Results Display */}
+        {testResult && (
+          <div className={`mt-4 p-4 rounded-lg border ${
+            testResult.success 
+              ? 'bg-green-500/10 border-green-500/20' 
+              : 'bg-red-500/10 border-red-500/20'
+          }`}>
+            <h4 className={`text-sm font-semibold mb-2 ${
+              testResult.success ? 'text-green-300' : 'text-red-300'
+            }`}>
+              {testResult.success ? '✅ Connection Test Passed' : '❌ Connection Test Failed'}
+            </h4>
+            
+            {testResult.errors && testResult.errors.length > 0 && (
+              <div className="mb-3">
+                {testResult.errors.map((error, idx) => (
+                  <p key={idx} className="text-xs text-red-300 mb-1">{error}</p>
+                ))}
+              </div>
+            )}
+            
+            {testResult.info && (
+              <div className="space-y-2">
+                {testResult.info.service_account_email && (
+                  <div className="p-2 bg-white/5 rounded">
+                    <p className="text-xs text-gray-300 mb-1">
+                      <strong>Service Account Email:</strong>
+                    </p>
+                    <p className="text-xs text-white font-mono bg-black/20 p-2 rounded break-all">
+                      {testResult.info.service_account_email}
+                    </p>
+                    <p className="text-xs text-yellow-300 mt-1">
+                      ⚠️ Share your Google Sheet with this email address!
+                    </p>
+                  </div>
+                )}
+                
+                {testResult.info.fix_instructions && (
+                  <div className="p-2 bg-blue-500/10 rounded">
+                    <p className="text-xs font-semibold text-blue-300 mb-2">How to Fix:</p>
+                    <ol className="text-xs text-gray-300 space-y-1 list-decimal list-inside">
+                      {testResult.info.fix_instructions.map((instruction, idx) => (
+                        <li key={idx}>{instruction}</li>
+                      ))}
+                    </ol>
+                  </div>
+                )}
+                
+                {testResult.info.extracted_spreadsheet_id && (
+                  <p className="text-xs text-gray-400">
+                    Spreadsheet ID: <span className="font-mono">{testResult.info.extracted_spreadsheet_id}</span>
+                  </p>
+                )}
+              </div>
+            )}
+            
+            {testResult.warnings && testResult.warnings.length > 0 && (
+              <div className="mt-2">
+                {testResult.warnings.map((warning, idx) => (
+                  <p key={idx} className="text-xs text-yellow-300">{warning}</p>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="mt-4 p-3 bg-green-500/10 border border-green-500/20 rounded-lg">
+          <p className="text-xs text-gray-400 mb-2">
+            <strong className="text-white">How to set up Google Sheets API:</strong>
+          </p>
+          <ol className="text-xs text-gray-400 space-y-1 list-decimal list-inside">
+            <li>Go to{' '}
+              <a
+                href="https://console.cloud.google.com/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-green-400 hover:underline"
+              >
+                Google Cloud Console <ExternalLink className="w-3 h-3 inline" />
+              </a>
+            </li>
+            <li>Create a new project or select an existing one</li>
+            <li>Enable Google Sheets API</li>
+            <li>Create a Service Account and download the JSON key file</li>
+            <li>Share your Google Sheet with the service account email</li>
+            <li>Paste the JSON content in the field above</li>
+          </ol>
+        </div>
+      </div>
+      </div>
+
       {/* Provider Info Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-4xl">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* Gemini */}
         <div className={`glass-card p-4 ${provider === 'gemini' ? 'ring-2 ring-[var(--rednote-primary)]' : ''}`}>
           <h3 className="font-medium text-white mb-2">Google Gemini</h3>
@@ -171,7 +635,7 @@ export function Settings() {
       </div>
 
       {/* Help section */}
-      <div className="glass-card p-4 max-w-2xl border-l-4 border-blue-500">
+      <div className="glass-card p-4 border-l-4 border-blue-500">
         <div className="flex items-start gap-3">
           <Info className="w-5 h-5 text-blue-400 flex-shrink-0 mt-0.5" />
           <div>

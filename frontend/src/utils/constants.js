@@ -49,12 +49,12 @@ export const STATUS_BADGE_CONFIG = {
   // Transcription status
   not_transcribed: { label: 'Not Transcribed', className: 'badge-pending' },
   transcribing: { label: 'Transcribing...', className: 'badge-warning' },
-  transcribed: { label: 'Transcribed', className: 'badge-success' },
+  transcribed: { label: 'Transcribed', className: 'badge-transcribed' },
 
   // AI processing status
   not_processed: { label: 'Not Processed', className: 'badge-pending' },
   processing: { label: 'Processing...', className: 'badge-warning' },
-  processed: { label: 'Processed', className: 'badge-success' },
+  processed: { label: 'Processed', className: 'badge-processed' },
 
   // Audio prompt status
   not_generated: { label: 'Not Generated', className: 'badge-pending' },

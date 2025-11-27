@@ -13,7 +13,6 @@ const navItems = [
   { path: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { path: '/videos', icon: Video, label: 'Videos' },
   { path: '/voice-cloning', icon: Mic, label: 'Voice Cloning' },
-  { path: '/script-generator', icon: FileText, label: 'Script Generator' },
   { path: '/settings', icon: Settings, label: 'Settings' },
 ];
 

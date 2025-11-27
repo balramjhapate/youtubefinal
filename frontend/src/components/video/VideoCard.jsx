@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import {
 	Download,
 	FileText,
@@ -34,8 +35,8 @@ export function VideoCard({
 }) {
 	const [progress, setProgress] = useState(0);
 	const queryClient = useQueryClient();
+	const navigate = useNavigate();
 	const {
-		openVideoDetail,
 		getProcessingState,
 		startProcessing,
 		updateProcessingProgress,
@@ -134,10 +135,10 @@ export function VideoCard({
 
 	return (
 		<div
-			className={`glass-card p-4 transition-all hover:border-white/20 ${
+			className={`glass-card p-4 transition-all hover:border-white/20 cursor-pointer ${
 				isSelected ? "ring-2 ring-[var(--rednote-primary)]" : ""
 			}`}
-			onClick={() => openVideoDetail(video.id)}>
+			onClick={() => navigate(`/videos/${video.id}`)}>
 			<div className="flex gap-4">
 				{/* Selection checkbox */}
 				<div className="flex items-start pt-1">
@@ -182,7 +183,7 @@ export function VideoCard({
 								icon={Eye}
 								onClick={(e) => {
 									e.stopPropagation();
-									openVideoDetail(video.id);
+									navigate(`/videos/${video.id}`);
 								}}
 								title="View Details"
 								className="p-1"
@@ -201,23 +202,42 @@ export function VideoCard({
 						</div>
 					</div>
 
-					{/* Status badges - compact row */}
+					{/* Status badges - compact row - Each with unique color */}
 					<div className="flex flex-wrap gap-1.5 mt-1.5">
-						<StatusBadge status={video.status} />
+						{/* Success status - Green */}
+						{video.status === "success" && (
+							<StatusBadge status={video.status} />
+						)}
+						{/* Transcribed status - Blue */}
 						{video.transcription_status !== "not_transcribed" && (
 							<StatusBadge status={video.transcription_status} />
 						)}
+						{/* Processed status - Purple */}
 						{video.ai_processing_status !== "not_processed" && (
 							<StatusBadge status={video.ai_processing_status} />
 						)}
+						{/* Script status - Indigo */}
 						{video.script_status === "generated" && (
-							<span className="px-1.5 py-0.5 text-xs bg-indigo-500/20 text-indigo-300 rounded border border-indigo-500/30">
+							<span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-full badge-script">
 								📝 Script
 							</span>
 						)}
+						{/* Downloaded status - Cyan */}
 						{video.is_downloaded && (
-							<span className="px-1.5 py-0.5 text-xs bg-green-500/20 text-green-300 rounded border border-green-500/30">
+							<span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-full badge-downloaded">
 								✓ Downloaded
+							</span>
+						)}
+						{/* Cloudinary Upload status - Blue */}
+						{video.cloudinary_url && (
+							<span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-full badge-cloudinary">
+								☁️ Cloudinary
+							</span>
+						)}
+						{/* Google Sheets Sync status - Indigo */}
+						{video.google_sheets_synced && (
+							<span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-full badge-sheets">
+								📊 Sheets
 							</span>
 						)}
 					</div>
@@ -379,8 +399,14 @@ export function VideoCard({
 							</Button>
 						)}
 
-						{/* Reprocess button - Show when final video is ready */}
-						{video.final_processed_video_url && (
+						{/* Reprocess button - Show when video has been transcribed (allows reprocessing at any stage) */}
+						{(video.transcription_status === "transcribed" ||
+							video.transcription_status === "failed" ||
+							video.script_status === "generated" ||
+							video.script_status === "failed" ||
+							video.synthesis_status === "synthesized" ||
+							video.synthesis_status === "failed" ||
+							video.final_processed_video_url) && (
 							<Button
 								size="sm"
 								variant="secondary"
