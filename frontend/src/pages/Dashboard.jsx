@@ -45,14 +45,12 @@ export function Dashboard() {
   const { data: stats, isLoading: statsLoading } = useQuery({
     queryKey: ['dashboard-stats'],
     queryFn: settingsApi.getDashboardStats,
-    refetchInterval: 10000, // Refresh every 10 seconds
   });
 
   // Fetch videos
   const { data: videos, isLoading: videosLoading } = useQuery({
     queryKey: ['videos'],
     queryFn: () => videosApi.getAll(),
-    refetchInterval: 5000, // Refresh every 5 seconds
   });
 
   if (statsLoading && videosLoading) {

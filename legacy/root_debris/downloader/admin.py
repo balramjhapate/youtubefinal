@@ -74,6 +74,7 @@ class VideoDownloadAdmin(admin.ModelAdmin):
     list_display = [
         'thumbnail_display',
         'title_display',
+        'video_source',
         'status_badge',
         'transcription_status_badge',
         'ai_status_badge',
@@ -87,6 +88,15 @@ class VideoDownloadAdmin(admin.ModelAdmin):
         'original_title',
         'url',
         'video_id'
+    ]
+    
+    list_filter = [
+        'video_source',
+        'status',
+        'transcription_status',
+        'ai_processing_status',
+        'extraction_method',
+        'created_at'
     ]
 
     readonly_fields = [
@@ -121,7 +131,7 @@ class VideoDownloadAdmin(admin.ModelAdmin):
 
     fieldsets = [
         ('Video Information', {
-            'fields': ('url', 'video_id', 'thumbnail_preview')
+            'fields': ('url', 'video_id', 'video_source', 'thumbnail_preview')
         }),
         ('Content (Translated)', {
             'fields': ('title', 'description')
@@ -130,7 +140,8 @@ class VideoDownloadAdmin(admin.ModelAdmin):
             'fields': ('original_title', 'original_description')
         }),
         ('Media Details', {
-            'fields': ('video_url', 'cover_url', 'local_file', 'is_downloaded')
+            'fields': ('video_url', 'cover_url', 'local_file', 'is_downloaded', 'duration', 'voice_removed_video_url', 'final_processed_video_url'),
+            'description': '1. Downloaded video (original with audio) | 2. Voice removed video (no audio) | 3. Final processed video (with new Hindi audio)'
         }),
         ('Extraction Status', {
             'fields': ('extraction_method', 'status', 'error_message')

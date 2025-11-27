@@ -6,16 +6,16 @@ import {
   FileText,
   Brain,
   MessageSquare,
-
   Play,
   Globe,
   Copy,
   ExternalLink,
+  RefreshCw,
 } from 'lucide-react';
 import { Modal, Button, StatusBadge, AudioPlayer, LoadingSpinner, Select } from '../common';
 import { VideoProgressIndicator } from './VideoProgressIndicator';
 import { videosApi } from '../../api';
-import { formatDate, truncateText } from '../../utils/formatters';
+import { formatDate, truncateText, formatDuration } from '../../utils/formatters';
 import { useStore } from '../../store';
 
 export function VideoDetailModal() {
@@ -33,10 +33,24 @@ export function VideoDetailModal() {
   const [progress, setProgress] = useState(0);
   
   // Fetch video details - must be before useEffect hooks that use it
-  const { data: video, isLoading } = useQuery({
+  const { data: video, isLoading, refetch } = useQuery({
     queryKey: ['video', selectedVideoId],
     queryFn: () => videosApi.getById(selectedVideoId),
     enabled: !!selectedVideoId,
+    refetchInterval: (query) => {
+      // Auto-refetch if video is being processed
+      const video = query.state.data;
+      if (video && (
+        video.transcription_status === 'transcribing' ||
+        video.ai_processing_status === 'processing' ||
+        video.script_status === 'generating' ||
+        video.synthesis_status === 'synthesizing' ||
+        (video.synthesis_status === 'synthesized' && !video.final_processed_video_url)
+      )) {
+        return 2000; // Refetch every 2 seconds during processing
+      }
+      return false; // Don't auto-refetch when not processing
+    },
   });
   
   const processingState = selectedVideoId ? getProcessingState(selectedVideoId) : null;
@@ -93,21 +107,9 @@ export function VideoDetailModal() {
       return videosApi.download(selectedVideoId);
     },
     onSuccess: () => {
-      const checkInterval = setInterval(() => {
-        queryClient.invalidateQueries(['video', selectedVideoId]);
-        queryClient.invalidateQueries(['videos']);
-        const updatedVideo = queryClient.getQueryData(['video', selectedVideoId]);
-        if (updatedVideo?.is_downloaded) {
-          clearInterval(checkInterval);
-          completeProcessing(selectedVideoId);
-          toast.success('Video downloaded successfully');
-        }
-      }, 1000);
-
-      setTimeout(() => {
-        clearInterval(checkInterval);
-        completeProcessing(selectedVideoId);
-      }, 60000);
+      queryClient.invalidateQueries(['video', selectedVideoId]);
+      queryClient.invalidateQueries(['videos']);
+      toast.success('Download started');
     },
     onError: (error) => {
       completeProcessing(selectedVideoId);
@@ -121,29 +123,35 @@ export function VideoDetailModal() {
       return videosApi.transcribe(selectedVideoId);
     },
     onSuccess: () => {
-      toast.success('Transcription started');
+      toast.success('Processing started');
+      // Invalidate and refetch to get updated status
       queryClient.invalidateQueries(['video', selectedVideoId]);
-      
-      const checkInterval = setInterval(() => {
-        queryClient.invalidateQueries(['video', selectedVideoId]);
-        const updatedVideo = queryClient.getQueryData(['video', selectedVideoId]);
-        if (updatedVideo?.transcription_status === 'transcribed' || updatedVideo?.transcription_status === 'failed') {
-          clearInterval(checkInterval);
-          completeProcessing(selectedVideoId);
-          if (updatedVideo.transcription_status === 'transcribed') {
-            toast.success('Transcription completed');
+      queryClient.invalidateQueries(['videos']);
+      // Start polling for updates
+      const pollInterval = setInterval(() => {
+        refetch().then(({ data }) => {
+          // Stop polling when processing is complete
+          if (data && 
+              data.transcription_status !== 'transcribing' &&
+              data.ai_processing_status !== 'processing' &&
+              data.script_status !== 'generating' &&
+              data.synthesis_status !== 'synthesizing' &&
+              (data.synthesis_status !== 'synthesized' || data.final_processed_video_url)) {
+            clearInterval(pollInterval);
+            completeProcessing(selectedVideoId);
+            if (data.final_processed_video_url) {
+              toast.success('Video processing completed!');
+            }
           }
-        }
+        });
       }, 2000);
-
-      setTimeout(() => {
-        clearInterval(checkInterval);
-        completeProcessing(selectedVideoId);
-      }, 300000);
+      
+      // Clear interval after 5 minutes to prevent infinite polling
+      setTimeout(() => clearInterval(pollInterval), 5 * 60 * 1000);
     },
     onError: (error) => {
       completeProcessing(selectedVideoId);
-      toast.error(error?.response?.data?.error || 'Transcription failed');
+      toast.error(error?.response?.data?.error || 'Processing failed');
     },
   });
 
@@ -154,27 +162,48 @@ export function VideoDetailModal() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries(['video', selectedVideoId]);
-      
-      const checkInterval = setInterval(() => {
-        queryClient.invalidateQueries(['video', selectedVideoId]);
-        const updatedVideo = queryClient.getQueryData(['video', selectedVideoId]);
-        if (updatedVideo?.ai_processing_status === 'processed' || updatedVideo?.ai_processing_status === 'failed') {
-          clearInterval(checkInterval);
-          completeProcessing(selectedVideoId);
-          if (updatedVideo.ai_processing_status === 'processed') {
-            toast.success('AI processing completed');
-          }
-        }
-      }, 2000);
-
-      setTimeout(() => {
-        clearInterval(checkInterval);
-        completeProcessing(selectedVideoId);
-      }, 120000);
+      toast.success('AI processing started');
     },
     onError: (error) => {
       completeProcessing(selectedVideoId);
       toast.error(error?.response?.data?.error || 'AI processing failed');
+    },
+  });
+
+  const reprocessMutation = useMutation({
+    mutationFn: () => {
+      startProcessing(selectedVideoId, 'transcribe');
+      return videosApi.reprocess(selectedVideoId);
+    },
+    onSuccess: () => {
+      toast.success('Video reprocessing started');
+      queryClient.invalidateQueries(['video', selectedVideoId]);
+      queryClient.invalidateQueries(['videos']);
+      // Start polling for updates
+      const pollInterval = setInterval(() => {
+        refetch().then(({ data }) => {
+          // Stop polling when processing is complete
+          if (data && 
+              data.transcription_status !== 'transcribing' &&
+              data.ai_processing_status !== 'processing' &&
+              data.script_status !== 'generating' &&
+              data.synthesis_status !== 'synthesizing' &&
+              (data.synthesis_status !== 'synthesized' || data.final_processed_video_url)) {
+            clearInterval(pollInterval);
+            completeProcessing(selectedVideoId);
+            if (data.final_processed_video_url) {
+              toast.success('Video reprocessing completed!');
+            }
+          }
+        });
+      }, 2000);
+      
+      // Clear interval after 5 minutes to prevent infinite polling
+      setTimeout(() => clearInterval(pollInterval), 5 * 60 * 1000);
+    },
+    onError: (error) => {
+      completeProcessing(selectedVideoId);
+      toast.error(error?.response?.data?.error || 'Reprocessing failed');
     },
   });
 
@@ -190,6 +219,7 @@ export function VideoDetailModal() {
   const tabs = [
     { id: 'info', label: 'Info' },
     { id: 'transcript', label: 'Transcript' },
+    { id: 'script', label: 'Hindi Script' },
     { id: 'ai', label: 'AI Summary' },
   ];
 
@@ -210,14 +240,25 @@ export function VideoDetailModal() {
           <div className="flex flex-col md:flex-row gap-6">
             {/* Video player or thumbnail */}
             <div className="w-full md:w-1/2">
-              {video.video_url ? (
+              {/* Show final processed video if available, otherwise show downloaded video, otherwise show original */}
+              {(video.final_processed_video_url || video.local_file_url || video.video_url) ? (
                 <div className="relative rounded-lg overflow-hidden bg-black aspect-video">
                   <video
-                    src={video.video_url}
+                    src={video.final_processed_video_url || video.local_file_url || video.video_url}
                     poster={video.cover_url}
                     controls
                     className="w-full h-full"
                   />
+                  {video.final_processed_video_url && (
+                    <div className="absolute top-2 right-2 px-2 py-1 bg-green-500/80 text-white text-xs rounded">
+                      ✓ Final Video (with new Hindi audio)
+                    </div>
+                  )}
+                  {!video.final_processed_video_url && video.local_file_url && (
+                    <div className="absolute top-2 right-2 px-2 py-1 bg-blue-500/80 text-white text-xs rounded">
+                      ✓ Downloaded Video (original audio)
+                    </div>
+                  )}
                 </div>
               ) : video.cover_url ? (
                 <img
@@ -263,9 +304,40 @@ export function VideoDetailModal() {
               {/* Meta info */}
               <div className="text-sm text-gray-400 space-y-1">
                 <p>Created: {formatDate(video.created_at)}</p>
+                <p>Source: {video.video_source ? (video.video_source === 'rednote' ? 'RedNote' : 
+                   video.video_source === 'youtube' ? 'YouTube' :
+                   video.video_source === 'facebook' ? 'Facebook' :
+                   video.video_source === 'instagram' ? 'Instagram' :
+                   video.video_source === 'vimeo' ? 'Vimeo' :
+                   video.video_source === 'local' ? 'Local' :
+                   video.video_source) : '-'}</p>
                 <p>Method: {video.extraction_method || '-'}</p>
+                {video.duration && (
+                  <p>Duration: {formatDuration(video.duration)}</p>
+                )}
                 {video.is_downloaded && (
                   <p className="text-green-400">✓ Downloaded locally</p>
+                )}
+                {video.script_status === 'generated' && (
+                  <p className="text-indigo-400">✓ Hindi Script Generated</p>
+                )}
+                {video.script_status === 'generating' && (
+                  <p className="text-yellow-400 animate-pulse">⏳ Generating Script...</p>
+                )}
+                {video.synthesis_status === 'synthesized' && (
+                  <p className="text-green-400">✓ TTS Audio Generated</p>
+                )}
+                {video.synthesis_status === 'synthesizing' && (
+                  <p className="text-yellow-400 animate-pulse">⏳ Generating Voice...</p>
+                )}
+                {video.voice_removed_video_url && (
+                  <p className="text-yellow-400">✓ Voice Removed Video Ready</p>
+                )}
+                {video.final_processed_video_url && (
+                  <p className="text-green-400">✓ Final Video with New Hindi Audio Ready</p>
+                )}
+                {video.tts_speed && (
+                  <p className="text-xs">TTS Speed: {video.tts_speed}x | Temp: {video.tts_temperature}</p>
                 )}
               </div>
 
@@ -276,10 +348,30 @@ export function VideoDetailModal() {
                     <VideoProgressIndicator label="Downloading video..." progress={progress} />
                   )}
                   {processingState.type === 'transcribe' && (
-                    <VideoProgressIndicator label="Transcribing audio..." progress={progress} />
+                    <>
+                      <VideoProgressIndicator 
+                        label={video.transcription_status === 'transcribing' ? "Transcribing..." : "Transcribed ✓"} 
+                        progress={video.transcription_status === 'transcribing' ? progress : 100} 
+                      />
+                      {video.transcription_status === 'transcribed' && video.ai_processing_status === 'processing' && (
+                        <VideoProgressIndicator label="AI Processing..." progress={progress} />
+                      )}
+                      {video.ai_processing_status === 'processed' && video.script_status === 'generating' && (
+                        <VideoProgressIndicator label="Scripting..." progress={progress} />
+                      )}
+                      {video.script_status === 'generated' && video.synthesis_status === 'synthesizing' && (
+                        <VideoProgressIndicator label="Generating Voice..." progress={progress} />
+                      )}
+                      {video.synthesis_status === 'synthesized' && !video.final_processed_video_url && (
+                        <VideoProgressIndicator label="Removing Audio & Combining..." progress={progress} />
+                      )}
+                    </>
                   )}
                   {processingState.type === 'processAI' && (
                     <VideoProgressIndicator label="Processing with AI..." progress={progress} />
+                  )}
+                  {video.script_status === 'generating' && !processingState && (
+                    <VideoProgressIndicator label="Generating Hindi script..." progress={progress} />
                   )}
                 </div>
               )}
@@ -309,7 +401,7 @@ export function VideoDetailModal() {
                       loading={!!processingState && processingState.type === 'transcribe'}
                       disabled={!!processingState && processingState.type === 'transcribe'}
                     >
-                      {video.transcription_status === 'failed' ? 'Retry Transcribe' : 'Transcribe'}
+                      {video.transcription_status === 'failed' ? 'Retry Process' : 'Process Video'}
                     </Button>
                   )}
 
@@ -326,17 +418,95 @@ export function VideoDetailModal() {
                       {video.ai_processing_status === 'failed' ? 'Retry AI Summary' : 'Generate AI Summary'}
                     </Button>
                   )}
+
+                  {/* Reprocess Button - Show when final video is ready */}
+                  {video.final_processed_video_url && (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      icon={RefreshCw}
+                      onClick={() => {
+                        if (window.confirm('Are you sure you want to reprocess this video? This will reset all processing and regenerate the video with new audio.')) {
+                          reprocessMutation.mutate();
+                        }
+                      }}
+                      loading={!!processingState && processingState.type === 'transcribe'}
+                      disabled={!!processingState && processingState.type === 'transcribe'}
+                      className="col-span-2"
+                    >
+                      {processingState?.type === 'transcribe' ? 'Reprocessing...' : 'Reprocess Video'}
+                    </Button>
+                  )}
                 </div>
 
-                <a
-                  href={video.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg btn-secondary w-full justify-center"
-                >
-                  <ExternalLink className="w-4 h-4" />
-                  View Original
-                </a>
+                <div className="space-y-2">
+                  <div className="text-xs text-gray-400 mb-2 font-semibold">Video Versions:</div>
+                  
+                  {/* 1. Downloaded Video (original with audio) */}
+                  {(video.local_file_url || video.video_url) && (
+                    <a
+                      href={video.local_file_url || video.video_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg bg-blue-500/20 text-blue-300 hover:bg-blue-500/30 border border-blue-500/30 w-full justify-center"
+                    >
+                      <ExternalLink className="w-4 h-4" />
+                      1. Downloaded Video (Original with Audio)
+                    </a>
+                  )}
+                  
+                  {/* 2. Voice Removed Video (no audio) */}
+                  {video.voice_removed_video_url && (
+                    <a
+                      href={video.voice_removed_video_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg bg-yellow-500/20 text-yellow-300 hover:bg-yellow-500/30 border border-yellow-500/30 w-full justify-center"
+                    >
+                      <ExternalLink className="w-4 h-4" />
+                      2. Voice Removed Video (No Audio)
+                    </a>
+                  )}
+                  
+                  {/* 3. Final Processed Video (with new Hindi audio) */}
+                  {video.final_processed_video_url && (
+                    <>
+                      <a
+                        href={video.final_processed_video_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg bg-green-500/20 text-green-300 hover:bg-green-500/30 border border-green-500/30 w-full justify-center"
+                      >
+                        <ExternalLink className="w-4 h-4" />
+                        3. Final Processed Video (with New Hindi Audio)
+                      </a>
+                      
+                      {/* Reprocess Button - Show immediately after final video is ready */}
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        icon={RefreshCw}
+                        onClick={() => {
+                          if (window.confirm('Are you sure you want to reprocess this video? This will reset all processing and regenerate the video with new audio.')) {
+                            reprocessMutation.mutate();
+                          }
+                        }}
+                        loading={!!processingState && processingState.type === 'transcribe'}
+                        disabled={!!processingState && processingState.type === 'transcribe'}
+                        className="w-full"
+                      >
+                        {processingState?.type === 'transcribe' ? 'Reprocessing...' : 'Reprocess Video'}
+                      </Button>
+                    </>
+                  )}
+                  
+                  {/* Show processing status if videos are not ready yet */}
+                  {video.synthesis_status === 'synthesized' && !video.voice_removed_video_url && !video.final_processed_video_url && (
+                    <div className="text-xs text-yellow-400 p-2 bg-yellow-500/10 rounded border border-yellow-500/30">
+                      ⏳ Processing video files... (This may take a few moments)
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -410,64 +580,73 @@ export function VideoDetailModal() {
               <div className="space-y-4">
                 {video.transcript ? (
                   <>
-                    {/* Transcript and Hindi Translation Grid */}
+                    {/* Transcript with and without timestamps */}
                     <div className="grid md:grid-cols-2 gap-4">
-                      {/* Original Transcript */}
+                      {/* Original Transcript WITH timestamps */}
                       <div className="space-y-2">
                         <div className="flex items-center justify-between">
                           <h4 className="text-sm font-medium text-gray-300">
-                            Original Transcript
+                            Original Transcript with Timestamps ({video.transcript_language || 'Unknown'})
                           </h4>
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs text-gray-500">
-                              {video.transcript_language || 'Unknown'}
-                            </span>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              icon={Copy}
-                              onClick={() => copyToClipboard(video.transcript)}
-                            >
-                              Copy
-                            </Button>
-                          </div>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            icon={Copy}
+                            onClick={() => copyToClipboard(video.transcript)}
+                          >
+                            Copy
+                          </Button>
                         </div>
                         <div className="p-4 bg-white/5 rounded-lg max-h-96 overflow-y-auto border border-white/10">
-                          <p className="text-sm whitespace-pre-wrap leading-relaxed">{video.transcript}</p>
+                          <p className="text-sm whitespace-pre-wrap leading-relaxed font-mono">{video.transcript}</p>
                         </div>
                       </div>
 
-                      {/* Hindi Translation */}
-                      {video.transcript_hindi ? (
-                        <div className="space-y-2">
-                          <div className="flex items-center justify-between">
-                            <h4 className="text-sm font-medium text-purple-300 flex items-center gap-2">
-                              <Globe className="w-4 h-4" />
-                              Hindi Translation
-                            </h4>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              icon={Copy}
-                              onClick={() => copyToClipboard(video.transcript_hindi)}
-                            >
-                              Copy
-                            </Button>
-                          </div>
-                          <div className="p-4 bg-purple-500/5 rounded-lg max-h-96 overflow-y-auto border border-purple-500/20">
-                            <p className="text-sm whitespace-pre-wrap leading-relaxed">{video.transcript_hindi}</p>
-                          </div>
+                      {/* Original Transcript WITHOUT timestamps */}
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <h4 className="text-sm font-medium text-blue-300">
+                            Original Transcript (Plain Text)
+                          </h4>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            icon={Copy}
+                            onClick={() => copyToClipboard(video.transcript_without_timestamps || video.transcript)}
+                          >
+                            Copy
+                          </Button>
                         </div>
-                      ) : (
-                        <div className="flex items-center justify-center p-8 bg-white/5 rounded-lg border border-white/10">
-                          <div className="text-center text-gray-400">
-                            <Globe className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                            <p className="text-sm">Hindi translation not available</p>
-                            <p className="text-xs mt-1">Translation happens automatically after transcription</p>
-                          </div>
+                        <div className="p-4 bg-blue-500/5 rounded-lg max-h-96 overflow-y-auto border border-blue-500/20">
+                          <p className="text-sm whitespace-pre-wrap leading-relaxed">
+                            {video.transcript_without_timestamps || video.transcript}
+                          </p>
                         </div>
-                      )}
+                      </div>
                     </div>
+
+                    {/* Hindi Translation */}
+                    {video.transcript_hindi && (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <h4 className="text-sm font-medium text-purple-300 flex items-center gap-2">
+                            <Globe className="w-4 h-4" />
+                            Hindi Translation
+                          </h4>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            icon={Copy}
+                            onClick={() => copyToClipboard(video.transcript_hindi)}
+                          >
+                            Copy
+                          </Button>
+                        </div>
+                        <div className="p-4 bg-purple-500/5 rounded-lg max-h-96 overflow-y-auto border border-purple-500/20">
+                          <p className="text-sm whitespace-pre-wrap leading-relaxed">{video.transcript_hindi}</p>
+                        </div>
+                      </div>
+                    )}
                   </>
                 ) : (
                   <div className="text-center py-8 text-gray-400">
@@ -484,6 +663,100 @@ export function VideoDetailModal() {
                         Start Transcription
                       </Button>
                     )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {activeTab === 'script' && (
+              <div className="space-y-4">
+                {video.hindi_script ? (
+                  <>
+                    <div className="mb-4">
+                      <h4 className="text-sm font-medium text-gray-400 mb-1">Hindi Script for TTS</h4>
+                      {video.script_generated_at && (
+                        <p className="text-xs text-gray-500">
+                          Generated: {formatDate(video.script_generated_at)}
+                        </p>
+                      )}
+                      {video.duration && (
+                        <p className="text-xs text-gray-500">
+                          Video Duration: {formatDuration(video.duration)}
+                        </p>
+                      )}
+                      {video.tts_speed && (
+                        <p className="text-xs text-gray-500">
+                          TTS Parameters: Speed {video.tts_speed}x | Temperature {video.tts_temperature} | Repetition Penalty {video.tts_repetition_penalty}
+                        </p>
+                      )}
+                    </div>
+                    
+                    {/* Script with timestamps and without timestamps */}
+                    <div className="grid md:grid-cols-2 gap-4">
+                      {/* Script WITH timestamps */}
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <h4 className="text-sm font-medium text-gray-300">
+                            Script with Timestamps
+                          </h4>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            icon={Copy}
+                            onClick={() => copyToClipboard(video.hindi_script)}
+                          >
+                            Copy
+                          </Button>
+                        </div>
+                        <div className="p-4 bg-white/5 rounded-lg max-h-96 overflow-y-auto border border-white/10">
+                          <p className="text-sm whitespace-pre-wrap leading-relaxed font-mono">
+                            {video.hindi_script}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Script WITHOUT timestamps (clean for TTS) */}
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <h4 className="text-sm font-medium text-green-300">
+                            Clean Script (for TTS)
+                          </h4>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            icon={Copy}
+                            onClick={() => copyToClipboard(video.clean_script_for_tts || video.hindi_script)}
+                          >
+                            Copy
+                          </Button>
+                        </div>
+                        <div className="p-4 bg-green-500/5 rounded-lg max-h-96 overflow-y-auto border border-green-500/20">
+                          <p className="text-sm whitespace-pre-wrap leading-relaxed">
+                            {video.clean_script_for_tts || video.hindi_script}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                ) : video.script_status === 'generating' ? (
+                  <div className="text-center py-8 text-gray-400">
+                    <FileText className="w-12 h-12 mx-auto mb-3 opacity-50 animate-pulse" />
+                    <p>Generating Hindi script...</p>
+                    <p className="text-xs mt-2">This may take a few moments</p>
+                  </div>
+                ) : video.script_status === 'failed' ? (
+                  <div className="text-center py-8 text-red-400">
+                    <FileText className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                    <p>Script generation failed</p>
+                    {video.script_error_message && (
+                      <p className="text-xs mt-2 text-gray-400">{video.script_error_message}</p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-center py-8 text-gray-400">
+                    <FileText className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                    <p>No script available</p>
+                    <p className="text-xs mt-2">Script will be automatically generated after video download</p>
                   </div>
                 )}
               </div>

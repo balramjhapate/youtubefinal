@@ -8,25 +8,11 @@ export function DownloadProgressModal({ videoId, isOpen, onClose, videoTitle }) 
   const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState('downloading'); // downloading, completed, error
 
-  // Poll video status to check if download completed
+  // Fetch video status
   const { data: video } = useQuery({
     queryKey: ['video', videoId],
     queryFn: () => videosApi.getById(videoId),
     enabled: isOpen && !!videoId,
-    refetchInterval: (query) => {
-      const video = query.state.data;
-      // Stop polling if download completed or failed
-      if (video?.is_downloaded) {
-        setProgress(100);
-        setStatus('completed');
-        setTimeout(() => {
-          onClose();
-        }, 1500);
-        return false;
-      }
-      // Poll every 500ms while downloading
-      return 500;
-    },
   });
 
   // Simulate progress (since backend doesn't provide real-time progress)
