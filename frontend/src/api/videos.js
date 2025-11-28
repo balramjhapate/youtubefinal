@@ -59,12 +59,12 @@ export const videosApi = {
     return response.data;
   },
 
-  // Synthesize audio
-  synthesize: async (id, profileId, text = null) => {
-    const response = await apiClient.post(`/videos/${id}/synthesize/`, {
-      profile_id: profileId,
-      text,
-    });
+  // Synthesize audio (uses Google TTS, profileId is optional)
+  synthesize: async (id, profileId = null, text = null) => {
+    const payload = {};
+    if (profileId) payload.profile_id = profileId;
+    if (text) payload.text = text;
+    const response = await apiClient.post(`/videos/${id}/synthesize/`, payload);
     return response.data;
   },
 

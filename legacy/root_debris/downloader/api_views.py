@@ -1363,6 +1363,181 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
             }, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=True, methods=['post'])
+    def synthesize(self, request, pk=None):
+        """Synthesize audio using Google TTS (Gemini TTS) - no voice profile required"""
+        video = self.get_object()
+        
+        # Check if video has Hindi script or transcript
+        if not video.hindi_script and not video.transcript:
+            return Response({
+                "status": "error",
+                "error": "No Hindi script or transcript available. Please transcribe the video first."
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Check if already synthesizing
+        if video.synthesis_status == 'synthesizing':
+            return Response({
+                "status": "already_processing",
+                "message": "Audio synthesis is already in progress"
+            }, status=status.HTTP_200_OK)
+        
+        try:
+            video.synthesis_status = 'synthesizing'
+            video.save()
+            
+            from .utils import get_clean_script_for_tts
+            
+            # Use Hindi script if available, otherwise use transcript
+            script_to_use = video.hindi_script if video.hindi_script else video.transcript
+            clean_script = get_clean_script_for_tts(script_to_use)
+            
+            if not clean_script:
+                video.synthesis_status = 'failed'
+                video.synthesis_error = "No script text available for synthesis"
+                video.save()
+                return Response({
+                    "status": "error",
+                    "error": "No script text available for synthesis"
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Use Gemini TTS service (Google TTS)
+            from .gemini_tts_service import GeminiTTSService, GEMINI_TTS_AVAILABLE
+            import tempfile
+            import os
+            
+            if not GEMINI_TTS_AVAILABLE:
+                error_msg = "Gemini TTS service not available"
+                logger.error(error_msg)
+                video.synthesis_status = 'failed'
+                video.synthesis_error = error_msg
+                video.save()
+                return Response({
+                    "status": "error",
+                    "error": error_msg
+                }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            
+            # Get Gemini API key from AIProviderSettings
+            from .models import AIProviderSettings
+            settings_obj = AIProviderSettings.objects.first()
+            if not settings_obj or not settings_obj.api_key:
+                error_msg = "Gemini API key not configured. Please set it in AI Provider Settings."
+                video.synthesis_status = 'failed'
+                video.synthesis_error = error_msg
+                video.save()
+                return Response({
+                    "status": "error",
+                    "error": error_msg
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            service = GeminiTTSService(api_key=settings_obj.api_key)
+            
+            # Create temp audio file (Gemini TTS generates MP3)
+            temp_audio = tempfile.NamedTemporaryFile(delete=False, suffix='.mp3')
+            temp_audio_path = temp_audio.name
+            temp_audio.close()
+            
+            # Get TTS settings from video model
+            tts_temperature = video.tts_temperature if video.tts_temperature else 0.75
+            
+            # Use Charon voice for Hindi (as specified)
+            voice_name = 'Charon'
+            language_code = 'hi-IN'  # Hindi (India)
+            
+            # Analyze script content for appropriate style prompt
+            has_fear = any(keyword in clean_script.lower() for keyword in ['राक्षस', 'डर', 'अंधेरा', 'भय', 'साहस', 'पीछा', 'भाग', 'दौड़'])
+            has_exciting = any(keyword in clean_script.lower() for keyword in ['देखो', 'वाह', 'अरे', 'मजेदार', 'रोमांचक'])
+            
+            # Create context-aware style prompt
+            if has_fear:
+                style_prompt = """You are narrating a suspenseful and engaging story for children in Hindi.
+                - Use a dramatic, slightly tense tone when describing scary or suspenseful moments (राक्षस, अंधेरा, डर)
+                - Use [whispering] tags to create atmosphere for fear elements
+                - Use [sigh] for relief or tension
+                - Maintain energy and engagement throughout
+                - This is children's content, so keep it exciting but not too scary
+                - Respect all markup tags: [short pause], [medium pause], [long pause], [sigh], [laughing], [uhm], [whispering]
+                - Pause tags control timing: [short pause] = brief pause (~250ms), [medium pause] = sentence break (~500ms), [long pause] = dramatic pause (~1000ms+)
+                - Expression tags add sounds: [sigh] = sigh sound, [laughing] = laugh, [uhm] = hesitation
+                - Style tags modify delivery: [whispering] = quieter voice
+                - Read the text exactly as written, following all markup tags precisely"""
+            elif has_exciting:
+                style_prompt = """You are an engaging, energetic, and detailed explainer for children's content in Hindi.
+                - Speak in a friendly, vivid, and enthusiastic tone
+                - Be enthusiastic about scenes and actions
+                - Use [laughing] tags naturally for fun moments
+                - Maintain high energy and excitement
+                - Respect all markup tags: [short pause], [medium pause], [long pause], [sigh], [laughing], [uhm]
+                - Pause tags control timing: [short pause] = brief pause (~250ms), [medium pause] = sentence break (~500ms), [long pause] = dramatic pause (~1000ms+)
+                - Expression tags add sounds: [sigh] = sigh sound, [laughing] = laugh, [uhm] = hesitation
+                - Read the text exactly as written, following all markup tags precisely"""
+            else:
+                style_prompt = None  # Use default
+            
+            # Generate TTS audio using Gemini TTS
+            print(f"Generating TTS with Gemini TTS (voice: {voice_name}, language: {language_code}, temp: {tts_temperature})...")
+            service.generate_speech(
+                text=clean_script,
+                language_code=language_code,
+                voice_name=voice_name,
+                output_path=temp_audio_path,
+                temperature=tts_temperature,
+                style_prompt=style_prompt
+            )
+            
+            # Check audio duration and adjust if needed
+            if video.duration and os.path.exists(temp_audio_path):
+                from .utils import get_audio_duration, adjust_audio_duration
+                audio_duration = get_audio_duration(temp_audio_path)
+                if audio_duration:
+                    duration_diff = abs(audio_duration - video.duration)
+                    if duration_diff > 0.5:  # If difference is more than 0.5 seconds
+                        print(f"Adjusting TTS audio duration: {audio_duration:.2f}s -> {video.duration:.2f}s")
+                        adjusted_path = adjust_audio_duration(temp_audio_path, video.duration)
+                        if adjusted_path and adjusted_path != temp_audio_path:
+                            # If a new file was created, update temp_audio_path
+                            if os.path.exists(temp_audio_path):
+                                os.unlink(temp_audio_path)
+                            temp_audio_path = adjusted_path
+                        elif not adjusted_path:
+                            print(f"WARNING: Could not adjust audio duration, using original audio")
+                    else:
+                        print(f"✓ TTS audio duration ({audio_duration:.2f}s) matches video duration ({video.duration:.2f}s)")
+            
+            # Save audio file (Gemini TTS generates MP3)
+            from django.core.files import File
+            with open(temp_audio_path, 'rb') as f:
+                video.synthesized_audio.save(f"synthesized_audio_{video.pk}.mp3", File(f), save=False)
+            
+            video.synthesis_status = 'synthesized'
+            video.synthesis_error = ''
+            video.synthesized_at = timezone.now()
+            video.save()
+            
+            # Clean up temp file
+            if os.path.exists(temp_audio_path):
+                os.unlink(temp_audio_path)
+            
+            print(f"✓ Gemini TTS audio generated successfully for video {video.pk} (voice: {voice_name})")
+            
+            return Response({
+                "status": "success",
+                "message": "Audio synthesized successfully using Google TTS (Gemini)",
+                "synthesized_audio_url": request.build_absolute_uri(video.synthesized_audio.url) if video.synthesized_audio else None
+            })
+            
+        except Exception as e:
+            error_msg = f"TTS synthesis failed: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            video.synthesis_status = 'failed'
+            video.synthesis_error = error_msg
+            video.save()
+            
+            return Response({
+                "status": "error",
+                "error": error_msg
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=['post'])
     def process_ai(self, request, pk=None):
         """Process video with AI"""
         video = self.get_object()

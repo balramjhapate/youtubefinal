@@ -839,23 +839,16 @@ export function VideoDetail() {
 				processAIMutation.mutate();
 				break;
 			case "synthesis":
-				// For synthesis, we might need to know the profile ID.
-				// If we don't have it, maybe reprocess is safer, or try synthesize with default?
-				// Let's try to use the existing voice profile if available
-				if (video.voice_profile) {
-					try {
-						startProcessing(id, "synthesis"); // Add this type to store if needed
-						await videosApi.synthesize(id, video.voice_profile);
-						toast.success("Synthesis retried");
-						refetch();
-					} catch (error) {
-						toast.error("Failed to retry synthesis");
-						completeProcessing(id);
-					}
-				} else {
-					toast.error(
-						"No voice profile selected. Please configure voice settings."
-					);
+				// Use Google TTS (no voice profile required)
+				try {
+					startProcessing(id, "synthesis");
+					// Call synthesize without voice profile - backend will use Google TTS
+					await videosApi.synthesize(id, null);
+					toast.success("Synthesis retried");
+					refetch();
+				} catch (error) {
+					toast.error("Failed to retry synthesis");
+					completeProcessing(id);
 				}
 				break;
 			default:
