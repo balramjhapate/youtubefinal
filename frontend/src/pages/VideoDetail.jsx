@@ -1,699 +1,892 @@
-import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import toast from 'react-hot-toast';
+import { useState, useEffect } from "react";
+import { useParams, useNavigate } from "react-router-dom";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import toast from "react-hot-toast";
 import {
-  Download,
-  FileText,
-  Brain,
-  MessageSquare,
-  Play,
-  Globe,
-  Copy,
-  ExternalLink,
-  RefreshCw,
-  ArrowLeft,
-} from 'lucide-react';
-import { Button, StatusBadge, AudioPlayer, LoadingSpinner } from '../components/common';
-import { ProcessingStatusCard } from '../components/video/ProcessingStatusCard';
-import { videosApi } from '../api';
-import { formatDate, truncateText, formatDuration } from '../utils/formatters';
-import { useStore } from '../store';
-import { showError, showWarning, showSuccess, showConfirm, showInfo } from '../utils/alerts';
+	Download,
+	FileText,
+	Brain,
+	MessageSquare,
+	Play,
+	Globe,
+	Copy,
+	ExternalLink,
+	RefreshCw,
+	ArrowLeft,
+} from "lucide-react";
+import {
+	Button,
+	StatusBadge,
+	AudioPlayer,
+	LoadingSpinner,
+} from "../components/common";
+import { ProcessingStatusCard } from "../components/video/ProcessingStatusCard";
+import { videosApi } from "../api";
+import { formatDate, truncateText, formatDuration } from "../utils/formatters";
+import { useStore } from "../store";
+import {
+	showError,
+	showWarning,
+	showSuccess,
+	showConfirm,
+	showInfo,
+} from "../utils/alerts";
 
 export function VideoDetail() {
-  const { id } = useParams();
-  const navigate = useNavigate();
-  const queryClient = useQueryClient();
-  const {
-    startProcessing,
-    completeProcessing,
-    getProcessingState,
-    clearProcessingForVideo,
-  } = useStore();
+	const { id } = useParams();
+	const navigate = useNavigate();
+	const queryClient = useQueryClient();
+	const {
+		startProcessing,
+		completeProcessing,
+		getProcessingState,
+		clearProcessingForVideo,
+	} = useStore();
 
-  const [activeTab, setActiveTab] = useState('info');
-  // const [progress, setProgress] = useState(0); // Removed simulated progress
-  
-  // Get processing state early so it can be used in refetchInterval
-  const processingState = id ? getProcessingState(id) : null;
-  
-  // Fetch video details with real-time polling during processing
-  const { data: video, isLoading, refetch } = useQuery({
-    queryKey: ['video', id],
-    queryFn: () => videosApi.getById(id),
-    enabled: !!id,
-    // Add staleTime to ensure fresh data during processing
-    staleTime: 0, // Always consider data stale to force refetch
-    // Add cacheTime to keep data in cache but allow refetch
-    cacheTime: 0, // Don't cache during processing
-    refetchInterval: (query) => {
-      const video = query.state.data;
-      if (!video) return false;
-      
-      // Get current processing state dynamically
-      const currentProcessingState = id ? getProcessingState(id) : null;
-      
-      // Check if any processing is active
-      const isProcessing = 
-        video.transcription_status === 'transcribing' ||
-        video.ai_processing_status === 'processing' ||
-        video.script_status === 'generating' ||
-        video.synthesis_status === 'synthesizing' ||
-        (video.synthesis_status === 'synthesized' && !video.final_processed_video_url) ||
-        (currentProcessingState && currentProcessingState.type) ||
-        // Poll if Cloudinary/Sheets are pending (after final video is ready)
-        (video.final_processed_video_url && !video.cloudinary_url) ||
-        (video.final_processed_video_url && !video.google_sheets_synced) ||
-        // Poll if we are in a transition state (e.g., Transcribed but AI not started yet)
-        (video.transcription_status === 'transcribed' && (video.ai_processing_status === 'pending' || video.ai_processing_status === 'not_processed')) ||
-        (video.ai_processing_status === 'processed' && video.script_status === 'pending');
-      
-      if (isProcessing) {
-        return 2000; // Poll every 2 seconds during processing
-      }
-      return false;
-    },
-  });
-  
-  // Calculate elapsed time for transcription (after video is loaded)
-  const transcriptionElapsedMinutes = video && video.transcript_started_at 
-    ? Math.floor((new Date() - new Date(video.transcript_started_at)) / 1000 / 60)
-    : 0;
-  
-  // Check if transcription is stuck (running for more than 2 minutes)
-  const isTranscriptionStuck = video?.transcription_status === 'transcribing' && transcriptionElapsedMinutes > 2;
+	const [activeTab, setActiveTab] = useState("info");
+	// const [progress, setProgress] = useState(0); // Removed simulated progress
 
-  // Auto-clear stuck processing state on mount and when video status changes
-  useEffect(() => {
-    if (!video || !processingState) return;
-    
-    const { type } = processingState;
-    let shouldClear = false;
-    
-    // Check if processing state doesn't match actual video status
-    if (type === 'transcribe') {
-      // Clear if transcription is not actually transcribing (failed, completed, or stuck)
-      if (video.transcription_status !== 'transcribing') {
-        shouldClear = true;
-      } else if (isTranscriptionStuck) {
-        // Clear if transcription is stuck (>2 minutes)
-        shouldClear = true;
-      }
-    } else if (type === 'processAI') {
-      // Clear if AI processing is not actually processing
-      if (video.ai_processing_status !== 'processing') {
-        shouldClear = true;
-      }
-    } else if (type === 'download') {
-      // Clear if video is already downloaded
-      if (video.is_downloaded) {
-        shouldClear = true;
-      }
-    }
-    
-    if (shouldClear) {
-      console.log(`Auto-clearing stuck processing state for ${type}`);
-      clearProcessingForVideo(id);
-      if (isTranscriptionStuck) {
-        toast.warning('Processing state cleared. Transcription appears stuck. You can retry now.', { duration: 5000 });
-      }
-    }
-  }, [video, processingState, id, clearProcessingForVideo, isTranscriptionStuck]);
+	// Get processing state early so it can be used in refetchInterval
+	const processingState = id ? getProcessingState(id) : null;
 
-  // Force clear on initial load if transcription is stuck
-  useEffect(() => {
-    if (video && isTranscriptionStuck && processingState) {
-      console.log('Force clearing stuck processing state on initial load');
-      clearProcessingForVideo(id);
-    }
-  }, [video?.id]); // Only run once when video loads
+	// Fetch video details with real-time polling during processing
+	const {
+		data: video,
+		isLoading,
+		refetch,
+	} = useQuery({
+		queryKey: ["video", id],
+		queryFn: () => videosApi.getById(id),
+		enabled: !!id,
+		// Add staleTime to ensure fresh data during processing
+		staleTime: 0, // Always consider data stale to force refetch
+		// Add cacheTime to keep data in cache but allow refetch
+		cacheTime: 0, // Don't cache during processing
+		refetchInterval: (query) => {
+			const video = query.state.data;
+			if (!video) return false;
 
-  // Removed simulated progress effect
+			// Get current processing state dynamically
+			const currentProcessingState = id ? getProcessingState(id) : null;
 
-  // Check completion and clear stuck processing states
-  useEffect(() => {
-    if (processingState && video) {
-      const { type } = processingState;
-      let isCompleted = false;
-      let isStuck = false;
+			// Check if any processing is active
+			const isProcessing =
+				video.transcription_status === "transcribing" ||
+				video.ai_processing_status === "processing" ||
+				video.script_status === "generating" ||
+				video.synthesis_status === "synthesizing" ||
+				(video.synthesis_status === "synthesized" &&
+					!video.final_processed_video_url) ||
+				(currentProcessingState && currentProcessingState.type) ||
+				// Poll if Cloudinary/Sheets are pending (after final video is ready)
+				(video.final_processed_video_url && !video.cloudinary_url) ||
+				(video.final_processed_video_url &&
+					!video.google_sheets_synced) ||
+				// Poll if we are in a transition state (e.g., Transcribed but AI not started yet)
+				(video.transcription_status === "transcribed" &&
+					(video.ai_processing_status === "pending" ||
+						video.ai_processing_status === "not_processed")) ||
+				(video.ai_processing_status === "processed" &&
+					video.script_status === "pending");
 
-      if (type === 'download' && video.is_downloaded) {
-        isCompleted = true;
-      } else if (type === 'transcribe') {
-        if (video.transcription_status === 'transcribed') {
-          // Don't complete yet if we expect AI processing to follow
-          // But if we are just tracking "transcribe" action, maybe we should?
-          // For now, let's keep it simple: if transcribed, this step is done.
-          isCompleted = true;
-        } else if (video.transcription_status === 'failed') {
-          isCompleted = true;
-        } else if (video.transcription_status === 'transcribing' && isTranscriptionStuck) {
-          isStuck = true;
-        }
-      } else if (type === 'processAI') {
-        if (video.ai_processing_status === 'processed') {
-          isCompleted = true;
-        } else if (video.ai_processing_status === 'failed') {
-          isCompleted = true;
-        }
-      }
+			if (isProcessing) {
+				return 2000; // Poll every 2 seconds during processing
+			}
+			return false;
+		},
+	});
 
-      if (isCompleted || isStuck) {
-        // setProgress(100); // Removed
-        setTimeout(() => {
-          completeProcessing(id);
-          // setProgress(0); // Removed
-          if (isStuck) {
-            showWarning('Processing Stuck', 'Processing state cleared. You can now retry the operation.', { timer: 3000, showConfirmButton: false });
-          }
-        }, 1000);
-      }
-    }
-  }, [video, processingState, id, completeProcessing, isTranscriptionStuck]);
+	// Calculate elapsed time for transcription (after video is loaded)
+	const transcriptionElapsedMinutes =
+		video && video.transcript_started_at
+			? Math.floor(
+					(new Date() - new Date(video.transcript_started_at)) /
+						1000 /
+						60
+			  )
+			: 0;
 
-  // Completion Summary
-  useEffect(() => {
-    if (video?.final_processed_video_url && video?.status === 'success') {
-       // Check if we just finished processing (could track previous state, but for now just show if we are viewing it)
-       // To avoid showing it every time, we might need a local state "hasShownCompletion".
-       // But the user asked for "show the box to know whichone is done".
-       // Maybe just relying on the ProcessingStatusCard is enough?
-       // The user said: "for the process complites also show the box to know whichone is done and which is pending"
-       // The ProcessingStatusCard does exactly this.
-    }
-  }, [video?.final_processed_video_url]);
+	// Check if transcription is stuck (running for more than 2 minutes)
+	const isTranscriptionStuck =
+		video?.transcription_status === "transcribing" &&
+		transcriptionElapsedMinutes > 2;
 
-  // Mutations
-  const downloadMutation = useMutation({
-    mutationFn: async () => {
-      startProcessing(id, 'download');
-      return videosApi.download(id);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries(['video', id]);
-      queryClient.invalidateQueries(['videos']);
-      toast.success('Download started');
-    },
-    onError: (error) => {
-      completeProcessing(id);
-      toast.error(error?.response?.data?.error || 'Download failed');
-    },
-  });
+	// Auto-clear stuck processing state on mount and when video status changes
+	useEffect(() => {
+		if (!video || !processingState) return;
 
-  const transcribeMutation = useMutation({
-    mutationFn: () => {
-      // Check if already transcribing and stuck - reset first
-      if (video?.transcription_status === 'transcribing' && isTranscriptionStuck) {
-        // Reset stuck transcription first
-        return videosApi.resetTranscription(id).then(() => {
-          // Then start new transcription
-          startProcessing(id, 'transcribe');
-          return videosApi.transcribe(id);
-        });
-      }
-      startProcessing(id, 'transcribe');
-      return videosApi.transcribe(id);
-    },
-    onSuccess: (response) => {
-      // Check for warnings in response (visual/enhanced errors)
-      if (response?.data?.warnings && response.data.warnings.length > 0) {
-        const warnings = response.data.warnings;
-        let warningMessage = warnings.join('\n\n');
-        
-        showWarning(
-          'Transcription Completed with Warnings',
-          warningMessage,
-          { confirmButtonText: 'OK', width: '600px' }
-        );
-      } else {
-        toast.success('Processing started');
-      }
-      
-      let pollCount = 0;
-      const pollInterval = setInterval(() => {
-        pollCount++;
-        refetch().then(({ data }) => {
-          if (data && 
-              data.transcription_status !== 'transcribing' &&
-              data.ai_processing_status !== 'processing' &&
-              data.script_status !== 'generating' &&
-              data.synthesis_status !== 'synthesizing' &&
-              (data.synthesis_status !== 'synthesized' || data.final_processed_video_url)) {
-            clearInterval(pollInterval);
-            completeProcessing(id);
-            if (data.final_processed_video_url) {
-              showSuccess('Video Processing Completed!', 'All steps completed successfully.');
-            } else if (data.transcription_status === 'failed') {
-              showError(
-                'Transcription Failed',
-                data.transcript_error_message || 'Transcription failed. Please check your settings and try again.',
-                { confirmButtonText: 'OK' }
-              );
-            } else if (data.transcription_status === 'transcribed') {
-              // Check for visual or enhanced errors
-              const hasVisual = data.visual_transcript;
-              const hasEnhanced = data.enhanced_transcript;
-              
-              if (!hasVisual || !hasEnhanced) {
-                let missingItems = [];
-                if (!hasVisual) missingItems.push('Visual Analysis');
-                if (!hasEnhanced) missingItems.push('AI Enhancement');
-                
-                showWarning(
-                  'Transcription Completed',
-                  `Transcription completed, but ${missingItems.join(' and ')} ${missingItems.length > 1 ? 'were' : 'was'} not generated. Please check your AI provider settings (Gemini required for Visual Analysis).`,
-                  { confirmButtonText: 'OK', width: '600px' }
-                );
-              } else {
-                toast.success('Transcription completed successfully!');
-              }
-            }
-          } else if (data) {
-            // Show progress updates for long-running processes
-            if (pollCount % 15 === 0) { // Show updates every 30 seconds (15 * 2s)
-              if (data.transcription_status === 'transcribing') {
-                const elapsed = data.elapsed_seconds || 0;
-                showInfo('Transcription in progress...', `Elapsed: ${Math.floor(elapsed / 60)}m ${elapsed % 60}s`, { showConfirmButton: false, timer: 2000, toast: true, position: 'top-end' });
-              } else if (data.ai_processing_status === 'processing') {
-                showInfo('AI Processing...', 'This may take a few minutes.', { showConfirmButton: false, timer: 2000, toast: true, position: 'top-end' });
-              } else if (data.script_status === 'generating') {
-                showInfo('Generating Script...', 'Creating Hindi script...', { showConfirmButton: false, timer: 2000, toast: true, position: 'top-end' });
-              } else if (data.synthesis_status === 'synthesizing') {
-                showInfo('Synthesizing...', 'Generating audio...', { showConfirmButton: false, timer: 2000, toast: true, position: 'top-end' });
-              }
-            }
-            // Auto-clear processing state if stuck
-            if (data.transcription_status === 'transcribing') {
-              const elapsed = data.elapsed_seconds || 0;
-              if (elapsed > 2 * 60) { // 2 minutes
-                completeProcessing(id);
-                showWarning(
-                  'Transcription Appears Stuck',
-                  'Transcription has been running for more than 2 minutes. Processing state cleared. You can retry now.',
-                  { confirmButtonText: 'OK' }
-                );
-              }
-            }
-          }
-        }).catch((err) => {
-          // If refetch fails, don't stop polling immediately - might be temporary network issue
-          console.warn('Polling error:', err);
-        });
-      }, 2000);
-      // Increased timeout to 30 minutes for large videos
-      setTimeout(() => {
-        clearInterval(pollInterval);
-        // Check final status before showing timeout message
-        refetch().then(({ data }) => {
-          if (data && data.transcription_status === 'transcribing') {
-            completeProcessing(id); // Clear processing state
-            showWarning(
-              'Processing Timeout',
-              'Processing is taking longer than expected. Processing state cleared. You can check back later or retry.',
-              { confirmButtonText: 'OK', width: '600px' }
-            );
-          }
-        });
-      }, 30 * 60 * 1000); // 30 minutes
-    },
-    onError: (error) => {
-      completeProcessing(id);
-      const errorMsg = error?.response?.data?.error || error?.message || 'Processing failed';
-      const errorDetails = error?.response?.data?.detail || '';
-      
-      // Provide more helpful error messages with SweetAlert
-      if (errorMsg.includes('timeout') || errorMsg.includes('timed out')) {
-        showError(
-          'Processing Timeout',
-          'Processing timed out. The video may be too long. Please try again or use a shorter video.',
-          { confirmButtonText: 'OK', width: '600px' }
-        );
-      } else if (errorMsg.includes('already_processing')) {
-        showInfo('Processing in Progress', 'Processing is already in progress. Please wait.', { showConfirmButton: false, timer: 3000 });
-      } else {
-        showError(
-          'Processing Failed',
-          errorDetails || errorMsg,
-          { confirmButtonText: 'OK', width: '600px' }
-        );
-      }
-    },
-  });
+		const { type } = processingState;
+		let shouldClear = false;
 
-  const processAIMutation = useMutation({
-    mutationFn: () => {
-      startProcessing(id, 'processAI');
-      return videosApi.processAI(id);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries(['video', id]);
-      toast.success('AI processing started');
-    },
-    onError: (error) => {
-      completeProcessing(id);
-      toast.error(error?.response?.data?.error || 'AI processing failed');
-    },
-  });
+		// Check if processing state doesn't match actual video status
+		if (type === "transcribe") {
+			// Clear if transcription is not actually transcribing (failed, completed, or stuck)
+			if (video.transcription_status !== "transcribing") {
+				shouldClear = true;
+			} else if (isTranscriptionStuck) {
+				// Clear if transcription is stuck (>2 minutes)
+				shouldClear = true;
+			}
+		} else if (type === "processAI") {
+			// Clear if AI processing is not actually processing
+			if (video.ai_processing_status !== "processing") {
+				shouldClear = true;
+			}
+		} else if (type === "download") {
+			// Clear if video is already downloaded
+			if (video.is_downloaded) {
+				shouldClear = true;
+			}
+		}
 
-  // Helper function to get current processing step
-  const getCurrentProcessingStep = (video) => {
-    if (!video) return null;
-    
-    if (video.transcription_status === 'transcribing') {
-      return 'Transcribing...';
-    }
-    if (video.ai_processing_status === 'processing') {
-      return 'AI Processing...';
-    }
-    if (video.script_status === 'generating') {
-      return 'Generating Script...';
-    }
-    if (video.synthesis_status === 'synthesizing') {
-      return 'Synthesizing Audio...';
-    }
-    if (video.synthesis_status === 'synthesized' && !video.final_processed_video_url) {
-      return 'Creating Final Video...';
-    }
-    if (video.final_processed_video_url && !video.cloudinary_url) {
-      return 'Uploading to Cloudinary...';
-    }
-    if (video.cloudinary_url && !video.google_sheets_synced) {
-      return 'Syncing to Google Sheets...';
-    }
-    
-    return null;
-  };
-  
-  // Check if video needs processing or has failed steps
-  const needsProcessing = (video) => {
-    if (!video) return false;
-    
-    // Needs download
-    if (!video.is_downloaded && video.status === 'success') return true;
-    
-    // Needs transcription (unless skipped)
-    if (video.transcription_status === 'not_transcribed' || video.transcription_status === 'failed') return true;
-    
-    // Needs AI processing
-    if (video.ai_processing_status === 'not_processed' || video.ai_processing_status === 'failed') return true;
-    
-    // Needs script generation
-    if (video.script_status === 'not_generated' || video.script_status === 'failed') return true;
-    
-    // Needs TTS synthesis
-    if (video.synthesis_status === 'not_synthesized' || video.synthesis_status === 'failed') return true;
-    
-    // Needs final video
-    if (video.synthesis_status === 'synthesized' && !video.final_processed_video_url) return true;
-    
-    // Needs Cloudinary upload
-    if (video.final_processed_video_url && !video.cloudinary_url) return true;
-    
-    // Needs Google Sheets sync
-    if (video.cloudinary_url && !video.google_sheets_synced) return true;
-    
-    return false;
-  };
-  
-  // Check if any step has failed
-  const hasFailedStep = (video) => {
-    if (!video) return false;
-    return (
-      video.transcription_status === 'failed' ||
-      video.ai_processing_status === 'failed' ||
-      video.script_status === 'failed' ||
-      video.synthesis_status === 'failed'
-    );
-  };
+		if (shouldClear) {
+			console.log(`Auto-clearing stuck processing state for ${type}`);
+			clearProcessingForVideo(id);
+			if (isTranscriptionStuck) {
+				toast.warning(
+					"Processing state cleared. Transcription appears stuck. You can retry now.",
+					{ duration: 5000 }
+				);
+			}
+		}
+	}, [
+		video,
+		processingState,
+		id,
+		clearProcessingForVideo,
+		isTranscriptionStuck,
+	]);
 
-  // Unified Process Video mutation - handles all steps sequentially
-  const processVideoMutation = useMutation({
-    mutationFn: async () => {
-      startProcessing(id, 'process');
-      
-      // Get current video state
-      let currentVideo = await videosApi.getById(id);
-      
-      // Step 1: Download if not downloaded
-      if (!currentVideo.is_downloaded && currentVideo.status === 'success') {
-        toast('Step 1/8: Downloading video...', { icon: '📥' });
-        await videosApi.download(id);
-        // Wait for download to complete
-        let downloadComplete = false;
-        let attempts = 0;
-        while (!downloadComplete && attempts < 30) {
-          await new Promise(resolve => setTimeout(resolve, 2000));
-          currentVideo = await videosApi.getById(id);
-          if (currentVideo.is_downloaded) {
-            downloadComplete = true;
-          }
-          attempts++;
-        }
-        if (!downloadComplete) {
-          throw new Error('Download timed out');
-        }
-      }
-      
-      // Step 2-6: Transcribe (which does transcription → AI → script → TTS → final video)
-      toast('Step 2/8: Starting transcription and processing...', { icon: '🎬' });
-      const transcribeResult = await videosApi.transcribe(id);
-      
-      // If transcription was skipped (no audio), continue with other steps if transcript exists
-      if (transcribeResult.status === 'skipped') {
-        toast('Transcription skipped (no audio stream). Continuing with other steps...', { icon: '⚠️' });
-      }
-      
-      // Wait for all processing steps to complete
-      let processingComplete = false;
-      let attempts = 0;
-      while (!processingComplete && attempts < 150) { // 5 minutes max
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        currentVideo = await videosApi.getById(id);
-        
-        // Check if transcription, AI, script, TTS, and final video are complete
-        const transcriptionDone = currentVideo.transcription_status === 'transcribed' || 
-                                  currentVideo.transcription_status === 'skipped';
-        const aiDone = currentVideo.ai_processing_status === 'processed' || 
-                      currentVideo.ai_processing_status === 'failed';
-        const scriptDone = currentVideo.script_status === 'generated' || 
-                          currentVideo.script_status === 'failed';
-        const ttsDone = currentVideo.synthesis_status === 'synthesized' || 
-                       currentVideo.synthesis_status === 'failed';
-        const finalVideoDone = currentVideo.final_processed_video_url || 
-                              (currentVideo.synthesis_status === 'failed');
-        
-        if (transcriptionDone && aiDone && scriptDone && ttsDone && finalVideoDone) {
-          processingComplete = true;
-        }
-        attempts++;
-      }
-      
-      // Refresh video state
-      currentVideo = await videosApi.getById(id);
-      
-      // Step 7: Cloudinary Upload (if enabled and not already uploaded)
-      if (currentVideo.final_processed_video_url && !currentVideo.cloudinary_url) {
-        toast('Step 7/8: Uploading to Cloudinary...', { icon: '☁️' });
-        try {
-          await videosApi.uploadAndSync(id);
-          // Wait for upload to complete
-          let uploadComplete = false;
-          attempts = 0;
-          while (!uploadComplete && attempts < 30) {
-            await new Promise(resolve => setTimeout(resolve, 2000));
-            currentVideo = await videosApi.getById(id);
-            if (currentVideo.cloudinary_url) {
-              uploadComplete = true;
-            }
-            attempts++;
-          }
-        } catch (error) {
-          console.warn('Cloudinary upload failed:', error);
-          // Continue even if upload fails
-        }
-      }
-      
-      // Refresh video state again
-      currentVideo = await videosApi.getById(id);
-      
-      // Step 8: Google Sheets Sync (if enabled and not already synced)
-      if (currentVideo.cloudinary_url && !currentVideo.google_sheets_synced) {
-        toast('Step 8/8: Syncing to Google Sheets...', { icon: '📊' });
-        try {
-          await videosApi.uploadAndSync(id);
-          // Wait for sync to complete
-          let syncComplete = false;
-          attempts = 0;
-          while (!syncComplete && attempts < 30) {
-            await new Promise(resolve => setTimeout(resolve, 2000));
-            currentVideo = await videosApi.getById(id);
-            if (currentVideo.google_sheets_synced) {
-              syncComplete = true;
-            }
-            attempts++;
-          }
-        } catch (error) {
-          console.warn('Google Sheets sync failed:', error);
-          // Continue even if sync fails
-        }
-      }
-      
-      return { success: true };
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries(['video', id]);
-      queryClient.invalidateQueries(['videos']);
-      completeProcessing(id);
-      toast.success('Video processing completed successfully! 🎉');
-    },
-    onError: (error) => {
-      completeProcessing(id);
-      const errorMsg = error?.response?.data?.error || error?.message || 'Processing failed';
-      toast.error(`Processing failed: ${errorMsg}`);
-    },
-  });
+	// Force clear on initial load if transcription is stuck
+	useEffect(() => {
+		if (video && isTranscriptionStuck && processingState) {
+			console.log(
+				"Force clearing stuck processing state on initial load"
+			);
+			clearProcessingForVideo(id);
+		}
+	}, [video?.id]); // Only run once when video loads
 
-  const reprocessMutation = useMutation({
-    mutationFn: () => {
-      startProcessing(id, 'reprocess');
-      return videosApi.reprocess(id);
-    },
-    onSuccess: () => {
-      toast.success('Video reprocessing started');
-      queryClient.invalidateQueries(['video', id]);
-      queryClient.invalidateQueries(['videos']);
-      // Start immediate refetch to get updated status
-      refetch();
-      
-      // Set up polling to check for completion
-      const pollInterval = setInterval(() => {
-        refetch().then(({ data }) => {
-          if (data) {
-            // Check if all processing is complete
-            const isProcessing = 
-              data.transcription_status === 'transcribing' ||
-              data.ai_processing_status === 'processing' ||
-              data.script_status === 'generating' ||
-              data.synthesis_status === 'synthesizing' ||
-              (data.synthesis_status === 'synthesized' && !data.final_processed_video_url) ||
-              (data.final_processed_video_url && !data.cloudinary_url) ||
-              (data.cloudinary_url && !data.google_sheets_synced);
-            
-            if (!isProcessing) {
-              clearInterval(pollInterval);
-              completeProcessing(id);
-              if (data.final_processed_video_url) {
-                toast.success('Video reprocessing completed!');
-              } else if (data.synthesis_status === 'failed') {
-                toast.error('Reprocessing completed but TTS synthesis failed. Check video details.');
-              }
-            }
-          }
-        });
-      }, 2000);
-      
-      // Clean up polling after 5 minutes
-      setTimeout(() => {
-        clearInterval(pollInterval);
-        completeProcessing(id);
-      }, 5 * 60 * 1000);
-    },
-    onError: (error) => {
-      completeProcessing(id);
-      toast.error(error?.response?.data?.error || 'Reprocessing failed');
-    },
-  });
+	// Removed simulated progress effect
 
-  const resetTranscriptionMutation = useMutation({
-    mutationFn: () => {
-      return videosApi.resetTranscription(id);
-    },
-    onSuccess: (data) => {
-      toast.success(data.message || 'Transcription reset successfully');
-      queryClient.invalidateQueries(['video', id]);
-      queryClient.invalidateQueries(['videos']);
-      refetch();
-      completeProcessing(id);
-    },
-    onError: (error) => {
-      toast.error(error?.response?.data?.error || 'Failed to reset transcription');
-    },
-  });
+	// Check completion and clear stuck processing states
+	useEffect(() => {
+		if (processingState && video) {
+			const { type } = processingState;
+			let isCompleted = false;
+			let isStuck = false;
 
-  const copyToClipboard = (text) => {
-    navigator.clipboard.writeText(text);
-    toast.success('Copied to clipboard');
-  };
+			if (type === "download" && video.is_downloaded) {
+				isCompleted = true;
+			} else if (type === "transcribe") {
+				if (video.transcription_status === "transcribed") {
+					// Don't complete yet if we expect AI processing to follow
+					// But if we are just tracking "transcribe" action, maybe we should?
+					// For now, let's keep it simple: if transcribed, this step is done.
+					isCompleted = true;
+				} else if (video.transcription_status === "failed") {
+					isCompleted = true;
+				} else if (
+					video.transcription_status === "transcribing" &&
+					isTranscriptionStuck
+				) {
+					isStuck = true;
+				}
+			} else if (type === "processAI") {
+				if (video.ai_processing_status === "processed") {
+					isCompleted = true;
+				} else if (video.ai_processing_status === "failed") {
+					isCompleted = true;
+				}
+			}
 
-  const tabs = [
-    { id: 'info', label: 'Info' },
-    { id: 'transcript', label: 'Transcript' },
-    { id: 'script', label: 'Hindi Script' },
-    { id: 'ai', label: 'AI Summary' },
-  ];
+			if (isCompleted || isStuck) {
+				// setProgress(100); // Removed
+				setTimeout(() => {
+					completeProcessing(id);
+					// setProgress(0); // Removed
+					if (isStuck) {
+						showWarning(
+							"Processing Stuck",
+							"Processing state cleared. You can now retry the operation.",
+							{ timer: 3000, showConfirmButton: false }
+						);
+					}
+				}, 1000);
+			}
+		}
+	}, [video, processingState, id, completeProcessing, isTranscriptionStuck]);
 
-  const handleRetry = async (stepId) => {
-    switch (stepId) {
-      case 'transcription':
-        transcribeMutation.mutate();
-        break;
-      case 'ai_processing':
-        processAIMutation.mutate();
-        break;
-      case 'script':
-        // Assuming script generation is part of AI processing or has its own endpoint?
-        // If no specific endpoint, try processAI
-        processAIMutation.mutate();
-        break;
-      case 'synthesis':
-        // For synthesis, we might need to know the profile ID. 
-        // If we don't have it, maybe reprocess is safer, or try synthesize with default?
-        // Let's try to use the existing voice profile if available
-        if (video.voice_profile) {
-           try {
-             startProcessing(id, 'synthesis'); // Add this type to store if needed
-             await videosApi.synthesize(id, video.voice_profile);
-             toast.success('Synthesis retried');
-             refetch();
-           } catch (error) {
-             toast.error('Failed to retry synthesis');
-             completeProcessing(id);
-           }
-        } else {
-          toast.error('No voice profile selected. Please configure voice settings.');
-        }
-        break;
-      default:
-        toast.error('Unknown step to retry');
-    }
-  };
+	// Completion Summary
+	useEffect(() => {
+		if (video?.final_processed_video_url && video?.status === "success") {
+			// Check if we just finished processing (could track previous state, but for now just show if we are viewing it)
+			// To avoid showing it every time, we might need a local state "hasShownCompletion".
+			// But the user asked for "show the box to know whichone is done".
+			// Maybe just relying on the ProcessingStatusCard is enough?
+			// The user said: "for the process complites also show the box to know whichone is done and which is pending"
+			// The ProcessingStatusCard does exactly this.
+		}
+	}, [video?.final_processed_video_url]);
 
-  if (isLoading) {
-    return (
-      <div className="flex justify-center items-center min-h-[60vh]">
-        <LoadingSpinner size="lg" />
-      </div>
-    );
-  }
+	// Mutations
+	const downloadMutation = useMutation({
+		mutationFn: async () => {
+			startProcessing(id, "download");
+			return videosApi.download(id);
+		},
+		onSuccess: () => {
+			queryClient.invalidateQueries(["video", id]);
+			queryClient.invalidateQueries(["videos"]);
+			toast.success("Download started");
+		},
+		onError: (error) => {
+			completeProcessing(id);
+			toast.error(error?.response?.data?.error || "Download failed");
+		},
+	});
 
-  if (!video) {
-    return (
-      <div className="text-center py-12 text-gray-400">
-        <p>Video not found</p>
-        <Button
-          variant="secondary"
-          icon={ArrowLeft}
-          onClick={() => navigate('/videos')}
-          className="mt-4"
-        >
-          Back to Videos
-        </Button>
-      </div>
-    );
-  }
+	const transcribeMutation = useMutation({
+		mutationFn: () => {
+			// Check if already transcribing and stuck - reset first
+			if (
+				video?.transcription_status === "transcribing" &&
+				isTranscriptionStuck
+			) {
+				// Reset stuck transcription first
+				return videosApi.resetTranscription(id).then(() => {
+					// Then start new transcription
+					startProcessing(id, "transcribe");
+					return videosApi.transcribe(id);
+				});
+			}
+			startProcessing(id, "transcribe");
+			return videosApi.transcribe(id);
+		},
+		onSuccess: (response) => {
+			// Check for warnings in response (visual/enhanced errors)
+			if (response?.data?.warnings && response.data.warnings.length > 0) {
+				const warnings = response.data.warnings;
+				let warningMessage = warnings.join("\n\n");
 
-  return (
+				showWarning(
+					"Transcription Completed with Warnings",
+					warningMessage,
+					{ confirmButtonText: "OK", width: "600px" }
+				);
+			} else {
+				toast.success("Processing started");
+			}
+
+			let pollCount = 0;
+			const pollInterval = setInterval(() => {
+				pollCount++;
+				refetch()
+					.then(({ data }) => {
+						if (
+							data &&
+							data.transcription_status !== "transcribing" &&
+							data.ai_processing_status !== "processing" &&
+							data.script_status !== "generating" &&
+							data.synthesis_status !== "synthesizing" &&
+							(data.synthesis_status !== "synthesized" ||
+								data.final_processed_video_url)
+						) {
+							clearInterval(pollInterval);
+							completeProcessing(id);
+							if (data.final_processed_video_url) {
+								showSuccess(
+									"Video Processing Completed!",
+									"All steps completed successfully."
+								);
+							} else if (data.transcription_status === "failed") {
+								showError(
+									"Transcription Failed",
+									data.transcript_error_message ||
+										"Transcription failed. Please check your settings and try again.",
+									{ confirmButtonText: "OK" }
+								);
+							} else if (
+								data.transcription_status === "transcribed"
+							) {
+								// Check for visual or enhanced errors
+								const hasVisual = data.visual_transcript;
+								const hasEnhanced = data.enhanced_transcript;
+
+								if (!hasVisual || !hasEnhanced) {
+									let missingItems = [];
+									if (!hasVisual)
+										missingItems.push("Visual Analysis");
+									if (!hasEnhanced)
+										missingItems.push("AI Enhancement");
+
+									showWarning(
+										"Transcription Completed",
+										`Transcription completed, but ${missingItems.join(
+											" and "
+										)} ${
+											missingItems.length > 1
+												? "were"
+												: "was"
+										} not generated. Please check your AI provider settings (Gemini required for Visual Analysis).`,
+										{
+											confirmButtonText: "OK",
+											width: "600px",
+										}
+									);
+								} else {
+									toast.success(
+										"Transcription completed successfully!"
+									);
+								}
+							}
+						} else if (data) {
+							// Show progress updates for long-running processes
+							if (pollCount % 15 === 0) {
+								// Show updates every 30 seconds (15 * 2s)
+								if (
+									data.transcription_status === "transcribing"
+								) {
+									const elapsed = data.elapsed_seconds || 0;
+									showInfo(
+										"Transcription in progress...",
+										`Elapsed: ${Math.floor(
+											elapsed / 60
+										)}m ${elapsed % 60}s`,
+										{
+											showConfirmButton: false,
+											timer: 2000,
+											toast: true,
+											position: "top-end",
+										}
+									);
+								} else if (
+									data.ai_processing_status === "processing"
+								) {
+									showInfo(
+										"AI Processing...",
+										"This may take a few minutes.",
+										{
+											showConfirmButton: false,
+											timer: 2000,
+											toast: true,
+											position: "top-end",
+										}
+									);
+								} else if (
+									data.script_status === "generating"
+								) {
+									showInfo(
+										"Generating Script...",
+										"Creating Hindi script...",
+										{
+											showConfirmButton: false,
+											timer: 2000,
+											toast: true,
+											position: "top-end",
+										}
+									);
+								} else if (
+									data.synthesis_status === "synthesizing"
+								) {
+									showInfo(
+										"Synthesizing...",
+										"Generating audio...",
+										{
+											showConfirmButton: false,
+											timer: 2000,
+											toast: true,
+											position: "top-end",
+										}
+									);
+								}
+							}
+							// Auto-clear processing state if stuck
+							if (data.transcription_status === "transcribing") {
+								const elapsed = data.elapsed_seconds || 0;
+								if (elapsed > 2 * 60) {
+									// 2 minutes
+									completeProcessing(id);
+									showWarning(
+										"Transcription Appears Stuck",
+										"Transcription has been running for more than 2 minutes. Processing state cleared. You can retry now.",
+										{ confirmButtonText: "OK" }
+									);
+								}
+							}
+						}
+					})
+					.catch((err) => {
+						// If refetch fails, don't stop polling immediately - might be temporary network issue
+						console.warn("Polling error:", err);
+					});
+			}, 2000);
+			// Increased timeout to 30 minutes for large videos
+			setTimeout(() => {
+				clearInterval(pollInterval);
+				// Check final status before showing timeout message
+				refetch().then(({ data }) => {
+					if (data && data.transcription_status === "transcribing") {
+						completeProcessing(id); // Clear processing state
+						showWarning(
+							"Processing Timeout",
+							"Processing is taking longer than expected. Processing state cleared. You can check back later or retry.",
+							{ confirmButtonText: "OK", width: "600px" }
+						);
+					}
+				});
+			}, 30 * 60 * 1000); // 30 minutes
+		},
+		onError: (error) => {
+			completeProcessing(id);
+			const errorMsg =
+				error?.response?.data?.error ||
+				error?.message ||
+				"Processing failed";
+			const errorDetails = error?.response?.data?.detail || "";
+
+			// Provide more helpful error messages with SweetAlert
+			if (
+				errorMsg.includes("timeout") ||
+				errorMsg.includes("timed out")
+			) {
+				showError(
+					"Processing Timeout",
+					"Processing timed out. The video may be too long. Please try again or use a shorter video.",
+					{ confirmButtonText: "OK", width: "600px" }
+				);
+			} else if (errorMsg.includes("already_processing")) {
+				showInfo(
+					"Processing in Progress",
+					"Processing is already in progress. Please wait.",
+					{ showConfirmButton: false, timer: 3000 }
+				);
+			} else {
+				showError("Processing Failed", errorDetails || errorMsg, {
+					confirmButtonText: "OK",
+					width: "600px",
+				});
+			}
+		},
+	});
+
+	const processAIMutation = useMutation({
+		mutationFn: () => {
+			startProcessing(id, "processAI");
+			return videosApi.processAI(id);
+		},
+		onSuccess: () => {
+			queryClient.invalidateQueries(["video", id]);
+			toast.success("AI processing started");
+		},
+		onError: (error) => {
+			completeProcessing(id);
+			toast.error(error?.response?.data?.error || "AI processing failed");
+		},
+	});
+
+	// Helper function to get current processing step
+	const getCurrentProcessingStep = (video) => {
+		if (!video) return null;
+
+		if (video.transcription_status === "transcribing") {
+			return "Transcribing...";
+		}
+		if (video.ai_processing_status === "processing") {
+			return "AI Processing...";
+		}
+		if (video.script_status === "generating") {
+			return "Generating Script...";
+		}
+		if (video.synthesis_status === "synthesizing") {
+			return "Synthesizing Audio...";
+		}
+		if (
+			video.synthesis_status === "synthesized" &&
+			!video.final_processed_video_url
+		) {
+			return "Creating Final Video...";
+		}
+		if (video.final_processed_video_url && !video.cloudinary_url) {
+			return "Uploading to Cloudinary...";
+		}
+		if (video.cloudinary_url && !video.google_sheets_synced) {
+			return "Syncing to Google Sheets...";
+		}
+
+		return null;
+	};
+
+	// Check if video needs processing or has failed steps
+	const needsProcessing = (video) => {
+		if (!video) return false;
+
+		// Needs download
+		if (!video.is_downloaded && video.status === "success") return true;
+
+		// Needs transcription (unless skipped)
+		if (
+			video.transcription_status === "not_transcribed" ||
+			video.transcription_status === "failed"
+		)
+			return true;
+
+		// Needs AI processing
+		if (
+			video.ai_processing_status === "not_processed" ||
+			video.ai_processing_status === "failed"
+		)
+			return true;
+
+		// Needs script generation
+		if (
+			video.script_status === "not_generated" ||
+			video.script_status === "failed"
+		)
+			return true;
+
+		// Needs TTS synthesis
+		if (
+			video.synthesis_status === "not_synthesized" ||
+			video.synthesis_status === "failed"
+		)
+			return true;
+
+		// Needs final video
+		if (
+			video.synthesis_status === "synthesized" &&
+			!video.final_processed_video_url
+		)
+			return true;
+
+		// Needs Cloudinary upload
+		if (video.final_processed_video_url && !video.cloudinary_url)
+			return true;
+
+		// Needs Google Sheets sync
+		if (video.cloudinary_url && !video.google_sheets_synced) return true;
+
+		return false;
+	};
+
+	// Check if any step has failed
+	const hasFailedStep = (video) => {
+		if (!video) return false;
+		return (
+			video.transcription_status === "failed" ||
+			video.ai_processing_status === "failed" ||
+			video.script_status === "failed" ||
+			video.synthesis_status === "failed"
+		);
+	};
+
+	// Unified Process Video mutation - handles all steps sequentially
+	const processVideoMutation = useMutation({
+		mutationFn: async () => {
+			startProcessing(id, "process");
+
+			// Get current video state
+			let currentVideo = await videosApi.getById(id);
+
+			// Step 1: Download if not downloaded
+			if (
+				!currentVideo.is_downloaded &&
+				currentVideo.status === "success"
+			) {
+				toast("Step 1/8: Downloading video...", { icon: "📥" });
+				await videosApi.download(id);
+				// Wait for download to complete
+				let downloadComplete = false;
+				let attempts = 0;
+				while (!downloadComplete && attempts < 30) {
+					await new Promise((resolve) => setTimeout(resolve, 2000));
+					currentVideo = await videosApi.getById(id);
+					if (currentVideo.is_downloaded) {
+						downloadComplete = true;
+					}
+					attempts++;
+				}
+				if (!downloadComplete) {
+					throw new Error("Download timed out");
+				}
+			}
+
+			// Step 2-6: Transcribe (which does transcription → AI → script → TTS → final video)
+			toast("Step 2/8: Starting transcription and processing...", {
+				icon: "🎬",
+			});
+			const transcribeResult = await videosApi.transcribe(id);
+
+			// If transcription was skipped (no audio), continue with other steps if transcript exists
+			if (transcribeResult.status === "skipped") {
+				toast(
+					"Transcription skipped (no audio stream). Continuing with other steps...",
+					{ icon: "⚠️" }
+				);
+			}
+
+			// Wait for all processing steps to complete
+			let processingComplete = false;
+			let attempts = 0;
+			while (!processingComplete && attempts < 150) {
+				// 5 minutes max
+				await new Promise((resolve) => setTimeout(resolve, 2000));
+				currentVideo = await videosApi.getById(id);
+
+				// Check if transcription, AI, script, TTS, and final video are complete
+				const transcriptionDone =
+					currentVideo.transcription_status === "transcribed" ||
+					currentVideo.transcription_status === "skipped";
+				const aiDone =
+					currentVideo.ai_processing_status === "processed" ||
+					currentVideo.ai_processing_status === "failed";
+				const scriptDone =
+					currentVideo.script_status === "generated" ||
+					currentVideo.script_status === "failed";
+				const ttsDone =
+					currentVideo.synthesis_status === "synthesized" ||
+					currentVideo.synthesis_status === "failed";
+				const finalVideoDone =
+					currentVideo.final_processed_video_url ||
+					currentVideo.synthesis_status === "failed";
+
+				if (
+					transcriptionDone &&
+					aiDone &&
+					scriptDone &&
+					ttsDone &&
+					finalVideoDone
+				) {
+					processingComplete = true;
+				}
+				attempts++;
+			}
+
+			// Refresh video state
+			currentVideo = await videosApi.getById(id);
+
+			// Step 7: Cloudinary Upload (if enabled and not already uploaded)
+			if (
+				currentVideo.final_processed_video_url &&
+				!currentVideo.cloudinary_url
+			) {
+				toast("Step 7/8: Uploading to Cloudinary...", { icon: "☁️" });
+				try {
+					await videosApi.uploadAndSync(id);
+					// Wait for upload to complete
+					let uploadComplete = false;
+					attempts = 0;
+					while (!uploadComplete && attempts < 30) {
+						await new Promise((resolve) =>
+							setTimeout(resolve, 2000)
+						);
+						currentVideo = await videosApi.getById(id);
+						if (currentVideo.cloudinary_url) {
+							uploadComplete = true;
+						}
+						attempts++;
+					}
+				} catch (error) {
+					console.warn("Cloudinary upload failed:", error);
+					// Continue even if upload fails
+				}
+			}
+
+			// Refresh video state again
+			currentVideo = await videosApi.getById(id);
+
+			// Step 8: Google Sheets Sync (if enabled and not already synced)
+			if (
+				currentVideo.cloudinary_url &&
+				!currentVideo.google_sheets_synced
+			) {
+				toast("Step 8/8: Syncing to Google Sheets...", { icon: "📊" });
+				try {
+					await videosApi.uploadAndSync(id);
+					// Wait for sync to complete
+					let syncComplete = false;
+					attempts = 0;
+					while (!syncComplete && attempts < 30) {
+						await new Promise((resolve) =>
+							setTimeout(resolve, 2000)
+						);
+						currentVideo = await videosApi.getById(id);
+						if (currentVideo.google_sheets_synced) {
+							syncComplete = true;
+						}
+						attempts++;
+					}
+				} catch (error) {
+					console.warn("Google Sheets sync failed:", error);
+					// Continue even if sync fails
+				}
+			}
+
+			return { success: true };
+		},
+		onSuccess: () => {
+			queryClient.invalidateQueries(["video", id]);
+			queryClient.invalidateQueries(["videos"]);
+			completeProcessing(id);
+			toast.success("Video processing completed successfully! 🎉");
+		},
+		onError: (error) => {
+			completeProcessing(id);
+			const errorMsg =
+				error?.response?.data?.error ||
+				error?.message ||
+				"Processing failed";
+			toast.error(`Processing failed: ${errorMsg}`);
+		},
+	});
+
+	const reprocessMutation = useMutation({
+		mutationFn: () => {
+			startProcessing(id, "reprocess");
+			return videosApi.reprocess(id);
+		},
+		onSuccess: () => {
+			toast.success("Video reprocessing started");
+			queryClient.invalidateQueries(["video", id]);
+			queryClient.invalidateQueries(["videos"]);
+			// Start immediate refetch to get updated status
+			refetch();
+
+			// Set up polling to check for completion
+			const pollInterval = setInterval(() => {
+				refetch().then(({ data }) => {
+					if (data) {
+						// Check if all processing is complete
+						const isProcessing =
+							data.transcription_status === "transcribing" ||
+							data.ai_processing_status === "processing" ||
+							data.script_status === "generating" ||
+							data.synthesis_status === "synthesizing" ||
+							(data.synthesis_status === "synthesized" &&
+								!data.final_processed_video_url) ||
+							(data.final_processed_video_url &&
+								!data.cloudinary_url) ||
+							(data.cloudinary_url && !data.google_sheets_synced);
+
+						if (!isProcessing) {
+							clearInterval(pollInterval);
+							completeProcessing(id);
+							if (data.final_processed_video_url) {
+								toast.success("Video reprocessing completed!");
+							} else if (data.synthesis_status === "failed") {
+								toast.error(
+									"Reprocessing completed but TTS synthesis failed. Check video details."
+								);
+							}
+						}
+					}
+				});
+			}, 2000);
+
+			// Clean up polling after 5 minutes
+			setTimeout(() => {
+				clearInterval(pollInterval);
+				completeProcessing(id);
+			}, 5 * 60 * 1000);
+		},
+		onError: (error) => {
+			completeProcessing(id);
+			toast.error(error?.response?.data?.error || "Reprocessing failed");
+		},
+	});
+
+	const resetTranscriptionMutation = useMutation({
+		mutationFn: () => {
+			return videosApi.resetTranscription(id);
+		},
+		onSuccess: (data) => {
+			toast.success(data.message || "Transcription reset successfully");
+			queryClient.invalidateQueries(["video", id]);
+			queryClient.invalidateQueries(["videos"]);
+			refetch();
+			completeProcessing(id);
+		},
+		onError: (error) => {
+			toast.error(
+				error?.response?.data?.error || "Failed to reset transcription"
+			);
+		},
+	});
+
+	const copyToClipboard = (text) => {
+		navigator.clipboard.writeText(text);
+		toast.success("Copied to clipboard");
+	};
+
+	const tabs = [
+		{ id: "info", label: "Info" },
+		{ id: "transcript", label: "Transcript" },
+		{ id: "script", label: "Hindi Script" },
+		{ id: "ai", label: "AI Summary" },
+	];
+
+	const handleRetry = async (stepId) => {
+		switch (stepId) {
+			case "transcription":
+				transcribeMutation.mutate();
+				break;
+			case "ai_processing":
+				processAIMutation.mutate();
+				break;
+			case "script":
+				// Assuming script generation is part of AI processing or has its own endpoint?
+				// If no specific endpoint, try processAI
+				processAIMutation.mutate();
+				break;
+			case "synthesis":
+				// For synthesis, we might need to know the profile ID.
+				// If we don't have it, maybe reprocess is safer, or try synthesize with default?
+				// Let's try to use the existing voice profile if available
+				if (video.voice_profile) {
+					try {
+						startProcessing(id, "synthesis"); // Add this type to store if needed
+						await videosApi.synthesize(id, video.voice_profile);
+						toast.success("Synthesis retried");
+						refetch();
+					} catch (error) {
+						toast.error("Failed to retry synthesis");
+						completeProcessing(id);
+					}
+				} else {
+					toast.error(
+						"No voice profile selected. Please configure voice settings."
+					);
+				}
+				break;
+			default:
+				toast.error("Unknown step to retry");
+		}
+	};
+
+	if (isLoading) {
+		return (
+			<div className="flex justify-center items-center min-h-[60vh]">
+				<LoadingSpinner size="lg" />
+			</div>
+		);
+	}
+
+	if (!video) {
+		return (
+			<div className="text-center py-12 text-gray-400">
+				<p>Video not found</p>
+				<Button
+					variant="secondary"
+					icon={ArrowLeft}
+					onClick={() => navigate("/videos")}
+					className="mt-4">
+					Back to Videos
+				</Button>
+			</div>
+		);
+	}
+
+	return (
 		<div className="space-y-6 pb-8">
 			{/* Header with back button */}
 			<div className="flex items-center gap-4">
@@ -752,22 +945,22 @@ export function VideoDetail() {
 					</div>
 
 					{/* Progress Indicators - Replaced with ProcessingStatusCard */}
-					{(processingState || 
-            video.transcription_status === 'transcribing' || 
-            video.ai_processing_status === 'processing' ||
-            video.script_status === 'generating' ||
-            video.synthesis_status === 'synthesizing' ||
-            video.transcription_status === 'failed' ||
-            video.ai_processing_status === 'failed' ||
-            video.script_status === 'failed' ||
-            video.synthesis_status === 'failed' ||
-            (video.synthesis_status === 'synthesized' && !video.final_processed_video_url)
-          ) && (
-            <ProcessingStatusCard 
-              video={video} 
-              processingState={processingState}
-              onRetry={handleRetry} 
-            />
+					{(processingState ||
+						video.transcription_status === "transcribing" ||
+						video.ai_processing_status === "processing" ||
+						video.script_status === "generating" ||
+						video.synthesis_status === "synthesizing" ||
+						video.transcription_status === "failed" ||
+						video.ai_processing_status === "failed" ||
+						video.script_status === "failed" ||
+						video.synthesis_status === "failed" ||
+						(video.synthesis_status === "synthesized" &&
+							!video.final_processed_video_url)) && (
+						<ProcessingStatusCard
+							video={video}
+							processingState={processingState}
+							onRetry={handleRetry}
+						/>
 					)}
 
 					{/* Actions and Video Versions - Combined in one card */}
@@ -790,17 +983,17 @@ export function VideoDetail() {
 											loading={
 												downloadMutation.isPending ||
 												(!!processingState &&
-												processingState.type ===
-													"download")
+													processingState.type ===
+														"download")
 											}
 											disabled={
 												downloadMutation.isPending ||
 												(!!processingState &&
-												processingState.type ===
-													"download")
+													processingState.type ===
+														"download")
 											}>
-											{downloadMutation.isPending || (processingState?.type ===
-											"download")
+											{downloadMutation.isPending ||
+											processingState?.type === "download"
 												? "Downloading..."
 												: "Download"}
 										</Button>
@@ -834,16 +1027,16 @@ export function VideoDetail() {
 										loading={
 											transcribeMutation.isPending ||
 											(!!processingState &&
-											processingState.type ===
-												"transcribe" &&
-											!isTranscriptionStuck)
+												processingState.type ===
+													"transcribe" &&
+												!isTranscriptionStuck)
 										}
 										disabled={
 											transcribeMutation.isPending ||
 											(!!processingState &&
-											processingState.type ===
-												"transcribe" &&
-											!isTranscriptionStuck)
+												processingState.type ===
+													"transcribe" &&
+												!isTranscriptionStuck)
 										}>
 										{isTranscriptionStuck
 											? `Retry Process (Stuck ${transcriptionElapsedMinutes}m)`
@@ -862,9 +1055,13 @@ export function VideoDetail() {
 										icon={RefreshCw}
 										onClick={async () => {
 											const result = await showConfirm(
-												'Reset Transcription?',
+												"Reset Transcription?",
 												`Transcription has been running for ${transcriptionElapsedMinutes} minutes. Do you want to reset it and try again?`,
-												{ confirmButtonText: 'Yes, Reset', cancelButtonText: 'Cancel' }
+												{
+													confirmButtonText:
+														"Yes, Reset",
+													cancelButtonText: "Cancel",
+												}
 											);
 											if (result.isConfirmed) {
 												resetTranscriptionMutation.mutate();
@@ -912,7 +1109,6 @@ export function VideoDetail() {
 										</Button>
 									)}
 
-
 								{/* Show reprocess button when transcription is complete OR failed OR stuck OR when other steps are done */}
 								{(video.transcription_status ===
 									"transcribed" ||
@@ -929,9 +1125,13 @@ export function VideoDetail() {
 										icon={RefreshCw}
 										onClick={async () => {
 											const result = await showConfirm(
-												'Reprocess Video?',
-												'Are you sure you want to reprocess this video? This will reset all processing and regenerate the video with new audio.',
-												{ confirmButtonText: 'Yes, Reprocess', cancelButtonText: 'Cancel' }
+												"Reprocess Video?",
+												"Are you sure you want to reprocess this video? This will reset all processing and regenerate the video with new audio.",
+												{
+													confirmButtonText:
+														"Yes, Reprocess",
+													cancelButtonText: "Cancel",
+												}
 											);
 											if (result.isConfirmed) {
 												reprocessMutation.mutate();
@@ -1154,31 +1354,81 @@ export function VideoDetail() {
 							</h4>
 							{(() => {
 								// Calculate overall progress percentage
-                const isTranscribing = video.transcription_status === 'transcribing' || (processingState?.type === 'transcribe');
-                const isProcessingAI = video.ai_processing_status === 'processing' || (processingState?.type === 'processAI');
-                const isSynthesizing = video.synthesis_status === 'synthesizing' || (processingState?.type === 'synthesis');
-                const isDownloading = processingState?.type === 'download';
+								const isTranscribing =
+									video.transcription_status ===
+										"transcribing" ||
+									processingState?.type === "transcribe";
+								const isProcessingAI =
+									video.ai_processing_status ===
+										"processing" ||
+									processingState?.type === "processAI";
+								const isSynthesizing =
+									video.synthesis_status === "synthesizing" ||
+									processingState?.type === "synthesis";
+								const isDownloading =
+									processingState?.type === "download";
 
 								const steps = [
-									{ done: video.is_downloaded || isDownloading, weight: 10 },
-									{ done: video.transcription_status === 'transcribed', weight: 25 },
-									{ done: video.ai_processing_status === 'processed', weight: 15 },
-									{ done: video.script_status === 'generated', weight: 15 },
-									{ done: video.synthesis_status === 'synthesized', weight: 20 },
-									{ done: !!video.final_processed_video_url, weight: 10 },
+									{
+										done:
+											video.is_downloaded ||
+											isDownloading,
+										weight: 10,
+									},
+									{
+										done:
+											video.transcription_status ===
+											"transcribed",
+										weight: 25,
+									},
+									{
+										done:
+											video.ai_processing_status ===
+											"processed",
+										weight: 15,
+									},
+									{
+										done:
+											video.script_status === "generated",
+										weight: 15,
+									},
+									{
+										done:
+											video.synthesis_status ===
+											"synthesized",
+										weight: 20,
+									},
+									{
+										done: !!video.final_processed_video_url,
+										weight: 10,
+									},
 									{ done: !!video.cloudinary_url, weight: 3 },
-									{ done: !!video.google_sheets_synced, weight: 2 },
+									{
+										done: !!video.google_sheets_synced,
+										weight: 2,
+									},
 								];
-								const totalWeight = steps.reduce((sum, step) => sum + step.weight, 0);
-								const completedWeight = steps.reduce((sum, step) => sum + (step.done ? step.weight : 0), 0);
-								const progressPercent = Math.round((completedWeight / totalWeight) * 100);
-								
+								const totalWeight = steps.reduce(
+									(sum, step) => sum + step.weight,
+									0
+								);
+								const completedWeight = steps.reduce(
+									(sum, step) =>
+										sum + (step.done ? step.weight : 0),
+									0
+								);
+								const progressPercent = Math.round(
+									(completedWeight / totalWeight) * 100
+								);
+
 								return (
 									<div className="flex items-center gap-2">
 										<div className="w-16 h-2 bg-gray-700 rounded-full overflow-hidden">
-											<div 
+											<div
 												className="h-full bg-gradient-to-r from-blue-500 to-green-500 transition-all duration-300"
-												style={{ width: `${progressPercent}%` }}
+												style={{
+													width: `${progressPercent}%`,
+												}}
 											/>
 										</div>
 										<span className="text-xs font-semibold text-gray-300 min-w-[3rem] text-right">
@@ -1197,14 +1447,15 @@ export function VideoDetail() {
 									className={`text-xs px-2 py-0.5 rounded ${
 										video.is_downloaded
 											? "bg-green-500/20 text-green-300"
-                      : (processingState?.type === 'download')
-                      ? "bg-yellow-500/20 text-yellow-300 animate-pulse"
+											: processingState?.type ===
+											  "download"
+											? "bg-yellow-500/20 text-yellow-300 animate-pulse"
 											: "bg-gray-500/20 text-gray-400"
 									}`}>
 									{video.is_downloaded
 										? "✓ Complete"
-                    : (processingState?.type === 'download')
-                    ? "⏳ Downloading"
+										: processingState?.type === "download"
+										? "⏳ Downloading"
 										: "Pending"}
 								</span>
 							</div>
@@ -1212,63 +1463,75 @@ export function VideoDetail() {
 								<span className="text-xs text-gray-400">
 									Transcription
 								</span>
-                {(() => {
-                  const isTranscribing = video.transcription_status === 'transcribing' || (processingState?.type === 'transcribe');
-                  const isFailed = video.transcription_status === 'failed';
-                  const isComplete = video.transcription_status === 'transcribed';
-                  
-                  return (
-                    <span
-                      className={`text-xs px-2 py-0.5 rounded ${
-                        isComplete
-                          ? "bg-green-500/20 text-green-300"
-                          : isTranscribing
-                          ? "bg-yellow-500/20 text-yellow-300 animate-pulse"
-                          : isFailed
-                          ? "bg-red-500/20 text-red-300"
-                          : "bg-gray-500/20 text-gray-400"
-                      }`}>
-                      {isComplete
-                        ? "✓ Complete"
-                        : isTranscribing
-                        ? "⏳ Processing"
-                        : isFailed
-                        ? "✗ Failed"
-                        : "Pending"}
-                    </span>
-                  );
-                })()}
+								{(() => {
+									const isTranscribing =
+										video.transcription_status ===
+											"transcribing" ||
+										processingState?.type === "transcribe";
+									const isFailed =
+										video.transcription_status === "failed";
+									const isComplete =
+										video.transcription_status ===
+										"transcribed";
+
+									return (
+										<span
+											className={`text-xs px-2 py-0.5 rounded ${
+												isComplete
+													? "bg-green-500/20 text-green-300"
+													: isTranscribing
+													? "bg-yellow-500/20 text-yellow-300 animate-pulse"
+													: isFailed
+													? "bg-red-500/20 text-red-300"
+													: "bg-gray-500/20 text-gray-400"
+											}`}>
+											{isComplete
+												? "✓ Complete"
+												: isTranscribing
+												? "⏳ Processing"
+												: isFailed
+												? "✗ Failed"
+												: "Pending"}
+										</span>
+									);
+								})()}
 							</div>
 							<div className="flex items-center justify-between">
 								<span className="text-xs text-gray-400">
 									AI Processing
 								</span>
-                {(() => {
-                  const isProcessing = video.ai_processing_status === 'processing' || (processingState?.type === 'processAI');
-                  const isFailed = video.ai_processing_status === 'failed';
-                  const isComplete = video.ai_processing_status === 'processed';
-                  
-                  return (
-                    <span
-                      className={`text-xs px-2 py-0.5 rounded ${
-                        isComplete
-                          ? "bg-green-500/20 text-green-300"
-                          : isProcessing
-                          ? "bg-yellow-500/20 text-yellow-300 animate-pulse"
-                          : isFailed
-                          ? "bg-red-500/20 text-red-300"
-                          : "bg-gray-500/20 text-gray-400"
-                      }`}>
-                      {isComplete
-                        ? "✓ Complete"
-                        : isProcessing
-                        ? "⏳ Processing"
-                        : isFailed
-                        ? "✗ Failed"
-                        : "Pending"}
-                    </span>
-                  );
-                })()}
+								{(() => {
+									const isProcessing =
+										video.ai_processing_status ===
+											"processing" ||
+										processingState?.type === "processAI";
+									const isFailed =
+										video.ai_processing_status === "failed";
+									const isComplete =
+										video.ai_processing_status ===
+										"processed";
+
+									return (
+										<span
+											className={`text-xs px-2 py-0.5 rounded ${
+												isComplete
+													? "bg-green-500/20 text-green-300"
+													: isProcessing
+													? "bg-yellow-500/20 text-yellow-300 animate-pulse"
+													: isFailed
+													? "bg-red-500/20 text-red-300"
+													: "bg-gray-500/20 text-gray-400"
+											}`}>
+											{isComplete
+												? "✓ Complete"
+												: isProcessing
+												? "⏳ Processing"
+												: isFailed
+												? "✗ Failed"
+												: "Pending"}
+										</span>
+									);
+								})()}
 							</div>
 							<div className="flex items-center justify-between">
 								<span className="text-xs text-gray-400">
@@ -1298,32 +1561,38 @@ export function VideoDetail() {
 								<span className="text-xs text-gray-400">
 									TTS Synthesis
 								</span>
-                {(() => {
-                  const isSynthesizing = video.synthesis_status === 'synthesizing' || (processingState?.type === 'synthesis');
-                  const isFailed = video.synthesis_status === 'failed';
-                  const isComplete = video.synthesis_status === 'synthesized';
-                  
-                  return (
-                    <span
-                      className={`text-xs px-2 py-0.5 rounded ${
-                        isComplete
-                          ? "bg-green-500/20 text-green-300"
-                          : isSynthesizing
-                          ? "bg-yellow-500/20 text-yellow-300 animate-pulse"
-                          : isFailed
-                          ? "bg-red-500/20 text-red-300"
-                          : "bg-gray-500/20 text-gray-400"
-                      }`}>
-                      {isComplete
-                        ? "✓ Complete"
-                        : isSynthesizing
-                        ? "⏳ Processing"
-                        : isFailed
-                        ? "✗ Failed"
-                        : "Pending"}
-                    </span>
-                  );
-                })()}
+								{(() => {
+									const isSynthesizing =
+										video.synthesis_status ===
+											"synthesizing" ||
+										processingState?.type === "synthesis";
+									const isFailed =
+										video.synthesis_status === "failed";
+									const isComplete =
+										video.synthesis_status ===
+										"synthesized";
+
+									return (
+										<span
+											className={`text-xs px-2 py-0.5 rounded ${
+												isComplete
+													? "bg-green-500/20 text-green-300"
+													: isSynthesizing
+													? "bg-yellow-500/20 text-yellow-300 animate-pulse"
+													: isFailed
+													? "bg-red-500/20 text-red-300"
+													: "bg-gray-500/20 text-gray-400"
+											}`}>
+											{isComplete
+												? "✓ Complete"
+												: isSynthesizing
+												? "⏳ Processing"
+												: isFailed
+												? "✗ Failed"
+												: "Pending"}
+										</span>
+									);
+								})()}
 							</div>
 							<div className="flex items-center justify-between">
 								<span className="text-xs text-gray-400">
@@ -1333,14 +1602,18 @@ export function VideoDetail() {
 									className={`text-xs px-2 py-0.5 rounded ${
 										video.final_processed_video_url
 											? "bg-green-500/20 text-green-300"
-                      : (video.synthesis_status === 'synthesized' && !video.final_processed_video_url)
-                      ? "bg-yellow-500/20 text-yellow-300 animate-pulse"
+											: video.synthesis_status ===
+													"synthesized" &&
+											  !video.final_processed_video_url
+											? "bg-yellow-500/20 text-yellow-300 animate-pulse"
 											: "bg-gray-500/20 text-gray-400"
 									}`}>
 									{video.final_processed_video_url
 										? "✓ Ready"
-                    : (video.synthesis_status === 'synthesized' && !video.final_processed_video_url)
-                    ? "⏳ Assembling"
+										: video.synthesis_status ===
+												"synthesized" &&
+										  !video.final_processed_video_url
+										? "⏳ Assembling"
 										: "Pending"}
 								</span>
 							</div>
@@ -1848,81 +2121,31 @@ export function VideoDetail() {
 
 							{/* Enhanced Transcript (Primary Display) - Show if available (Visual Analysis is optional) */}
 							{video.enhanced_transcript && (
-							<div className="bg-gradient-to-r from-orange-500/10 to-yellow-500/10 rounded-lg p-4 border border-orange-500/30 mb-6 w-full">
-								<div className="flex items-center justify-between mb-3">
-									<h4 className="text-base font-semibold text-orange-300 flex items-center gap-2">
-										⭐ AI-Enhanced Transcript (Best Quality)
-									</h4>
-									<span className="px-2 py-1 text-xs rounded bg-orange-500/20 text-orange-300">
-										✓ AI-Merged (All 3 Sources)
-									</span>
-								</div>
-								<p className="text-xs text-gray-400 mb-3">
-									This transcript combines the best parts from
-									Whisper, NCA Toolkit, and Visual Analysis (if available)
-									using AI for perfect accuracy. <strong className="text-orange-400">Visual Analysis is optional.</strong>
-								</p>
+								<div className="bg-gradient-to-r from-orange-500/10 to-yellow-500/10 rounded-lg p-4 border border-orange-500/30 mb-6 w-full">
+									<div className="flex items-center justify-between mb-3">
+										<h4 className="text-base font-semibold text-orange-300 flex items-center gap-2">
+											⭐ AI-Enhanced Transcript (Best
+											Quality)
+										</h4>
+										<span className="px-2 py-1 text-xs rounded bg-orange-500/20 text-orange-300">
+											✓ AI-Merged (All 3 Sources)
+										</span>
+									</div>
+									<p className="text-xs text-gray-400 mb-3">
+										This transcript combines the best parts
+										from Whisper, NCA Toolkit, and Visual
+										Analysis (if available) using AI for
+										perfect accuracy.{" "}
+										<strong className="text-orange-400">
+											Visual Analysis is optional.
+										</strong>
+									</p>
 
-								{/* With Timestamps */}
-								<div className="space-y-2 mb-3">
-									<div className="flex items-center justify-between">
-										<h5 className="text-xs font-medium text-gray-300">
-											With Timestamps
-										</h5>
-										<Button
-											size="sm"
-											variant="ghost"
-											icon={Copy}
-											onClick={() =>
-												copyToClipboard(
-													video.enhanced_transcript
-												)
-											}
-											className="text-xs">
-											Copy
-										</Button>
-									</div>
-									<div className="p-3 bg-white/5 rounded-lg max-h-96 overflow-y-auto border border-white/10">
-										<p className="text-xs whitespace-pre-wrap leading-relaxed font-mono text-gray-300">
-											{video.enhanced_transcript}
-										</p>
-									</div>
-								</div>
-
-								{/* Plain Text */}
-								<div className="space-y-2">
-									<div className="flex items-center justify-between">
-										<h5 className="text-xs font-medium text-gray-300">
-											Plain Text
-										</h5>
-										<Button
-											size="sm"
-											variant="ghost"
-											icon={Copy}
-											onClick={() =>
-												copyToClipboard(
-													video.enhanced_transcript_without_timestamps ||
-														video.enhanced_transcript
-												)
-											}
-											className="text-xs">
-											Copy
-										</Button>
-									</div>
-									<div className="p-3 bg-orange-500/5 rounded-lg max-h-96 overflow-y-auto border border-orange-500/20">
-										<p className="text-xs whitespace-pre-wrap leading-relaxed text-gray-300">
-											{video.enhanced_transcript_without_timestamps ||
-												video.enhanced_transcript}
-										</p>
-									</div>
-								</div>
-
-								{/* Hindi Translation - Show if available */}
-								{video.enhanced_transcript_hindi && (
-									<div className="space-y-2 mt-3">
+									{/* With Timestamps */}
+									<div className="space-y-2 mb-3">
 										<div className="flex items-center justify-between">
-											<h5 className="text-xs font-medium text-purple-300">
-												Hindi Translation
+											<h5 className="text-xs font-medium text-gray-300">
+												With Timestamps
 											</h5>
 											<Button
 												size="sm"
@@ -1930,78 +2153,189 @@ export function VideoDetail() {
 												icon={Copy}
 												onClick={() =>
 													copyToClipboard(
-														video.enhanced_transcript_hindi
+														video.enhanced_transcript
 													)
 												}
 												className="text-xs">
 												Copy
 											</Button>
 										</div>
-										<div className="p-3 bg-purple-500/5 rounded-lg max-h-96 overflow-y-auto border border-purple-500/20">
-											<p className="text-xs whitespace-pre-wrap leading-relaxed text-gray-300">
-												{
-													video.enhanced_transcript_hindi
-												}
+										<div className="p-3 bg-white/5 rounded-lg max-h-96 overflow-y-auto border border-white/10">
+											<p className="text-xs whitespace-pre-wrap leading-relaxed font-mono text-gray-300">
+												{video.enhanced_transcript}
 											</p>
 										</div>
 									</div>
-								)}
-							</div>
+
+									{/* Plain Text */}
+									<div className="space-y-2">
+										<div className="flex items-center justify-between">
+											<h5 className="text-xs font-medium text-gray-300">
+												Plain Text
+											</h5>
+											<Button
+												size="sm"
+												variant="ghost"
+												icon={Copy}
+												onClick={() =>
+													copyToClipboard(
+														video.enhanced_transcript_without_timestamps ||
+															video.enhanced_transcript
+													)
+												}
+												className="text-xs">
+												Copy
+											</Button>
+										</div>
+										<div className="p-3 bg-orange-500/5 rounded-lg max-h-96 overflow-y-auto border border-orange-500/20">
+											<p className="text-xs whitespace-pre-wrap leading-relaxed text-gray-300">
+												{video.enhanced_transcript_without_timestamps ||
+													video.enhanced_transcript}
+											</p>
+										</div>
+									</div>
+
+									{/* Hindi Translation - Show if available */}
+									{video.enhanced_transcript_hindi && (
+										<div className="space-y-2 mt-3">
+											<div className="flex items-center justify-between">
+												<h5 className="text-xs font-medium text-purple-300">
+													Hindi Translation
+												</h5>
+												<Button
+													size="sm"
+													variant="ghost"
+													icon={Copy}
+													onClick={() =>
+														copyToClipboard(
+															video.enhanced_transcript_hindi
+														)
+													}
+													className="text-xs">
+													Copy
+												</Button>
+											</div>
+											<div className="p-3 bg-purple-500/5 rounded-lg max-h-96 overflow-y-auto border border-purple-500/20">
+												<p className="text-xs whitespace-pre-wrap leading-relaxed text-gray-300">
+													{
+														video.enhanced_transcript_hindi
+													}
+												</p>
+											</div>
+										</div>
+									)}
+								</div>
 							)}
-							
+
 							{/* Show message if Enhanced Transcript is not available */}
-							{!video.enhanced_transcript && (video.transcript || video.whisper_transcript) && (
-								<div className="bg-yellow-500/10 rounded-lg p-4 border border-yellow-500/30 mb-6 w-full">
-									<div className="flex items-center gap-2 mb-2">
-										<span className="text-yellow-400">⏳</span>
-										<h4 className="text-base font-semibold text-yellow-300">
-											AI-Enhanced Transcript Processing
-										</h4>
+							{!video.enhanced_transcript &&
+								(video.transcript ||
+									video.whisper_transcript) && (
+									<div className="bg-yellow-500/10 rounded-lg p-4 border border-yellow-500/30 mb-6 w-full">
+										<div className="flex items-center gap-2 mb-2">
+											<span className="text-yellow-400">
+												⏳
+											</span>
+											<h4 className="text-base font-semibold text-yellow-300">
+												AI-Enhanced Transcript
+												Processing
+											</h4>
+										</div>
+										<p className="text-xs text-gray-400 mb-2">
+											AI-Enhanced transcript is being
+											generated. Status:
+										</p>
+										<ul className="text-xs text-gray-400 space-y-1 ml-4 list-disc">
+											<li className="text-green-400">
+												✓ NCA Toolkit / Whisper AI:
+												Complete
+											</li>
+											<li
+												className={
+													video.visual_transcript
+														? "text-green-400"
+														: "text-gray-500"
+												}>
+												{video.visual_transcript
+													? "✓"
+													: "○"}{" "}
+												Visual Analysis:{" "}
+												{video.visual_transcript
+													? "Complete"
+													: "Optional (Not Available - continuing without it)"}
+											</li>
+										</ul>
+										<p className="text-xs text-yellow-400 mt-3">
+											<strong>Note:</strong> AI-Enhanced
+											transcript is being generated using
+											available sources. Visual Analysis
+											is optional and will be included if
+											available for better accuracy.
+										</p>
 									</div>
-									<p className="text-xs text-gray-400 mb-2">
-										AI-Enhanced transcript is being generated. Status:
-									</p>
-									<ul className="text-xs text-gray-400 space-y-1 ml-4 list-disc">
-										<li className="text-green-400">
-											✓ NCA Toolkit / Whisper AI: Complete
-										</li>
-										<li className={video.visual_transcript ? "text-green-400" : "text-gray-500"}>
-											{video.visual_transcript ? "✓" : "○"} Visual Analysis: {video.visual_transcript ? "Complete" : "Optional (Not Available - continuing without it)"}
-										</li>
-									</ul>
-									<p className="text-xs text-yellow-400 mt-3">
-										<strong>Note:</strong> AI-Enhanced transcript is being generated using available sources. 
-										Visual Analysis is optional and will be included if available for better accuracy.
-									</p>
-								</div>
-							)}
-							
+								)}
+
 							{/* Show message if no transcript sources available */}
-							{!video.enhanced_transcript && !video.transcript && !video.whisper_transcript && (
-								<div className="bg-yellow-500/10 rounded-lg p-4 border border-yellow-500/30 mb-6 w-full">
-									<div className="flex items-center gap-2 mb-2">
-										<span className="text-yellow-400">⚠️</span>
-										<h4 className="text-base font-semibold text-yellow-300">
-											AI-Enhanced Transcript Not Available
-										</h4>
+							{!video.enhanced_transcript &&
+								!video.transcript &&
+								!video.whisper_transcript && (
+									<div className="bg-yellow-500/10 rounded-lg p-4 border border-yellow-500/30 mb-6 w-full">
+										<div className="flex items-center gap-2 mb-2">
+											<span className="text-yellow-400">
+												⚠️
+											</span>
+											<h4 className="text-base font-semibold text-yellow-300">
+												AI-Enhanced Transcript Not
+												Available
+											</h4>
+										</div>
+										<p className="text-xs text-gray-400 mb-2">
+											AI-Enhanced transcript requires at
+											least NCA/Whisper transcription:
+										</p>
+										<ul className="text-xs text-gray-400 space-y-1 ml-4 list-disc">
+											<li
+												className={
+													video.transcript ||
+													video.whisper_transcript
+														? "text-green-400"
+														: "text-yellow-400"
+												}>
+												{video.transcript ||
+												video.whisper_transcript
+													? "✓"
+													: "⏳"}{" "}
+												NCA Toolkit / Whisper AI:{" "}
+												{video.transcript ||
+												video.whisper_transcript
+													? "Complete"
+													: "Pending (Required)"}
+											</li>
+											<li
+												className={
+													video.visual_transcript
+														? "text-green-400"
+														: "text-gray-500"
+												}>
+												{video.visual_transcript
+													? "✓"
+													: "○"}{" "}
+												Visual Analysis:{" "}
+												{video.visual_transcript
+													? "Complete"
+													: "Optional (Not Available)"}
+											</li>
+										</ul>
+										<p className="text-xs text-yellow-400 mt-3">
+											<strong>Note:</strong> Please start
+											transcription to generate
+											AI-Enhanced transcript. Visual
+											Analysis is optional and will be
+											included if available for better
+											accuracy.
+										</p>
 									</div>
-									<p className="text-xs text-gray-400 mb-2">
-										AI-Enhanced transcript requires at least NCA/Whisper transcription:
-									</p>
-									<ul className="text-xs text-gray-400 space-y-1 ml-4 list-disc">
-										<li className={video.transcript || video.whisper_transcript ? "text-green-400" : "text-yellow-400"}>
-											{video.transcript || video.whisper_transcript ? "✓" : "⏳"} NCA Toolkit / Whisper AI: {video.transcript || video.whisper_transcript ? "Complete" : "Pending (Required)"}
-										</li>
-										<li className={video.visual_transcript ? "text-green-400" : "text-gray-500"}>
-											{video.visual_transcript ? "✓" : "○"} Visual Analysis: {video.visual_transcript ? "Complete" : "Optional (Not Available)"}
-										</li>
-									</ul>
-									<p className="text-xs text-yellow-400 mt-3">
-										<strong>Note:</strong> Please start transcription to generate AI-Enhanced transcript. 
-										Visual Analysis is optional and will be included if available for better accuracy.
-									</p>
-								</div>
-							)}
+								)}
 
 							{/* Triple Transcription Comparison - Full Width Layout */}
 							{video.transcript ||
@@ -3019,8 +3353,7 @@ export function VideoDetail() {
 				</div>
 			</div>
 		</div>
-  );
+	);
 }
 
 export default VideoDetail;
-
