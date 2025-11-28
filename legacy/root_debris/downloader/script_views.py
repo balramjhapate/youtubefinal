@@ -2,12 +2,13 @@ import json
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny
 from django.conf import settings
 from .models import VideoDownload, AIProviderSettings
 from .utils import _call_gemini_api, _call_openai_api, _call_anthropic_api
 
 @api_view(['POST'])
+@permission_classes([AllowAny])
 def generate_script(request):
     """
     Generate a script based on selected videos and a user prompt.
@@ -62,30 +63,27 @@ Please generate the script now."""
             settings_obj = AIProviderSettings.objects.first()
             if settings_obj and settings_obj.api_key:
                 api_key = settings_obj.api_key
-                # Override provider if passed in request, otherwise use settings default
-                # But actually, the frontend passes the selected provider, so we should try to use that
-                # However, we need the API key. Assuming the API key in settings is valid for the selected provider
-                # OR we might need separate keys for separate providers. 
-                # For now, let's assume the settings object stores the key for the *active* provider.
-                # If the user selects a different provider in frontend than what's in settings, it might fail if the key doesn't match.
-                # To be safe, let's use the provider from settings if the key is there, 
-                # OR check if the frontend provider matches the settings provider.
-                
-                # Simplified logic: Use the provider from request, but use the key from settings.
-                # Ideally, we should have keys for each service. 
-                # For this MVP, we'll assume the user has configured the backend for the provider they want to use,
-                # or that the key works (which is unlikely if switching between Gemini/OpenAI).
-                
-                # Let's stick to the provider in settings to ensure the key is correct.
-                # If frontend sends a different provider, we'll warn or just use the settings one.
-                # Actually, let's trust the settings object's provider for the key.
-                provider = settings_obj.provider
+                # Use the provider from request if provided, otherwise use settings default
+                # If frontend sends a different provider, we'll use the request provider
+                # but the API key must be valid for that provider
+                if not provider or provider == 'gemini':
+                    # Default to settings provider if not specified or if gemini
+                    provider = settings_obj.provider or 'gemini'
+            else:
+                # No settings found, but we can still try with the provider from request
+                # if the user has configured environment variables or other settings
+                pass
                 
         except Exception as e:
-            return Response({'error': 'AI Provider settings not found'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            import traceback
+            print(f"Error getting AI settings: {e}")
+            print(traceback.format_exc())
+            # Don't fail here, continue and check if api_key is set below
 
         if not api_key:
-             return Response({'error': 'AI Provider API key not configured'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({
+                'error': 'AI Provider API key not configured. Please configure your AI provider settings in the Settings page.'
+            }, status=status.HTTP_400_BAD_REQUEST)
 
         # 5. Call AI API
         result = None

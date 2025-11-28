@@ -66,6 +66,15 @@ class XTTSService:
                     "cpu": "CPU"
                 }.get(device, device)
                 logger.info(f"Loading XTTS v2 model on {device_name} ({device})...")
+                
+                # Monkey-patch torch.load to use weights_only=False for TTS compatibility
+                # PyTorch 2.6+ changed default to weights_only=True which breaks TTS library
+                original_torch_load = torch.load
+                def patched_torch_load(*args, **kwargs):
+                    kwargs.setdefault('weights_only', False)
+                    return original_torch_load(*args, **kwargs)
+                torch.load = patched_torch_load
+                
                 # Redirect stdin to auto-accept license prompt
                 old_stdin = sys.stdin
                 sys.stdin = StringIO('y\n')
@@ -75,7 +84,12 @@ class XTTSService:
                     logger.info(f"XTTS v2 model loaded successfully on {device_name}.")
                 finally:
                     sys.stdin = old_stdin
+                    # Restore original torch.load
+                    torch.load = original_torch_load
             except Exception as e:
+                # Ensure torch.load is restored even on error
+                if 'original_torch_load' in locals():
+                    torch.load = original_torch_load
                 logger.error(f"Failed to load XTTS model: {str(e)}")
                 raise e
         return self._model

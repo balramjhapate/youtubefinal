@@ -713,19 +713,27 @@ def download_file(url):
         content_type = response.headers.get('Content-Type', '').lower()
         content = response.content
         
-        # Check if content is an M3U playlist (starts with #EXTM3U)
+        # Check if content type is explicitly HTML
+        if 'text/html' in content_type:
+            print(f"ERROR: Content-Type is text/html, not a video file")
+            return None
+
+        # Check if it's an M3U playlist (starts with #EXTM3U)
         if content.startswith(b'#EXTM3U') or content.startswith(b'#EXT-X-VERSION'):
             print(f"ERROR: Downloaded content is an M3U playlist, not a video file")
             print(f"Content preview: {content[:200]}")
+            return None
+            
+        # Check if it's HTML/error page (regardless of size)
+        # Read first 1000 bytes for check
+        first_bytes = content[:1000].lower()
+        if b'<html' in first_bytes or b'<!doctype' in first_bytes:
+            print(f"ERROR: Downloaded content appears to be HTML, not a video file. Size: {len(content)} bytes")
             return None
         
         # Check minimum file size (very small files are likely errors)
         if len(content) < 10000:  # Less than 10KB is suspicious
             print(f"WARNING: Downloaded file is very small ({len(content)} bytes), might be an error page")
-            # Check if it's HTML/error page
-            if b'<html' in content.lower() or b'<!doctype' in content.lower():
-                print(f"ERROR: Downloaded content appears to be HTML, not a video file")
-                return None
         
         # Validate it's a video file by checking content type or file signature
         video_signatures = [b'\x00\x00\x00 ftyp', b'\x1a\x45\xdf\xa3', b'RIFF', b'\x00\x00\x01\xba']  # MP4, WebM, AVI, MPEG
@@ -1244,6 +1252,10 @@ def extract_audio_from_video(video_path, output_audio_path=None):
                 print(f"ERROR: Video file format may be invalid or corrupted: {video_path}")
             elif 'codec' in error_lower and 'not found' in error_lower:
                 print(f"ERROR: Required codec not available in ffmpeg")
+            elif 'does not contain any stream' in error_lower or 'no stream' in error_lower:
+                print(f"ERROR: Video file has no audio stream. This video is video-only with no audio track.")
+                # Return a special marker so we can handle this case
+                return "NO_AUDIO_STREAM"
             else:
                 print(f"ERROR: Unknown ffmpeg error")
             
@@ -1312,6 +1324,11 @@ def transcribe_audio_local(audio_path, language=None, model_size='base'):
         device = getattr(settings, 'WHISPER_DEVICE', 'cpu')
         
         print(f"Loading Whisper model: {model_size}")
+<<<<<<< HEAD
+        # Load Whisper model (will download on first use)
+        # Force CPU usage to avoid CUDA compatibility issues on Ubuntu
+        model = whisper.load_model(model_size, device='cpu')
+=======
         print(f"Configuration: confidence_threshold={confidence_threshold}, "
               f"retry_enabled={retry_enabled}, whisperx_enabled={whisperx_enabled}")
         
@@ -1332,6 +1349,7 @@ def transcribe_audio_local(audio_path, language=None, model_size='base'):
         
         # Load standard Whisper model
         model = whisper_transcribe.load_whisper_model(model_size)
+>>>>>>> dd01845a9edf790183474bf32e70509ec6ff3925
         
         # Transcribe with optional language specification
         print(f"Transcribing audio: {audio_path}")
@@ -1728,6 +1746,17 @@ def transcribe_video(video_download):
         try:
             audio_path = extract_audio_from_video(video_path)
             
+            # Check for special "NO_AUDIO_STREAM" marker first
+            if audio_path == "NO_AUDIO_STREAM":
+                error_msg = 'Video file has no audio stream. This video is video-only with no audio track. Transcription cannot be performed. You can still process the video for other steps if you have an existing transcript.'
+                return {
+                    'text': '',
+                    'language': '',
+                    'status': 'failed',
+                    'error': error_msg,
+                    'no_audio_stream': True
+                }
+            
             if not audio_path:
                 # Check if ffmpeg is available
                 ffmpeg_path = find_ffmpeg()
@@ -1742,7 +1771,8 @@ def transcribe_video(video_download):
                     'text': '',
                     'language': '',
                     'status': 'failed',
-                    'error': error_msg
+                    'error': error_msg,
+                    'no_audio_stream': False
                 }
             
             temp_audio_path = audio_path

@@ -6,9 +6,10 @@ import logging
 from django.utils import timezone
 from django.db.models import Count, Q
 from rest_framework import viewsets, status
-from rest_framework.decorators import api_view, action
+from rest_framework.decorators import api_view, action, permission_classes
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+from rest_framework.permissions import AllowAny
 
 logger = logging.getLogger(__name__)
 
@@ -1278,6 +1279,19 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
             print(f"Transcription exception: {error_details}")
             traceback.print_exc()
             
+            # Check if it's a "no audio stream" error
+            if 'no audio stream' in error_details.lower() or 'video-only' in error_details.lower():
+                video.transcription_status = 'skipped'
+                video.transcript_error_message = 'Video has no audio stream - transcription skipped'
+                video.save()
+                return Response({
+                    "status": "skipped",
+                    "message": "Video has no audio stream. Transcription skipped. You can still process other steps if you have an existing transcript.",
+                    "error": error_details,
+                    "step": "transcription",
+                    "video_id": video.id
+                }, status=status.HTTP_200_OK)
+            
             # Provide more detailed error message
             if 'whisper' in error_details.lower():
                 error_details = f"Whisper transcription error: {error_details}. Please check if Whisper is properly installed."
@@ -1585,52 +1599,205 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
             }, status=status.HTTP_400_BAD_REQUEST)
         
         try:
-            # Reset all processing states
-            video.transcription_status = 'not_transcribed'
-            video.transcript = ''
-            video.transcript_without_timestamps = ''
-            video.transcript_hindi = ''
-            video.transcript_language = ''
-            video.transcript_started_at = None
-            video.transcript_processed_at = None
-            video.transcript_error_message = ''
+            # Smart Resume: Check which steps are already complete and only reset failed/pending steps
+            # This saves time by not redoing work that's already done
             
-            video.ai_processing_status = 'not_processed'
-            video.ai_summary = ''
-            video.ai_tags = ''
-            video.ai_processed_at = None
-            video.ai_error_message = ''
+            # Determine which steps are complete
+            transcription_complete = (
+                video.transcription_status == 'transcribed' and 
+                video.transcript and 
+                video.transcript_without_timestamps
+            )
             
-            video.script_status = 'not_generated'
-            video.hindi_script = ''
-            video.script_error_message = ''
-            video.script_generated_at = None
+            ai_processing_complete = (
+                video.ai_processing_status == 'processed' and 
+                video.ai_summary
+            )
             
-            video.synthesis_status = 'not_synthesized'
-            video.synthesis_error = ''
-            if video.synthesized_audio:
-                try:
-                    video.synthesized_audio.delete(save=False)
-                except Exception:
-                    pass
-                video.synthesized_audio = None
+            script_generation_complete = (
+                video.script_status == 'generated' and 
+                video.hindi_script
+            )
             
-            # Delete processed video files if they exist
-            if video.voice_removed_video:
-                try:
-                    video.voice_removed_video.delete(save=False)
-                except Exception:
-                    pass
-                video.voice_removed_video = None
-            video.voice_removed_video_url = ''
+            tts_synthesis_complete = (
+                video.synthesis_status == 'synthesized' and 
+                video.synthesized_audio
+            )
             
-            if video.final_processed_video:
-                try:
-                    video.final_processed_video.delete(save=False)
-                except Exception:
-                    pass
-                video.final_processed_video = None
-            video.final_processed_video_url = ''
+            # Determine where to start processing
+            start_from_step = None
+            
+            if not transcription_complete:
+                start_from_step = 'transcription'
+                # Reset transcription and all subsequent steps
+                video.transcription_status = 'not_transcribed'
+                video.transcript = ''
+                video.transcript_without_timestamps = ''
+                video.transcript_hindi = ''
+                video.transcript_language = ''
+                video.transcript_started_at = None
+                video.transcript_processed_at = None
+                video.transcript_error_message = ''
+                
+                video.ai_processing_status = 'not_processed'
+                video.ai_summary = ''
+                video.ai_tags = ''
+                video.ai_processed_at = None
+                video.ai_error_message = ''
+                
+                video.script_status = 'not_generated'
+                video.hindi_script = ''
+                video.script_error_message = ''
+                video.script_generated_at = None
+                
+                video.synthesis_status = 'not_synthesized'
+                video.synthesis_error = ''
+                if video.synthesized_audio:
+                    try:
+                        video.synthesized_audio.delete(save=False)
+                    except Exception:
+                        pass
+                    video.synthesized_audio = None
+                
+                # Delete processed video files
+                if video.voice_removed_video:
+                    try:
+                        video.voice_removed_video.delete(save=False)
+                    except Exception:
+                        pass
+                    video.voice_removed_video = None
+                video.voice_removed_video_url = ''
+                
+                if video.final_processed_video:
+                    try:
+                        video.final_processed_video.delete(save=False)
+                    except Exception:
+                        pass
+                    video.final_processed_video = None
+                video.final_processed_video_url = ''
+                
+            elif not ai_processing_complete:
+                start_from_step = 'ai_processing'
+                # Reset AI processing and all subsequent steps
+                video.ai_processing_status = 'not_processed'
+                video.ai_summary = ''
+                video.ai_tags = ''
+                video.ai_processed_at = None
+                video.ai_error_message = ''
+                
+                video.script_status = 'not_generated'
+                video.hindi_script = ''
+                video.script_error_message = ''
+                video.script_generated_at = None
+                
+                video.synthesis_status = 'not_synthesized'
+                video.synthesis_error = ''
+                if video.synthesized_audio:
+                    try:
+                        video.synthesized_audio.delete(save=False)
+                    except Exception:
+                        pass
+                    video.synthesized_audio = None
+                
+                # Delete processed video files
+                if video.voice_removed_video:
+                    try:
+                        video.voice_removed_video.delete(save=False)
+                    except Exception:
+                        pass
+                    video.voice_removed_video = None
+                video.voice_removed_video_url = ''
+                
+                if video.final_processed_video:
+                    try:
+                        video.final_processed_video.delete(save=False)
+                    except Exception:
+                        pass
+                    video.final_processed_video = None
+                video.final_processed_video_url = ''
+                
+            elif not script_generation_complete:
+                start_from_step = 'script_generation'
+                # Reset script generation and all subsequent steps
+                video.script_status = 'not_generated'
+                video.hindi_script = ''
+                video.script_error_message = ''
+                video.script_generated_at = None
+                
+                video.synthesis_status = 'not_synthesized'
+                video.synthesis_error = ''
+                if video.synthesized_audio:
+                    try:
+                        video.synthesized_audio.delete(save=False)
+                    except Exception:
+                        pass
+                    video.synthesized_audio = None
+                
+                # Delete processed video files
+                if video.voice_removed_video:
+                    try:
+                        video.voice_removed_video.delete(save=False)
+                    except Exception:
+                        pass
+                    video.voice_removed_video = None
+                video.voice_removed_video_url = ''
+                
+                if video.final_processed_video:
+                    try:
+                        video.final_processed_video.delete(save=False)
+                    except Exception:
+                        pass
+                    video.final_processed_video = None
+                video.final_processed_video_url = ''
+                
+            elif not tts_synthesis_complete:
+                start_from_step = 'tts_synthesis'
+                # Reset TTS synthesis and video processing
+                video.synthesis_status = 'not_synthesized'
+                video.synthesis_error = ''
+                if video.synthesized_audio:
+                    try:
+                        video.synthesized_audio.delete(save=False)
+                    except Exception:
+                        pass
+                    video.synthesized_audio = None
+                
+                # Delete processed video files
+                if video.voice_removed_video:
+                    try:
+                        video.voice_removed_video.delete(save=False)
+                    except Exception:
+                        pass
+                    video.voice_removed_video = None
+                video.voice_removed_video_url = ''
+                
+                if video.final_processed_video:
+                    try:
+                        video.final_processed_video.delete(save=False)
+                    except Exception:
+                        pass
+                    video.final_processed_video = None
+                video.final_processed_video_url = ''
+                
+            else:
+                # All steps complete, just reset video processing
+                start_from_step = 'video_processing'
+                # Delete processed video files
+                if video.voice_removed_video:
+                    try:
+                        video.voice_removed_video.delete(save=False)
+                    except Exception:
+                        pass
+                    video.voice_removed_video = None
+                video.voice_removed_video_url = ''
+                
+                if video.final_processed_video:
+                    try:
+                        video.final_processed_video.delete(save=False)
+                    except Exception:
+                        pass
+                    video.final_processed_video = None
+                video.final_processed_video_url = ''
             
             # Reset review status
             video.review_status = 'pending_review'
@@ -2025,24 +2192,65 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                                                 video.synthesis_error = f"ffmpeg audio removal failed: {ffmpeg_result.stderr}"
                                                 video.save()
                                 except Exception as e:
-                                    print(f"Video processing error: {e}")
+                                    error_msg = f"ffmpeg processing error: {str(e)}"
+                                    print(f"✗ {error_msg}")
                                     import traceback
                                     traceback.print_exc()
-                                    video.synthesis_error = str(e)
+                                    video.synthesis_error = error_msg
                                     video.save()
+                        else:
+                            if video.synthesis_status != 'synthesized':
+                                print(f"⚠ TTS not synthesized yet (status: {video.synthesis_status}), skipping audio replacement")
+                            if not video.synthesized_audio:
+                                print(f"⚠ No synthesized audio available, skipping audio replacement")
                     else:
+                        # Transcription failed
                         error_msg = result.get('error', 'Unknown error')
+                        if not error_msg or error_msg == 'Unknown error':
+                            # Try to get more specific error information
+                            if 'segments' in result and not result.get('segments'):
+                                error_msg = 'Transcription completed but no segments were generated. The audio may be too short or contain no speech.'
+                            elif 'language' in result and not result.get('language'):
+                                error_msg = 'Could not detect language in the audio. Please ensure the video contains clear speech.'
+                            else:
+                                error_msg = 'Transcription failed. Please check if the video file is valid and contains audio.'
+                        
                         video.transcription_status = 'failed'
                         video.transcript_error_message = error_msg
                         video.save()
+                        print(f"✗ Transcription failed: {error_msg}")
                 except Exception as e:
                     import traceback
+                    error_details = str(e)
+                    print(f"Pipeline error during reprocess: {error_details}")
                     traceback.print_exc()
-                    print(f"Pipeline error: {e}")
-                    video.transcription_status = 'failed'
-                    video.transcript_error_message = str(e)
+                    
+                    # Provide more detailed error message
+                    if 'whisper' in error_details.lower():
+                        error_details = f"Whisper transcription error: {error_details}. Please check if Whisper is properly installed."
+                    elif 'ffmpeg' in error_details.lower():
+                        error_details = f"FFmpeg error: {error_details}. Please ensure ffmpeg is installed."
+                    elif 'file' in error_details.lower() or 'not found' in error_details.lower():
+                        error_details = f"File error: {error_details}. Please ensure the video file exists."
+                    else:
+                        error_details = f"Processing failed: {error_details}"
+                    
+                    # Update video status based on where the error occurred
+                    video.refresh_from_db()
+                    if video.transcription_status == 'transcribing':
+                        video.transcription_status = 'failed'
+                        video.transcript_error_message = error_details
+                    elif video.ai_processing_status == 'processing':
+                        video.ai_processing_status = 'failed'
+                        video.ai_error_message = error_details
+                    elif video.script_status == 'generating':
+                        video.script_status = 'failed'
+                        video.script_error_message = error_details
+                    elif video.synthesis_status == 'synthesizing':
+                        video.synthesis_status = 'failed'
+                        video.synthesis_error = error_details
                     video.save()
-
+            
             # Start the pipeline in a background thread
             pipeline_thread = threading.Thread(target=run_pipeline, daemon=True)
             pipeline_thread.start()
@@ -2360,6 +2568,7 @@ class WatermarkSettingsViewSet(viewsets.ViewSet):
 
 
 @api_view(['GET', 'POST'])
+@permission_classes([AllowAny])
 def test_google_sheets(request):
     """Test endpoint for Google Sheets configuration"""
     from .google_sheets_service import get_google_sheets_service, ensure_header_row, extract_spreadsheet_id

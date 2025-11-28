@@ -271,7 +271,6 @@ export function VideoDetail() {
             }
           } else if (data) {
             // Show progress updates for long-running processes
-            // Show progress updates for long-running processes
             if (pollCount % 15 === 0) { // Show updates every 30 seconds (15 * 2s)
               if (data.transcription_status === 'transcribing') {
                 const elapsed = data.elapsed_seconds || 0;
@@ -357,6 +356,204 @@ export function VideoDetail() {
     },
   });
 
+  // Helper function to get current processing step
+  const getCurrentProcessingStep = (video) => {
+    if (!video) return null;
+    
+    if (video.transcription_status === 'transcribing') {
+      return 'Transcribing...';
+    }
+    if (video.ai_processing_status === 'processing') {
+      return 'AI Processing...';
+    }
+    if (video.script_status === 'generating') {
+      return 'Generating Script...';
+    }
+    if (video.synthesis_status === 'synthesizing') {
+      return 'Synthesizing Audio...';
+    }
+    if (video.synthesis_status === 'synthesized' && !video.final_processed_video_url) {
+      return 'Creating Final Video...';
+    }
+    if (video.final_processed_video_url && !video.cloudinary_url) {
+      return 'Uploading to Cloudinary...';
+    }
+    if (video.cloudinary_url && !video.google_sheets_synced) {
+      return 'Syncing to Google Sheets...';
+    }
+    
+    return null;
+  };
+  
+  // Check if video needs processing or has failed steps
+  const needsProcessing = (video) => {
+    if (!video) return false;
+    
+    // Needs download
+    if (!video.is_downloaded && video.status === 'success') return true;
+    
+    // Needs transcription (unless skipped)
+    if (video.transcription_status === 'not_transcribed' || video.transcription_status === 'failed') return true;
+    
+    // Needs AI processing
+    if (video.ai_processing_status === 'not_processed' || video.ai_processing_status === 'failed') return true;
+    
+    // Needs script generation
+    if (video.script_status === 'not_generated' || video.script_status === 'failed') return true;
+    
+    // Needs TTS synthesis
+    if (video.synthesis_status === 'not_synthesized' || video.synthesis_status === 'failed') return true;
+    
+    // Needs final video
+    if (video.synthesis_status === 'synthesized' && !video.final_processed_video_url) return true;
+    
+    // Needs Cloudinary upload
+    if (video.final_processed_video_url && !video.cloudinary_url) return true;
+    
+    // Needs Google Sheets sync
+    if (video.cloudinary_url && !video.google_sheets_synced) return true;
+    
+    return false;
+  };
+  
+  // Check if any step has failed
+  const hasFailedStep = (video) => {
+    if (!video) return false;
+    return (
+      video.transcription_status === 'failed' ||
+      video.ai_processing_status === 'failed' ||
+      video.script_status === 'failed' ||
+      video.synthesis_status === 'failed'
+    );
+  };
+
+  // Unified Process Video mutation - handles all steps sequentially
+  const processVideoMutation = useMutation({
+    mutationFn: async () => {
+      startProcessing(id, 'process');
+      
+      // Get current video state
+      let currentVideo = await videosApi.getById(id);
+      
+      // Step 1: Download if not downloaded
+      if (!currentVideo.is_downloaded && currentVideo.status === 'success') {
+        toast('Step 1/8: Downloading video...', { icon: '📥' });
+        await videosApi.download(id);
+        // Wait for download to complete
+        let downloadComplete = false;
+        let attempts = 0;
+        while (!downloadComplete && attempts < 30) {
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          currentVideo = await videosApi.getById(id);
+          if (currentVideo.is_downloaded) {
+            downloadComplete = true;
+          }
+          attempts++;
+        }
+        if (!downloadComplete) {
+          throw new Error('Download timed out');
+        }
+      }
+      
+      // Step 2-6: Transcribe (which does transcription → AI → script → TTS → final video)
+      toast('Step 2/8: Starting transcription and processing...', { icon: '🎬' });
+      const transcribeResult = await videosApi.transcribe(id);
+      
+      // If transcription was skipped (no audio), continue with other steps if transcript exists
+      if (transcribeResult.status === 'skipped') {
+        toast('Transcription skipped (no audio stream). Continuing with other steps...', { icon: '⚠️' });
+      }
+      
+      // Wait for all processing steps to complete
+      let processingComplete = false;
+      let attempts = 0;
+      while (!processingComplete && attempts < 150) { // 5 minutes max
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        currentVideo = await videosApi.getById(id);
+        
+        // Check if transcription, AI, script, TTS, and final video are complete
+        const transcriptionDone = currentVideo.transcription_status === 'transcribed' || 
+                                  currentVideo.transcription_status === 'skipped';
+        const aiDone = currentVideo.ai_processing_status === 'processed' || 
+                      currentVideo.ai_processing_status === 'failed';
+        const scriptDone = currentVideo.script_status === 'generated' || 
+                          currentVideo.script_status === 'failed';
+        const ttsDone = currentVideo.synthesis_status === 'synthesized' || 
+                       currentVideo.synthesis_status === 'failed';
+        const finalVideoDone = currentVideo.final_processed_video_url || 
+                              (currentVideo.synthesis_status === 'failed');
+        
+        if (transcriptionDone && aiDone && scriptDone && ttsDone && finalVideoDone) {
+          processingComplete = true;
+        }
+        attempts++;
+      }
+      
+      // Refresh video state
+      currentVideo = await videosApi.getById(id);
+      
+      // Step 7: Cloudinary Upload (if enabled and not already uploaded)
+      if (currentVideo.final_processed_video_url && !currentVideo.cloudinary_url) {
+        toast('Step 7/8: Uploading to Cloudinary...', { icon: '☁️' });
+        try {
+          await videosApi.uploadAndSync(id);
+          // Wait for upload to complete
+          let uploadComplete = false;
+          attempts = 0;
+          while (!uploadComplete && attempts < 30) {
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            currentVideo = await videosApi.getById(id);
+            if (currentVideo.cloudinary_url) {
+              uploadComplete = true;
+            }
+            attempts++;
+          }
+        } catch (error) {
+          console.warn('Cloudinary upload failed:', error);
+          // Continue even if upload fails
+        }
+      }
+      
+      // Refresh video state again
+      currentVideo = await videosApi.getById(id);
+      
+      // Step 8: Google Sheets Sync (if enabled and not already synced)
+      if (currentVideo.cloudinary_url && !currentVideo.google_sheets_synced) {
+        toast('Step 8/8: Syncing to Google Sheets...', { icon: '📊' });
+        try {
+          await videosApi.uploadAndSync(id);
+          // Wait for sync to complete
+          let syncComplete = false;
+          attempts = 0;
+          while (!syncComplete && attempts < 30) {
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            currentVideo = await videosApi.getById(id);
+            if (currentVideo.google_sheets_synced) {
+              syncComplete = true;
+            }
+            attempts++;
+          }
+        } catch (error) {
+          console.warn('Google Sheets sync failed:', error);
+          // Continue even if sync fails
+        }
+      }
+      
+      return { success: true };
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries(['video', id]);
+      queryClient.invalidateQueries(['videos']);
+      completeProcessing(id);
+      toast.success('Video processing completed successfully! 🎉');
+    },
+    onError: (error) => {
+      completeProcessing(id);
+      const errorMsg = error?.response?.data?.error || error?.message || 'Processing failed';
+      toast.error(`Processing failed: ${errorMsg}`);
+    },
+  });
+
   const reprocessMutation = useMutation({
     mutationFn: () => {
       startProcessing(id, 'reprocess');
@@ -379,7 +576,9 @@ export function VideoDetail() {
               data.ai_processing_status === 'processing' ||
               data.script_status === 'generating' ||
               data.synthesis_status === 'synthesizing' ||
-              (data.synthesis_status === 'synthesized' && !data.final_processed_video_url);
+              (data.synthesis_status === 'synthesized' && !data.final_processed_video_url) ||
+              (data.final_processed_video_url && !data.cloudinary_url) ||
+              (data.cloudinary_url && !data.google_sheets_synced);
             
             if (!isProcessing) {
               clearInterval(pollInterval);

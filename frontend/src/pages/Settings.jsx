@@ -25,6 +25,7 @@ export function Settings() {
   const [googleSheetsEnabled, setGoogleSheetsEnabled] = useState(false);
   const [testResult, setTestResult] = useState(null);
   const [serviceAccountEmail, setServiceAccountEmail] = useState('');
+  const [jsonValidationError, setJsonValidationError] = useState('');
   
   // Watermark state
   const [watermarkEnabled, setWatermarkEnabled] = useState(false);
@@ -108,15 +109,50 @@ export function Settings() {
   useEffect(() => {
     if (credentialsJson) {
       try {
+        // Try to parse and validate JSON
         const creds = JSON.parse(credentialsJson);
         setServiceAccountEmail(creds.client_email || '');
+        setJsonValidationError('');
       } catch (e) {
         setServiceAccountEmail('');
+        setJsonValidationError(`Invalid JSON: ${e.message}`);
       }
     } else {
       setServiceAccountEmail('');
+      setJsonValidationError('');
     }
   }, [credentialsJson]);
+
+  // Validate and format JSON credentials
+  const validateAndFormatCredentials = (jsonString) => {
+    if (!jsonString || !jsonString.trim()) {
+      return { valid: false, error: 'Credentials JSON is empty' };
+    }
+    
+    try {
+      // Parse the JSON to validate it
+      const parsed = JSON.parse(jsonString);
+      
+      // Check required fields
+      if (!parsed.type || parsed.type !== 'service_account') {
+        return { valid: false, error: 'Invalid service account type. Must be "service_account"' };
+      }
+      if (!parsed.project_id) {
+        return { valid: false, error: 'Missing required field: project_id' };
+      }
+      if (!parsed.private_key) {
+        return { valid: false, error: 'Missing required field: private_key' };
+      }
+      if (!parsed.client_email) {
+        return { valid: false, error: 'Missing required field: client_email' };
+      }
+      
+      // Return formatted JSON (stringified to ensure proper formatting)
+      return { valid: true, formatted: JSON.stringify(parsed, null, 2) };
+    } catch (e) {
+      return { valid: false, error: `Invalid JSON: ${e.message}` };
+    }
+  };
 
   // Save mutations
   const saveAIMutation = useMutation({
@@ -138,16 +174,65 @@ export function Settings() {
   });
 
   const saveGoogleSheetsMutation = useMutation({
-    mutationFn: () => settingsApi.saveGoogleSheetsSettings(spreadsheetId, sheetName, credentialsJson, googleSheetsEnabled),
+    mutationFn: () => {
+      // Validate and format credentials JSON before saving
+      if (credentialsJson) {
+        const validation = validateAndFormatCredentials(credentialsJson);
+        if (!validation.valid) {
+          throw new Error(validation.error);
+        }
+        // Use formatted JSON to ensure proper encoding
+        return settingsApi.saveGoogleSheetsSettings(
+          spreadsheetId, 
+          sheetName, 
+          validation.formatted || credentialsJson, 
+          googleSheetsEnabled
+        );
+      }
+      return settingsApi.saveGoogleSheetsSettings(spreadsheetId, sheetName, credentialsJson, googleSheetsEnabled);
+    },
     onSuccess: () => {
       toast.success('Google Sheets settings saved successfully');
       queryClient.invalidateQueries(['google-sheets-settings']);
     },
-    onError: (error) => toast.error(error.message || 'Failed to save Google Sheets settings'),
+    onError: (error) => {
+      const errorMessage = error.message || error?.response?.data?.error || 'Failed to save Google Sheets settings';
+      toast.error(errorMessage, { duration: 7000 });
+    },
   });
 
   const testGoogleSheetsMutation = useMutation({
-    mutationFn: () => settingsApi.testGoogleSheets(),
+    mutationFn: async () => {
+      // Validate credentials JSON first
+      if (credentialsJson) {
+        const validation = validateAndFormatCredentials(credentialsJson);
+        if (!validation.valid) {
+          throw new Error(validation.error);
+        }
+      }
+      
+      // First save the settings if they haven't been saved yet
+      if (googleSheetsEnabled && spreadsheetId && credentialsJson) {
+        try {
+          // Use validated and formatted JSON
+          const validation = validateAndFormatCredentials(credentialsJson);
+          const jsonToSave = validation.formatted || credentialsJson;
+          
+          // Save settings first, then test
+          await settingsApi.saveGoogleSheetsSettings(spreadsheetId, sheetName, jsonToSave, googleSheetsEnabled);
+          // Invalidate queries to refresh settings
+          queryClient.invalidateQueries(['google-sheets-settings']);
+          // Wait a moment for the database to update
+          await new Promise(resolve => setTimeout(resolve, 500));
+        } catch (saveError) {
+          // If save fails, throw error
+          const errorMsg = saveError.message || saveError?.response?.data?.error || 'Failed to save settings before testing';
+          throw new Error(errorMsg);
+        }
+      }
+      // Now test the connection
+      return settingsApi.testGoogleSheets();
+    },
     onSuccess: (data) => {
       setTestResult(data);
       if (data.success) {
@@ -170,10 +255,16 @@ export function Settings() {
     onError: (error) => {
       const errorData = error?.response?.data;
       setTestResult(errorData || { success: false, errors: ['Failed to test connection'] });
-      if (errorData?.errors) {
+      
+      // Handle different error scenarios
+      if (errorData?.errors && Array.isArray(errorData.errors)) {
         errorData.errors.forEach(err => toast.error(err, { duration: 7000 }));
+      } else if (errorData?.error) {
+        toast.error(errorData.error, { duration: 7000 });
+      } else if (error?.message) {
+        toast.error(error.message, { duration: 7000 });
       } else {
-        toast.error('Failed to test Google Sheets connection');
+        toast.error('Failed to test Google Sheets connection. Please ensure settings are saved first.', { duration: 7000 });
       }
     },
   });
@@ -490,13 +581,51 @@ export function Settings() {
               onChange={(e) => setCredentialsJson(e.target.value)}
               placeholder='{"type": "service_account", "project_id": "...", ...}'
               disabled={!googleSheetsEnabled}
-              rows={6}
-              className="w-full px-4 py-2.5 rounded-lg input-dark font-mono text-xs disabled:opacity-50"
+              rows={8}
+              className={`w-full px-4 py-2.5 rounded-lg input-dark font-mono text-xs disabled:opacity-50 ${
+                jsonValidationError ? 'border-red-500/50 focus:border-red-500' : ''
+              }`}
             />
-            <p className="mt-1 text-xs text-gray-500">
-              Paste the complete JSON credentials from your Google Service Account
-            </p>
-            {serviceAccountEmail && (
+            {jsonValidationError && (
+              <div className="mt-2 p-2 bg-red-500/10 border border-red-500/20 rounded">
+                <p className="text-xs text-red-300">
+                  ⚠️ {jsonValidationError}
+                </p>
+                <p className="text-xs text-gray-400 mt-1">
+                  Please check your JSON format. Make sure all quotes are properly escaped and the JSON is valid.
+                </p>
+              </div>
+            )}
+            <div className="mt-1 flex items-center justify-between">
+              {!jsonValidationError && credentialsJson && (
+                <p className="text-xs text-green-400">
+                  ✓ Valid JSON format detected
+                </p>
+              )}
+              {credentialsJson && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const validation = validateAndFormatCredentials(credentialsJson);
+                    if (validation.valid && validation.formatted) {
+                      setCredentialsJson(validation.formatted);
+                      toast.success('JSON formatted successfully');
+                    } else {
+                      toast.error(validation.error || 'Cannot format invalid JSON');
+                    }
+                  }}
+                  className="text-xs text-blue-400 hover:text-blue-300 underline"
+                >
+                  Format JSON
+                </button>
+              )}
+            </div>
+            {!jsonValidationError && !credentialsJson && (
+              <p className="mt-1 text-xs text-gray-500">
+                Paste the complete JSON credentials from your Google Service Account
+              </p>
+            )}
+            {serviceAccountEmail && !jsonValidationError && (
               <div className="mt-2 p-2 bg-blue-500/10 border border-blue-500/20 rounded">
                 <p className="text-xs text-gray-300 mb-1">
                   <strong>Service Account Email:</strong>
@@ -525,7 +654,14 @@ export function Settings() {
               type="button"
               variant="secondary"
               icon={TestTube}
-              onClick={() => testGoogleSheetsMutation.mutate()}
+              onClick={() => {
+                // Warn user if settings aren't filled
+                if (!googleSheetsEnabled || !spreadsheetId || !credentialsJson) {
+                  toast.error('Please fill in all Google Sheets settings before testing', { duration: 5000 });
+                  return;
+                }
+                testGoogleSheetsMutation.mutate();
+              }}
               loading={testGoogleSheetsMutation.isPending}
               disabled={!googleSheetsEnabled || !spreadsheetId || !credentialsJson}
             >
