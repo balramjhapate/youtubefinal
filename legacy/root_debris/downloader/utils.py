@@ -1324,11 +1324,6 @@ def transcribe_audio_local(audio_path, language=None, model_size='base'):
         device = getattr(settings, 'WHISPER_DEVICE', 'cpu')
         
         print(f"Loading Whisper model: {model_size}")
-<<<<<<< HEAD
-        # Load Whisper model (will download on first use)
-        # Force CPU usage to avoid CUDA compatibility issues on Ubuntu
-        model = whisper.load_model(model_size, device='cpu')
-=======
         print(f"Configuration: confidence_threshold={confidence_threshold}, "
               f"retry_enabled={retry_enabled}, whisperx_enabled={whisperx_enabled}")
         
@@ -1349,7 +1344,6 @@ def transcribe_audio_local(audio_path, language=None, model_size='base'):
         
         # Load standard Whisper model
         model = whisper_transcribe.load_whisper_model(model_size)
->>>>>>> dd01845a9edf790183474bf32e70509ec6ff3925
         
         # Transcribe with optional language specification
         print(f"Transcribing audio: {audio_path}")
