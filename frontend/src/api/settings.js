@@ -61,6 +61,18 @@ export const settingsApi = {
     const response = await apiClient.get('/test/google-sheets/');
     return response.data;
   },
+
+  // Get Watermark settings
+  getWatermarkSettings: async () => {
+    const response = await apiClient.get('/watermark-settings/');
+    return response.data;
+  },
+
+  // Save Watermark settings
+  saveWatermarkSettings: async (data) => {
+    const response = await apiClient.post('/watermark-settings/', data);
+    return response.data;
+  },
 };
 
 export default settingsApi;

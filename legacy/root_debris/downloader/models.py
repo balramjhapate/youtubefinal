@@ -48,6 +48,24 @@ class GoogleSheetsSettings(models.Model):
     def __str__(self):
         return f"Google Sheets settings ({'enabled' if self.enabled else 'disabled'})"
 
+
+class WatermarkSettings(models.Model):
+    """Store watermark configuration for videos."""
+    enabled = models.BooleanField(default=False, help_text="Enable watermark on videos")
+    watermark_text = models.CharField(max_length=100, blank=True, default='', help_text="Watermark text to display on videos")
+    font_size = models.IntegerField(default=24, help_text="Font size for watermark text")
+    font_color = models.CharField(max_length=20, default='white', help_text="Font color (e.g., 'white', 'black', '#FFFFFF')")
+    position_change_interval = models.FloatField(default=1.0, help_text="Position change interval in seconds (how often watermark moves)")
+    opacity = models.FloatField(default=0.7, help_text="Watermark opacity (0.0 to 1.0)")
+    
+    class Meta:
+        verbose_name = "Watermark Setting"
+        verbose_name_plural = "Watermark Settings"
+    
+    def __str__(self):
+        return f"Watermark settings ({'enabled' if self.enabled else 'disabled'})"
+
+
 class ClonedVoice(models.Model):
     name = models.CharField(max_length=100)
     file = models.FileField(upload_to='cloned_voices/')
@@ -194,6 +212,19 @@ class VideoDownload(models.Model):
     whisper_transcript_error_message = models.TextField(blank=True, help_text="Whisper: Transcription error message if failed")
     whisper_model_used = models.CharField(max_length=20, blank=True, help_text="Whisper model size used (tiny/base/small/medium/large)")
     whisper_confidence_avg = models.FloatField(blank=True, null=True, help_text="Whisper: Average confidence score across all segments")
+    
+    # Visual Transcription (for videos without audio - uses Gemini Vision API)
+    has_audio = models.BooleanField(default=True, help_text="Whether video contains audio track")
+    visual_transcript = models.TextField(blank=True, help_text="Visual: Frame-by-frame description WITH timestamps (HH:MM:SS format)")
+    visual_transcript_without_timestamps = models.TextField(blank=True, help_text="Visual: Frame-by-frame description WITHOUT timestamps (plain text)")
+    visual_transcript_hindi = models.TextField(blank=True, help_text="Visual: Hindi translation of visual description")
+    visual_transcript_segments = models.JSONField(blank=True, null=True, help_text="Visual: Raw segments with timestamps and descriptions")
+    
+    # AI-Enhanced Transcription (merges Whisper + NCA + Visual using AI)
+    enhanced_transcript = models.TextField(blank=True, help_text="Enhanced: AI-merged transcript WITH timestamps (HH:MM:SS format) - combines Whisper, NCA, and Visual")
+    enhanced_transcript_without_timestamps = models.TextField(blank=True, help_text="Enhanced: AI-merged transcript WITHOUT timestamps (plain text)")
+    enhanced_transcript_hindi = models.TextField(blank=True, help_text="Enhanced: Hindi translation of enhanced transcript")
+    enhanced_transcript_segments = models.JSONField(blank=True, null=True, help_text="Enhanced: Raw segments with timestamps from AI enhancement")
     
     
     # Timestamps

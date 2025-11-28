@@ -5,7 +5,7 @@ from django.contrib import messages
 from django.db import IntegrityError
 from django.utils import timezone
 from django.shortcuts import render, redirect, get_object_or_404
-from .models import VideoDownload, AIProviderSettings, ClonedVoice, CloudinarySettings, GoogleSheetsSettings
+from .models import VideoDownload, AIProviderSettings, ClonedVoice, CloudinarySettings, GoogleSheetsSettings, WatermarkSettings
 from .utils import (
     perform_extraction, extract_video_id, translate_text, download_file,
     process_video_with_ai, transcribe_video, add_caption_to_video,
@@ -56,6 +56,20 @@ class CloudinarySettingsAdmin(admin.ModelAdmin):
     def has_delete_permission(self, request, obj=None):
         # Don't allow deletion of the settings record
         return False
+
+
+@admin.register(WatermarkSettings)
+class WatermarkSettingsAdmin(admin.ModelAdmin):
+    """Admin interface for WatermarkSettings"""
+    list_display = ['enabled', 'watermark_text', 'font_size', 'font_color', 'opacity', 'position_change_interval']
+    fields = ['enabled', 'watermark_text', 'font_size', 'font_color', 'opacity', 'position_change_interval']
+    
+    def has_add_permission(self, request):
+        # Only allow one watermark settings instance
+        return not WatermarkSettings.objects.exists()
+    
+    def has_delete_permission(self, request, obj=None):
+        return True
 
 
 @admin.register(GoogleSheetsSettings)

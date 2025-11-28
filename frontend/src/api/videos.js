@@ -103,6 +103,12 @@ export const videosApi = {
     return response.data;
   },
 
+  // Reset stuck transcription
+  resetTranscription: async (id) => {
+    const response = await apiClient.post(`/videos/${id}/reset_transcription/`);
+    return response.data;
+  },
+
   // Bulk actions
   bulkDownload: async (videoIds) => {
     const response = await apiClient.post('/bulk/download/', { video_ids: videoIds });

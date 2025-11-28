@@ -452,8 +452,34 @@ class NCAToolkitClient:
 def get_nca_client():
     """Get configured NCA Toolkit client instance"""
     try:
-        return NCAToolkitClient()
-    except ValueError:
+        # Check if NCA API is enabled in settings
+        if not getattr(settings, 'NCA_API_ENABLED', False):
+            return None
+        
+        # Check if API key is set
+        api_key = getattr(settings, 'NCA_API_KEY', '')
+        if not api_key:
+            print("⚠️  NCA_API_KEY not set in settings. NCA Toolkit will not be used.")
+            return None
+        
+        client = NCAToolkitClient()
+        
+        # Test connection with health check
+        try:
+            health = client.health_check()
+            if not health.get('success'):
+                print(f"⚠️  NCA Toolkit health check failed: {health.get('error', 'Unknown error')}. Falling back to Whisper.")
+                return None
+        except Exception as e:
+            print(f"⚠️  NCA Toolkit connection test failed: {e}. Falling back to Whisper.")
+            return None
+        
+        return client
+    except ValueError as e:
         # API not configured, return None
+        print(f"⚠️  NCA Toolkit not configured: {e}. Falling back to Whisper.")
+        return None
+    except Exception as e:
+        print(f"⚠️  Error initializing NCA Toolkit: {e}. Falling back to Whisper.")
         return None
 

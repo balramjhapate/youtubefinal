@@ -12,12 +12,12 @@ from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
 logger = logging.getLogger(__name__)
 
-from .models import VideoDownload, AIProviderSettings, CloudinarySettings, GoogleSheetsSettings
+from .models import VideoDownload, AIProviderSettings, CloudinarySettings, GoogleSheetsSettings, WatermarkSettings
 from .serializers import (
     VideoDownloadSerializer, VideoDownloadListSerializer,
     AIProviderSettingsSerializer, VideoExtractSerializer,
     VideoTranscribeSerializer, BulkActionSerializer, DashboardStatsSerializer,
-    CloudinarySettingsSerializer, GoogleSheetsSettingsSerializer
+    CloudinarySettingsSerializer, GoogleSheetsSettingsSerializer, WatermarkSettingsSerializer
 )
 from .utils import (
     perform_extraction, extract_video_id, detect_video_source, translate_text,
@@ -25,8 +25,18 @@ from .utils import (
     process_video_with_ai, get_video_duration,
     calculate_tts_parameters, generate_hindi_script, generate_video_metadata
 )
-from .cloudinary_service import upload_video_file
-from .google_sheets_service import add_video_to_sheet
+# Optional imports - these services may not be installed
+try:
+    from .cloudinary_service import upload_video_file
+except ImportError:
+    upload_video_file = None
+    logger.warning("Cloudinary service not available (cloudinary package not installed)")
+
+try:
+    from .google_sheets_service import add_video_to_sheet
+except ImportError:
+    add_video_to_sheet = None
+    logger.warning("Google Sheets service not available (google packages not installed)")
 
 
 class VideoDownloadViewSet(viewsets.ModelViewSet):
@@ -507,12 +517,23 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
         """Start transcription, AI processing, and script generation in one automated flow"""
         video = self.get_object()
 
-        if video.transcription_status == 'transcribing':
-            return Response({
-                "status": "already_processing",
-                "message": "Processing is already in progress",
-                "current_step": "transcribing"
-            })
+        # Check if transcription is stuck (running for more than 30 minutes)
+        if video.transcription_status == 'transcribing' and video.transcript_started_at:
+            elapsed_minutes = (timezone.now() - video.transcript_started_at).total_seconds() / 60
+            if elapsed_minutes > 30:
+                # Reset stuck transcription
+                print(f"⚠️  Transcription stuck for {elapsed_minutes:.1f} minutes, resetting...")
+                video.transcription_status = 'not_transcribed'
+                video.transcript_started_at = None
+                video.transcript_error_message = f"Previous transcription timed out after {elapsed_minutes:.1f} minutes"
+                video.save()
+            else:
+                return Response({
+                    "status": "already_processing",
+                    "message": "Processing is already in progress",
+                    "current_step": "transcribing",
+                    "elapsed_minutes": int(elapsed_minutes)
+                })
 
         if not video.is_downloaded and not video.video_url:
             return Response({
@@ -523,104 +544,294 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
         video.transcription_status = 'transcribing'
         video.transcript_started_at = timezone.now()
         video.save()
+        
+        print(f"🔄 Starting transcription for video {video.id} (title: {video.title[:50]}...)")
+        transcription_start_time = timezone.now()
+        
+        # Initialize variables to avoid "referenced before assignment" errors
+        transcript_text = ''
+        timestamped_text = ''
+        transcript_without_timestamps = ''
+        srt_text = ''
 
         try:
-            # Transcribe video
-            result = transcribe_video(video)
-
-            if result['status'] == 'success':
-                # Save transcript with timestamps AND without timestamps
-                video.transcription_status = 'transcribed'
-                transcript_text = result.get('text', '')
-                timestamped_text = result.get('transcript_with_timestamps', '')
-                transcript_without_timestamps = result.get('transcript_without_timestamps', transcript_text)
-                srt_text = result.get('srt', '')
-                
-                # Store transcript WITH timestamps (00:00:00 text format) - this is what user sees
-                # IMPORTANT: Store original transcript (may be in Arabic/Urdu/other languages) with timestamps
-                if timestamped_text:
-                    video.transcript = timestamped_text
-                elif srt_text:
-                    # Convert SRT to timestamped format
-                    from .utils import convert_srt_to_timestamped_text
-                    video.transcript = convert_srt_to_timestamped_text(srt_text) or srt_text
-                else:
-                    video.transcript = transcript_text
-                
-                # Store transcript WITHOUT timestamps for processing and display
-                # Extract plain text from timestamped version if needed
-                if transcript_without_timestamps:
-                    video.transcript_without_timestamps = transcript_without_timestamps
-                elif timestamped_text:
-                    # Extract text from timestamped format (remove timestamps)
-                    import re
-                    plain_text = re.sub(r'^\d{2}:\d{2}:\d{2}\s+', '', timestamped_text, flags=re.MULTILINE)
-                    plain_text = '\n'.join([line.strip() for line in plain_text.split('\n') if line.strip()])
-                    video.transcript_without_timestamps = plain_text
-                else:
-                    video.transcript_without_timestamps = transcript_text
-                
-                # IMPORTANT: Ensure Hindi translation is properly stored
-                # If transcript is in Arabic/Urdu, translate it to Hindi
-                hindi_transcript = result.get('text_hindi', '')
-                if not hindi_transcript and transcript_without_timestamps:
-                    # If Hindi translation not provided, translate the plain text
-                    from .utils import translate_text
-                    print(f"Translating transcript to Hindi (language: {result.get('language', 'unknown')})...")
-                    hindi_transcript = translate_text(transcript_without_timestamps, target='hi')
-                
-                video.transcript_hindi = hindi_transcript
-                video.transcript_language = result.get('language', '')
-                video.transcript_processed_at = timezone.now()
-                video.transcript_error_message = ''
+            # Transcribe video with timeout protection
+            # Use threading to add timeout for transcription (max 15 minutes)
+            import threading
+            import queue
+            
+            transcription_timeout = 15 * 60  # 15 minutes max
+            result_queue = queue.Queue()
+            exception_queue = queue.Queue()
+            
+            def run_transcription():
+                try:
+                    result = transcribe_video(video)
+                    result_queue.put(result)
+                except Exception as e:
+                    exception_queue.put(e)
+            
+            transcription_thread = threading.Thread(target=run_transcription, daemon=True)
+            transcription_thread.start()
+            transcription_thread.join(timeout=transcription_timeout)
+            
+            if transcription_thread.is_alive():
+                # Transcription is taking too long - timeout
+                error_msg = f"Transcription timed out after {transcription_timeout // 60} minutes. The video may be too long or the transcription service is unresponsive."
+                print(f"⚠️  {error_msg}")
+                video.transcription_status = 'failed'
+                video.transcript_error_message = error_msg
                 video.save()
+                
+                return Response({
+                    "status": "failed",
+                    "error": error_msg,
+                    "step": "transcription"
+                }, status=status.HTTP_408_REQUEST_TIMEOUT)
+            
+            # Get result from queue
+            if not exception_queue.empty():
+                raise exception_queue.get()
+            
+            if result_queue.empty():
+                error_msg = "Transcription completed but returned no result. This may indicate an internal error."
+                print(f"⚠️  {error_msg}")
+                video.transcription_status = 'failed'
+                video.transcript_error_message = error_msg
+                video.save()
+                
+                return Response({
+                    "status": "failed",
+                    "error": error_msg,
+                    "step": "transcription"
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+            result = result_queue.get()
+            
+            transcription_duration = (timezone.now() - transcription_start_time).total_seconds()
+            print(f"✓ Transcription completed in {transcription_duration:.1f} seconds")
+
+            # Handle dual transcription results (returns different structure)
+            # Initialize variables to avoid "referenced before assignment" errors
+            transcript_text = ''
+            timestamped_text = ''
+            transcript_without_timestamps = ''
+            srt_text = ''
+            
+            if result.get('status') in ['success', 'partial']:
+                # Dual transcription mode - extract the best result
+                if 'whisper_result' in result or 'nca_result' in result:
+                    # Use Whisper result if available (more reliable), otherwise NCA
+                    # Refresh video to get latest data saved by dual transcription
+                    video.refresh_from_db()
+                    
+                    if result.get('whisper_result') and result['whisper_result'].get('status') == 'success':
+                        whisper_result = result['whisper_result']
+                        # Convert to standard format using data already saved to video
+                        result = {
+                            'status': 'success',
+                            'text': video.whisper_transcript_without_timestamps or whisper_result.get('text', ''),
+                            'transcript_with_timestamps': video.whisper_transcript or '',
+                            'transcript_without_timestamps': video.whisper_transcript_without_timestamps or whisper_result.get('text', ''),
+                            'text_hindi': video.whisper_transcript_hindi or '',
+                            'language': video.whisper_transcript_language or whisper_result.get('language', ''),
+                            'srt': '',  # Can be generated from segments if needed
+                            'segments': whisper_result.get('segments', [])
+                        }
+                        # Also update main transcript fields from Whisper (dual transcription saves to whisper_* fields)
+                        if not video.transcript or video.transcription_status != 'transcribed':
+                            video.transcription_status = 'transcribed'
+                            video.transcript = video.whisper_transcript
+                            video.transcript_without_timestamps = video.whisper_transcript_without_timestamps
+                            video.transcript_hindi = video.whisper_transcript_hindi
+                            video.transcript_language = video.whisper_transcript_language
+                            video.transcript_processed_at = timezone.now()
+                            video.save()
+                        print(f"✓ Using Whisper result from dual transcription: {len(result.get('text', ''))} chars")
+                    elif result.get('nca_result') and result['nca_result'].get('status') == 'success':
+                        nca_result = result['nca_result']
+                        # Convert to standard format using data already saved to video
+                        result = {
+                            'status': 'success',
+                            'text': video.transcript_without_timestamps or nca_result.get('text', ''),
+                            'transcript_with_timestamps': video.transcript or '',
+                            'transcript_without_timestamps': video.transcript_without_timestamps or nca_result.get('text', ''),
+                            'text_hindi': video.transcript_hindi or '',
+                            'language': video.transcript_language or nca_result.get('language', ''),
+                            'srt': nca_result.get('srt', ''),
+                            'segments': nca_result.get('segments', [])
+                        }
+                        print(f"✓ Using NCA result from dual transcription: {len(result.get('text', ''))} chars")
+                    else:
+                        # Both failed, but we have partial result - use whatever is available
+                        error_msg = "Both NCA and Whisper transcription failed in dual mode"
+                        if result.get('whisper_result'):
+                            error_msg = result['whisper_result'].get('error', error_msg)
+                        elif result.get('nca_result'):
+                            error_msg = result['nca_result'].get('error', error_msg)
+                        result = {
+                            'status': 'failed',
+                            'error': error_msg
+                        }
+
+            if result.get('status') == 'success':
+                # Refresh video to get latest data (dual transcription may have already saved it)
+                video.refresh_from_db()
+                
+                # Only update if not already set (dual transcription may have already saved to video)
+                if not video.transcript or video.transcription_status != 'transcribed':
+                    # Save transcript with timestamps AND without timestamps
+                    video.transcription_status = 'transcribed'
+                    transcript_text = result.get('text', '')
+                    timestamped_text = result.get('transcript_with_timestamps', '')
+                    transcript_without_timestamps = result.get('transcript_without_timestamps', transcript_text)
+                    srt_text = result.get('srt', '')
+                    
+                    # Store transcript WITH timestamps (00:00:00 text format) - this is what user sees
+                    # IMPORTANT: Store original transcript (may be in Arabic/Urdu/other languages) with timestamps
+                    if timestamped_text:
+                        video.transcript = timestamped_text
+                    elif srt_text:
+                        # Convert SRT to timestamped format
+                        from .utils import convert_srt_to_timestamped_text
+                        video.transcript = convert_srt_to_timestamped_text(srt_text) or srt_text
+                    else:
+                        video.transcript = transcript_text
+                    
+                    # Store transcript WITHOUT timestamps for processing and display
+                    # Extract plain text from timestamped version if needed
+                    if transcript_without_timestamps:
+                        video.transcript_without_timestamps = transcript_without_timestamps
+                    elif timestamped_text:
+                        # Extract text from timestamped format (remove timestamps)
+                        import re
+                        plain_text = re.sub(r'^\d{2}:\d{2}:\d{2}\s+', '', timestamped_text, flags=re.MULTILINE)
+                        plain_text = '\n'.join([line.strip() for line in plain_text.split('\n') if line.strip()])
+                        video.transcript_without_timestamps = plain_text
+                    else:
+                        video.transcript_without_timestamps = transcript_text
+                    
+                    # IMPORTANT: Ensure Hindi translation is properly stored
+                    # If transcript is in Arabic/Urdu, translate it to Hindi using AI for better quality
+                    hindi_transcript = result.get('text_hindi', '')
+                    if not hindi_transcript and transcript_without_timestamps:
+                        # If Hindi translation not provided, translate the plain text using AI
+                        from .utils import translate_text_with_ai
+                        print(f"Translating transcript to Hindi using AI (preserves meaning) (language: {result.get('language', 'unknown')})...")
+                        hindi_transcript = translate_text_with_ai(transcript_without_timestamps, target='hi')
+                    
+                    video.transcript_hindi = hindi_transcript
+                    video.transcript_language = result.get('language', '')
+                    video.transcript_processed_at = timezone.now()
+                    video.transcript_error_message = ''
+                    video.save()
+                else:
+                    print(f"✓ Transcript already saved by dual transcription, using existing data")
 
                 # Step 2: AI Processing (automatically after transcription)
+                # NOTE: AI enhancement (enhance_transcript_with_ai) already happens during transcription
+                # and sets ai_processing_status. Here we only do summary/tags generation if needed.
                 try:
-                    video.ai_processing_status = 'processing'
-                    video.save()
+                    # Refresh from DB to get latest state (AI enhancement may have already set status)
+                    video.refresh_from_db()
                     
-                    ai_result = process_video_with_ai(video)
-                    
-                    if ai_result['status'] == 'success':
-                        video.ai_processing_status = 'processed'
-                        video.ai_summary = ai_result.get('summary', '')
-                        video.ai_tags = ai_result.get('tags', [])
-                        video.ai_processed_at = timezone.now()
-                        video.ai_error_message = ''
-                        video.save()
+                    # Only run process_video_with_ai if AI enhancement is already done
+                    # (process_video_with_ai generates summary/tags, not the enhanced transcript)
+                    if video.ai_processing_status == 'processed':
+                        # AI enhancement already completed, just generate summary/tags
+                        print(f"AI enhancement already completed, generating summary/tags...")
+                        ai_result = process_video_with_ai(video)
+                        
+                        if ai_result['status'] == 'success':
+                            video.ai_summary = ai_result.get('summary', '')
+                            video.ai_tags = ai_result.get('tags', [])
+                            video.ai_processed_at = timezone.now()
+                            video.ai_error_message = ''
+                            video.save()
+                        else:
+                            # Keep status as 'processed' but log the error
+                            video.ai_error_message = ai_result.get('error', 'Unknown error')
+                            video.save()
+                    elif video.ai_processing_status == 'processing':
+                        # AI enhancement is still in progress (shouldn't happen here, but handle it)
+                        print(f"AI enhancement still in progress, waiting...")
+                    elif video.ai_processing_status == 'failed':
+                        # AI enhancement failed, don't try to generate summary
+                        print(f"AI enhancement failed, skipping summary generation")
                     else:
-                        video.ai_processing_status = 'failed'
-                        video.ai_error_message = ai_result.get('error', 'Unknown error')
-                        video.save()
+                        # AI enhancement not started yet (shouldn't happen, but handle it)
+                        print(f"AI enhancement not started, setting status to processing...")
+                        video.ai_processing_status = 'processing'
+                        video.save(update_fields=['ai_processing_status'])
+                        ai_result = process_video_with_ai(video)
+                        
+                        if ai_result['status'] == 'success':
+                            video.ai_processing_status = 'processed'
+                            video.ai_summary = ai_result.get('summary', '')
+                            video.ai_tags = ai_result.get('tags', [])
+                            video.ai_processed_at = timezone.now()
+                            video.ai_error_message = ''
+                            video.save()
+                        else:
+                            video.ai_processing_status = 'failed'
+                            video.ai_error_message = ai_result.get('error', 'Unknown error')
+                            video.save()
                 except Exception as e:
                     print(f"AI processing error: {e}")
-                    video.ai_processing_status = 'failed'
-                    video.ai_error_message = str(e)
-                    video.save()
+                    import traceback
+                    traceback.print_exc()
+                    # Only update status if it's not already set by AI enhancement
+                    video.refresh_from_db()
+                    if video.ai_processing_status not in ['processed', 'failed']:
+                        video.ai_processing_status = 'failed'
+                        video.ai_error_message = str(e)
+                        video.save(update_fields=['ai_processing_status', 'ai_error_message'])
 
                 # Step 3: Script Generation (automatically after AI processing)
-                try:
-                    video.script_status = 'generating'
-                    video.save()
-                    
-                    script_result = generate_hindi_script(video)
-                    
-                    if script_result['status'] == 'success':
-                        video.hindi_script = script_result['script']
-                        video.script_status = 'generated'
-                        video.script_generated_at = timezone.now()
-                        video.script_error_message = ''
-                        video.save()
-                    else:
-                        video.script_status = 'failed'
-                        video.script_error_message = script_result.get('error', 'Unknown error')
-                        video.save()
-                except Exception as e:
-                    print(f"Script generation error: {e}")
+                # Generate script if we have transcript (NCA/Whisper) and enhanced transcript
+                # Visual Analysis is OPTIONAL - if available, it will be included; if not, continue without it
+                has_transcript = video.transcript or video.whisper_transcript
+                has_enhanced = video.enhanced_transcript
+                has_visual = video.visual_transcript  # Optional
+                
+                if not has_transcript:
+                    print("⚠ Script generation skipped: No transcript available (NCA/Whisper)")
                     video.script_status = 'failed'
-                    video.script_error_message = str(e)
+                    video.script_error_message = 'No transcript available. Please ensure transcription completes successfully.'
                     video.save()
+                elif not has_enhanced:
+                    print("⚠ Script generation skipped: Enhanced transcript not available")
+                    video.script_status = 'failed'
+                    video.script_error_message = 'Enhanced transcript is required for script generation. Please wait for AI enhancement to complete.'
+                    video.save()
+                else:
+                    try:
+                        video.script_status = 'generating'
+                        video.save()
+                        print(f"✓ Starting Hindi script generation (explainer style)...")
+                        print(f"  - Transcript (NCA/Whisper): ✓")
+                        print(f"  - Enhanced Transcript: ✓")
+                        print(f"  - Visual Analysis: {'✓ (available)' if has_visual else '⚠ (optional - not available, continuing without it)'}")
+                        
+                        script_result = generate_hindi_script(video)
+                    
+                        if script_result['status'] == 'success':
+                            video.hindi_script = script_result['script']
+                            video.script_status = 'generated'
+                            video.script_generated_at = timezone.now()
+                            video.script_error_message = ''
+                            video.save()
+                            print(f"✓ Hindi script generated successfully (explainer style)")
+                        else:
+                            video.script_status = 'failed'
+                            video.script_error_message = script_result.get('error', 'Unknown error')
+                            video.save()
+                            print(f"✗ Script generation failed: {script_result.get('error', 'Unknown error')}")
+                    except Exception as e:
+                        print(f"Script generation error: {e}")
+                        video.script_status = 'failed'
+                        video.script_error_message = str(e)
+                        video.save()
 
                 # Step 4: TTS Generation (automatically after script generation)
                 tts_audio_url = None
@@ -632,61 +843,78 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                         from .utils import get_clean_script_for_tts
                         clean_script = get_clean_script_for_tts(video.hindi_script)
                         
-                        # Use XTTS service for TTS generation
-                        from .xtts_service import XTTSService, TTS_AVAILABLE
-                        if TTS_AVAILABLE:
-                            service = XTTSService()
-                            
-                            # Get default voice profile or use a default speaker
-                            import tempfile
-                            import os
-                            temp_audio = tempfile.NamedTemporaryFile(delete=False, suffix='.wav')
-                            temp_audio_path = temp_audio.name
-                            temp_audio.close()
-                            
-                            # Use default Hindi speaker or get from voice profile
-                            speaker_wav = None
-                            if video.voice_profile and video.voice_profile.file:
-                                speaker_wav = video.voice_profile.file.path
-                            
-                            # If no voice profile, try to get default voice from ClonedVoice model
-                            if not speaker_wav:
-                                from .models import ClonedVoice
-                                default_voice = ClonedVoice.objects.filter(is_default=True).first()
-                                if not default_voice:
-                                    # Try to get any available voice as fallback
-                                    default_voice = ClonedVoice.objects.first()
+                        # Use Gemini TTS service for TTS generation
+                        from .gemini_tts_service import GeminiTTSService, GEMINI_TTS_AVAILABLE
+                        import tempfile
+                        import os
+                        
+                        if not GEMINI_TTS_AVAILABLE:
+                            logger.error("Gemini TTS not available")
+                            video.synthesis_status = 'failed'
+                            video.synthesis_error = 'Gemini TTS service not available'
+                            video.save()
+                        else:
+                            try:
+                                # Get Gemini API key from AIProviderSettings
+                                from .models import AIProviderSettings
+                                settings_obj = AIProviderSettings.objects.first()
+                                if not settings_obj or not settings_obj.api_key:
+                                    raise Exception("Gemini API key not configured. Please set it in AI Provider Settings.")
                                 
-                                if default_voice and default_voice.file:
-                                    try:
-                                        speaker_wav = default_voice.file.path
-                                        # Verify file exists and is accessible
-                                        if not os.path.exists(speaker_wav):
-                                            logger.error(f"Voice file not found: {speaker_wav}")
-                                            speaker_wav = None
-                                        else:
-                                            logger.info(f"Using default voice profile: {default_voice.name} (file: {speaker_wav})")
-                                    except Exception as e:
-                                        logger.error(f"Error accessing voice file: {str(e)}")
-                                        speaker_wav = None
-                            
-                            if not speaker_wav:
-                                # No voice profile available at all
-                                logger.error("No voice profile available, skipping TTS generation")
-                                video.synthesis_status = 'failed'
-                                video.synthesis_error = 'No voice profile available for TTS. Please upload a voice sample in Voice Cloning section and set it as default.'
-                                video.save()
-                            else:
-                                # Generate TTS audio
+                                service = GeminiTTSService(api_key=settings_obj.api_key)
+                                
+                                # Create temp audio file (Gemini TTS generates MP3)
+                                temp_audio = tempfile.NamedTemporaryFile(delete=False, suffix='.mp3')
+                                temp_audio_path = temp_audio.name
+                                temp_audio.close()
+                                
+                                # Get TTS settings from video model
+                                tts_temperature = video.tts_temperature if video.tts_temperature else 0.75
+                                
+                                # Use Charon voice for Hindi (as specified)
+                                voice_name = 'Charon'
+                                language_code = 'hi-IN'  # Hindi (India)
+                                
+                                # Analyze script content for appropriate style prompt
+                                has_fear = any(keyword in clean_script.lower() for keyword in ['राक्षस', 'डर', 'अंधेरा', 'भय', 'साहस', 'पीछा', 'भाग', 'दौड़'])
+                                has_exciting = any(keyword in clean_script.lower() for keyword in ['देखो', 'वाह', 'अरे', 'मजेदार', 'रोमांचक'])
+                                
+                                # Create context-aware style prompt
+                                if has_fear:
+                                    style_prompt = """You are narrating a suspenseful and engaging story for children in Hindi.
+                                    - Use a dramatic, slightly tense tone when describing scary or suspenseful moments (राक्षस, अंधेरा, डर)
+                                    - Use [whispering] tags to create atmosphere for fear elements
+                                    - Use [sigh] for relief or tension
+                                    - Maintain energy and engagement throughout
+                                    - This is children's content, so keep it exciting but not too scary
+                                    - Respect all markup tags: [short pause], [medium pause], [long pause], [sigh], [laughing], [uhm], [whispering]
+                                    - Pause tags control timing: [short pause] = brief pause (~250ms), [medium pause] = sentence break (~500ms), [long pause] = dramatic pause (~1000ms+)
+                                    - Expression tags add sounds: [sigh] = sigh sound, [laughing] = laugh, [uhm] = hesitation
+                                    - Style tags modify delivery: [whispering] = quieter voice
+                                    - Read the text exactly as written, following all markup tags precisely"""
+                                elif has_exciting:
+                                    style_prompt = """You are an engaging, energetic, and detailed explainer for children's content in Hindi.
+                                    - Speak in a friendly, vivid, and enthusiastic tone
+                                    - Be enthusiastic about scenes and actions
+                                    - Use [laughing] tags naturally for fun moments
+                                    - Maintain high energy and excitement
+                                    - Respect all markup tags: [short pause], [medium pause], [long pause], [sigh], [laughing], [uhm]
+                                    - Pause tags control timing: [short pause] = brief pause (~250ms), [medium pause] = sentence break (~500ms), [long pause] = dramatic pause (~1000ms+)
+                                    - Expression tags add sounds: [sigh] = sigh sound, [laughing] = laugh, [uhm] = hesitation
+                                    - Read the text exactly as written, following all markup tags precisely"""
+                                else:
+                                    style_prompt = None  # Use default
+                                
+                                # Generate TTS audio using Gemini TTS
+                                print(f"Generating TTS with Gemini TTS (voice: {voice_name}, language: {language_code}, temp: {tts_temperature})...")
                                 try:
                                     service.generate_speech(
                                         text=clean_script,
-                                        speaker_wav_path=speaker_wav,
-                                        language='hi',
+                                        language_code=language_code,
+                                        voice_name=voice_name,
                                         output_path=temp_audio_path,
-                                        speed=video.tts_speed,
-                                        temperature=video.tts_temperature,
-                                        repetition_penalty=video.tts_repetition_penalty
+                                        temperature=tts_temperature,
+                                        style_prompt=style_prompt
                                     )
                                 except Exception as e:
                                     error_msg = f"TTS generation failed: {str(e)}"
@@ -696,7 +924,7 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                                     video.save()
                                     raise  # Re-raise to be caught by outer exception handler
                                 
-                                # Adjust audio duration to match video duration if available
+                                # Check audio duration and adjust if needed
                                 if video.duration and os.path.exists(temp_audio_path):
                                     from .utils import get_audio_duration, adjust_audio_duration
                                     audio_duration = get_audio_duration(temp_audio_path)
@@ -713,28 +941,30 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                                             elif not adjusted_path:
                                                 print(f"WARNING: Could not adjust audio duration, using original audio")
                                         else:
-                                            print(f"TTS audio duration ({audio_duration:.2f}s) matches video duration ({video.duration:.2f}s)")
+                                            print(f"✓ TTS audio duration ({audio_duration:.2f}s) matches video duration ({video.duration:.2f}s)")
                                 
-                                # Save audio file
+                                # Save audio file (Gemini TTS generates MP3)
                                 from django.core.files import File
                                 with open(temp_audio_path, 'rb') as f:
-                                    video.synthesized_audio.save(f"synthesized_audio_{video.pk}.wav", File(f), save=False)
+                                    video.synthesized_audio.save(f"synthesized_audio_{video.pk}.mp3", File(f), save=False)
                                 
                                 video.synthesis_status = 'synthesized'
                                 video.synthesis_error = ''
+                                video.synthesized_at = timezone.now()
                                 video.save()
                                 
                                 # Clean up temp file
                                 if os.path.exists(temp_audio_path):
                                     os.unlink(temp_audio_path)
                                 
-                                print(f"TTS audio generated successfully for video {video.pk}")
-                        else:
-                            error_msg = 'TTS service not available. Please install Coqui TTS: pip install TTS (requires Python 3.9-3.11, NOT 3.12+)'
-                            print(f"ERROR: {error_msg}")
-                            video.synthesis_status = 'failed'
-                            video.synthesis_error = error_msg
-                            video.save()
+                                print(f"✓ Gemini TTS audio generated successfully for video {video.pk} (voice: {voice_name})")
+                            except Exception as tts_error:
+                                error_msg = f"XTTS generation failed: {str(tts_error)}"
+                                logger.error(error_msg, exc_info=True)
+                                video.synthesis_status = 'failed'
+                                video.synthesis_error = error_msg
+                                video.save()
+                                print(f"✗ {error_msg}")
                     except Exception as e:
                         print(f"TTS generation error: {e}")
                         import traceback
@@ -790,8 +1020,8 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                                         temp_no_audio_path
                                     ]
                                     
-                                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-                                    if result.returncode == 0 and os.path.exists(temp_no_audio_path):
+                                    ffmpeg_result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                                    if ffmpeg_result.returncode == 0 and os.path.exists(temp_no_audio_path):
                                         # Save voice-removed video
                                         from django.core.files import File
                                         with open(temp_no_audio_path, 'rb') as f:
@@ -831,9 +1061,47 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                                                 temp_final_path
                                             ]
                                             
-                                            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-                                            if result.returncode == 0 and os.path.exists(temp_final_path):
-                                                # Save final video
+                                            ffmpeg_result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                                            if ffmpeg_result.returncode == 0 and os.path.exists(temp_final_path):
+                                                # Step 5c: Apply watermark if enabled
+                                                watermark_applied = False
+                                                try:
+                                                    from .models import WatermarkSettings
+                                                    from .watermark_service import apply_moving_watermark
+                                                    
+                                                    watermark_settings = WatermarkSettings.objects.first()
+                                                    if watermark_settings and watermark_settings.enabled and watermark_settings.watermark_text:
+                                                        # Create temp file for watermarked video
+                                                        temp_watermarked = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
+                                                        temp_watermarked_path = temp_watermarked.name
+                                                        temp_watermarked.close()
+                                                        
+                                                        # Apply moving text watermark
+                                                        if apply_moving_watermark(
+                                                            video_path=temp_final_path,
+                                                            watermark_text=watermark_settings.watermark_text,
+                                                            output_path=temp_watermarked_path,
+                                                            position_change_interval=watermark_settings.position_change_interval,
+                                                            opacity=watermark_settings.opacity,
+                                                            font_size=watermark_settings.font_size,
+                                                            font_color=watermark_settings.font_color
+                                                        ):
+                                                            # Replace temp_final_path with watermarked version
+                                                            os.unlink(temp_final_path)
+                                                            temp_final_path = temp_watermarked_path
+                                                            watermark_applied = True
+                                                            print(f"✓ Step 5c (watermark) completed: Moving text watermark applied: '{watermark_settings.watermark_text}'")
+                                                        else:
+                                                            # Watermark failed, use original
+                                                            if os.path.exists(temp_watermarked_path):
+                                                                os.unlink(temp_watermarked_path)
+                                                            print(f"⚠ Watermark application failed, using video without watermark")
+                                                except Exception as e:
+                                                    print(f"⚠ Watermark application error: {e}")
+                                                    import traceback
+                                                    traceback.print_exc()
+                                                
+                                                # Save final video (with or without watermark)
                                                 with open(temp_final_path, 'rb') as f:
                                                     video.final_processed_video.save(f"final_{video.pk}.mp4", File(f), save=False)
                                                 final_video_url = request.build_absolute_uri(video.final_processed_video.url)
@@ -843,6 +1111,8 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                                                 video.save()
                                                 os.unlink(temp_final_path)
                                                 print(f"✓ Step 5b (ffmpeg) completed: Final video with new audio created: {final_video_url}")
+                                                if watermark_applied:
+                                                    print(f"✓ Step 5c (watermark) completed: Video includes moving watermark")
                                                 print(f"✓ Video set to 'pending_review' status - ready for review")
                                                 
                                                 # Generate metadata, upload to Cloudinary, and sync to Google Sheets
@@ -857,32 +1127,40 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                                                     else:
                                                         print(f"⚠ Metadata generation failed: {metadata_result.get('error', 'Unknown error')}")
                                                     
-                                                    # Upload to Cloudinary if enabled
-                                                    cloudinary_result = upload_video_file(video.final_processed_video)
-                                                    if cloudinary_result:
-                                                        video.cloudinary_url = cloudinary_result.get('secure_url') or cloudinary_result.get('url', '')
-                                                        video.cloudinary_uploaded_at = timezone.now()
-                                                        print(f"✓ Uploaded to Cloudinary: {video.cloudinary_url[:50]}...")
+                                                    # Upload to Cloudinary if enabled (replace existing if same video_id)
+                                                    if upload_video_file:
+                                                        # Use video_id as public_id to replace existing video
+                                                        video_id_for_cloudinary = video.video_id or str(video.id)
+                                                        cloudinary_result = upload_video_file(
+                                                            video.final_processed_video,
+                                                            video_id=video_id_for_cloudinary
+                                                        )
+                                                        if cloudinary_result:
+                                                            video.cloudinary_url = cloudinary_result.get('secure_url') or cloudinary_result.get('url', '')
+                                                            video.cloudinary_uploaded_at = timezone.now()
+                                                            print(f"✓ Uploaded to Cloudinary (replaced if exists): {video.cloudinary_url[:50]}...")
                                                     else:
-                                                        print("⚠ Cloudinary upload skipped or failed")
+                                                        print("⚠ Cloudinary upload skipped or failed (cloudinary package not installed)")
                                                     
                                                     # Save video with metadata and Cloudinary URL
                                                     video.save()
                                                     
-                                                    # Add to Google Sheets if enabled
-                                                    sheet_result = add_video_to_sheet(video, video.cloudinary_url)
-                                                    if sheet_result and sheet_result.get('success'):
-                                                        print(f"✓ Added to Google Sheets")
+                                                    # Add/Update to Google Sheets if enabled (updates existing if video_id matches)
+                                                    if add_video_to_sheet:
+                                                        sheet_result = add_video_to_sheet(video, video.cloudinary_url)
+                                                        if sheet_result and sheet_result.get('success'):
+                                                            print(f"✓ Added/Updated to Google Sheets")
+                                                        else:
+                                                            error_msg = sheet_result.get('error', 'Unknown error') if sheet_result else 'Google Sheets not configured'
+                                                            print(f"⚠ Google Sheets sync failed: {error_msg}")
                                                     else:
-                                                        error_msg = sheet_result.get('error', 'Unknown error') if sheet_result else 'Google Sheets not configured'
-                                                        print(f"⚠ Google Sheets sync failed: {error_msg}")
-                                                        logger.warning(f"Google Sheets sync failed for video {video.id}: {error_msg}")
+                                                        print("⚠ Google Sheets skipped (google packages not installed)")
                                                 except Exception as e:
                                                     print(f"⚠ Error in post-processing (Cloudinary/Sheets): {str(e)}")
                                                     import traceback
                                                     traceback.print_exc()
                                             else:
-                                                error_msg = f"ffmpeg combine failed: {result.stderr[:500] if result.stderr else 'Unknown error'}"
+                                                error_msg = f"ffmpeg combine failed: {ffmpeg_result.stderr[:500] if ffmpeg_result.stderr else 'Unknown error'}"
                                                 print(f"✗ Step 5b (ffmpeg) failed: {error_msg}")
                                                 video.synthesis_error = error_msg
                                                 video.save()
@@ -894,7 +1172,7 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                                             video.synthesis_error = error_msg
                                             video.save()
                                     else:
-                                        error_msg = f"ffmpeg remove audio failed: {result.stderr[:500] if result.stderr else 'Unknown error'}"
+                                        error_msg = f"ffmpeg remove audio failed: {ffmpeg_result.stderr[:500] if ffmpeg_result.stderr else 'Unknown error'}"
                                         print(f"✗ Step 5a (ffmpeg) failed: {error_msg}")
                                         video.synthesis_error = error_msg
                                         video.save()
@@ -927,11 +1205,44 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                 serializer_data = serializer.data
                 
                 # Add additional response data
+                # Ensure timestamped_text is defined (use from result or video)
+                # IMPORTANT: Check if result is a dict before calling .get() (avoid CompletedProcess collision)
+                if not timestamped_text:
+                    if isinstance(result, dict):
+                        timestamped_text = result.get('transcript_with_timestamps', '') or video.transcript or ''
+                    else:
+                        timestamped_text = video.transcript or ''
+                if not transcript_text:
+                    if isinstance(result, dict):
+                        transcript_text = result.get('text', '') or video.transcript_without_timestamps or ''
+                    else:
+                        transcript_text = video.transcript_without_timestamps or ''
+                if not transcript_without_timestamps:
+                    if isinstance(result, dict):
+                        transcript_without_timestamps = result.get('transcript_without_timestamps', '') or video.transcript_without_timestamps or transcript_text
+                    else:
+                        transcript_without_timestamps = video.transcript_without_timestamps or transcript_text
+                
                 serializer_data.update({
                     "status": "success",
-                    "transcript_with_timestamps": timestamped_text if timestamped_text else video.transcript,
-                    "transcript_without_timestamps": result.get('transcript_without_timestamps', transcript_text),
+                    "transcript_with_timestamps": timestamped_text,
+                    "transcript_without_timestamps": transcript_without_timestamps,
                 })
+                
+                # Check for visual and enhanced errors from dual transcription
+                visual_error = result.get('visual_error')
+                enhanced_error = result.get('enhanced_error')
+                
+                # Add warnings if visual or enhanced failed
+                warnings = []
+                if visual_error:
+                    warnings.append(f"Visual Analysis: {visual_error}")
+                if enhanced_error:
+                    warnings.append(f"AI Enhancement: {enhanced_error}")
+                
+                if warnings:
+                    serializer_data["warnings"] = warnings
+                    logger.warning(f"Transcription completed with warnings for video {video.id}: {warnings}")
                 
                 # Ensure video URLs are included (serializer should handle this, but add explicit checks)
                 if not serializer_data.get('voice_removed_video_url') and voice_removed_url:
@@ -942,13 +1253,22 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                 
                 return Response(serializer_data)
             else:
+                error_msg = result.get('error', 'Unknown error')
+                # Provide more helpful error messages
+                if 'timeout' in error_msg.lower() or 'timed out' in error_msg.lower():
+                    error_msg = f"Transcription timed out: {error_msg}. The video may be too long. Try a shorter video or wait longer."
+                elif 'memory' in error_msg.lower() or 'out of memory' in error_msg.lower():
+                    error_msg = f"Insufficient memory: {error_msg}. Try using a smaller Whisper model or processing a shorter video."
+                elif not error_msg or error_msg == 'Unknown error':
+                    error_msg = "Transcription failed. Please check if the video file is valid and contains audio."
+                
                 video.transcription_status = 'failed'
-                video.transcript_error_message = result.get('error', 'Unknown error')
+                video.transcript_error_message = error_msg
                 video.save()
 
                 return Response({
                     "status": "failed",
-                    "error": result.get('error', 'Unknown error'),
+                    "error": error_msg,
                     "step": "transcription"
                 }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
@@ -965,6 +1285,10 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                 error_details = f"FFmpeg error: {error_details}. Please ensure ffmpeg is installed."
             elif 'file' in error_details.lower() or 'not found' in error_details.lower():
                 error_details = f"File error: {error_details}. Please ensure the video file exists."
+            elif 'timeout' in error_details.lower() or 'timed out' in error_details.lower():
+                error_details = f"Transcription timed out: {error_details}. The video may be too long. Try a shorter video or increase timeout settings."
+            elif 'memory' in error_details.lower() or 'out of memory' in error_details.lower():
+                error_details = f"Insufficient memory: {error_details}. Try using a smaller Whisper model or processing a shorter video."
             else:
                 error_details = f"Transcription failed: {error_details}"
             
@@ -998,9 +1322,44 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
         return Response(response_data)
 
     @action(detail=True, methods=['post'])
+    def reset_transcription(self, request, pk=None):
+        """Reset stuck transcription status"""
+        video = self.get_object()
+        
+        if video.transcription_status == 'transcribing':
+            elapsed_minutes = 0
+            if video.transcript_started_at:
+                elapsed_minutes = (timezone.now() - video.transcript_started_at).total_seconds() / 60
+            
+            # Reset transcription status
+            video.transcription_status = 'not_transcribed'
+            video.transcript_started_at = None
+            video.transcript_error_message = f"Transcription was reset after {elapsed_minutes:.1f} minutes"
+            video.save()
+            
+            return Response({
+                "status": "success",
+                "message": f"Transcription reset successfully (was running for {elapsed_minutes:.1f} minutes)",
+                "elapsed_minutes": elapsed_minutes
+            })
+        else:
+            return Response({
+                "status": "error",
+                "message": "Video is not currently transcribing"
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['post'])
     def process_ai(self, request, pk=None):
         """Process video with AI"""
         video = self.get_object()
+
+        # Check if transcription is required first
+        if video.transcription_status != 'transcribed' and not video.transcript:
+            return Response({
+                "status": "failed",
+                "error": "Video must be transcribed before AI processing. Please transcribe the video first.",
+                "requires_transcription": True
+            }, status=status.HTTP_400_BAD_REQUEST)
 
         if video.ai_processing_status == 'processing':
             return Response({
@@ -1035,23 +1394,43 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                     "tags": video.ai_tags
                 })
             else:
+                error_msg = result.get('error', 'Unknown error')
+                # Provide more helpful error messages
+                if 'No title, description, or transcript' in error_msg:
+                    error_msg = "Cannot process: Video has no transcript, title, or description. Please ensure the video is transcribed first."
+                elif 'API' in error_msg or 'api_key' in error_msg.lower():
+                    error_msg = f"AI API error: {error_msg}. Please check your AI provider settings and API key."
+                
                 video.ai_processing_status = 'failed'
-                video.ai_error_message = result.get('error', 'Unknown error')
+                video.ai_error_message = error_msg
                 video.save()
 
                 return Response({
                     "status": "failed",
-                    "error": result.get('error', 'Unknown error')
+                    "error": error_msg
                 }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         except Exception as e:
+            import traceback
+            error_details = str(e)
+            print(f"AI processing exception: {error_details}")
+            traceback.print_exc()
+            
+            # Provide more detailed error message
+            if 'API' in error_details or 'api_key' in error_details.lower():
+                error_details = f"AI API error: {error_details}. Please check your AI provider settings."
+            elif 'transcript' in error_details.lower():
+                error_details = f"Transcript error: {error_details}. Please ensure the video is transcribed first."
+            else:
+                error_details = f"AI processing failed: {error_details}"
+            
             video.ai_processing_status = 'failed'
-            video.ai_error_message = str(e)
+            video.ai_error_message = error_details
             video.save()
 
             return Response({
                 "status": "failed",
-                "error": str(e)
+                "error": error_details
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @action(detail=True, methods=['post'])
@@ -1117,40 +1496,46 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                 except Exception as e:
                     results['errors'].append(f"Metadata generation error: {str(e)}")
             
-            # Upload to Cloudinary if enabled and not already uploaded
-            if not video.cloudinary_url:
-                try:
-                    cloudinary_result = upload_video_file(video.final_processed_video)
+            # Upload to Cloudinary if enabled (always upload/replace to ensure latest version)
+            try:
+                if upload_video_file:
+                    # Use video_id as public_id to replace existing video
+                    video_id_for_cloudinary = video.video_id or str(video.id)
+                    cloudinary_result = upload_video_file(
+                        video.final_processed_video,
+                        video_id=video_id_for_cloudinary
+                    )
                     if cloudinary_result:
                         video.cloudinary_url = cloudinary_result.get('secure_url') or cloudinary_result.get('url', '')
                         video.cloudinary_uploaded_at = timezone.now()
                         results['cloudinary_uploaded'] = True
-                        print(f"✓ Uploaded to Cloudinary: {video.cloudinary_url[:50]}...")
+                        print(f"✓ Uploaded to Cloudinary (replaced if exists): {video.cloudinary_url[:50]}...")
                     else:
-                        results['errors'].append("Cloudinary upload skipped or failed (check settings)")
-                except Exception as e:
-                    results['errors'].append(f"Cloudinary upload error: {str(e)}")
-            else:
-                results['errors'].append("Video already uploaded to Cloudinary")
+                        results['errors'].append("Cloudinary upload failed (no result returned)")
+                else:
+                    results['errors'].append("Cloudinary upload skipped (cloudinary package not installed)")
+            except Exception as e:
+                results['errors'].append(f"Cloudinary upload error: {str(e)}")
             
             # Save video with any updates
             video.save()
             
-            # Add to Google Sheets if enabled and not already synced
-            if not video.google_sheets_synced:
-                try:
+            # Add/Update to Google Sheets if enabled (always sync to ensure latest data)
+            try:
+                if add_video_to_sheet:
                     sheet_result = add_video_to_sheet(video, video.cloudinary_url)
                     if sheet_result and sheet_result.get('success'):
                         results['google_sheets_synced'] = True
-                        print(f"✓ Added to Google Sheets")
+                        print(f"✓ Added/Updated to Google Sheets")
                     else:
                         error_msg = sheet_result.get('error', 'Unknown error') if sheet_result else 'Google Sheets not configured'
                         results['errors'].append(f"Google Sheets sync failed: {error_msg}")
                         logger.warning(f"Google Sheets sync failed for video {video.id}: {error_msg}")
-                except Exception as e:
-                    results['errors'].append(f"Google Sheets sync error: {str(e)}")
-            else:
-                results['errors'].append("Video already synced to Google Sheets")
+                else:
+                    error_msg = 'Google Sheets not configured'
+                    results['errors'].append(f"Google Sheets sync failed: {error_msg}")
+            except Exception as e:
+                results['errors'].append(f"Google Sheets sync error: {str(e)}")
             
             # Determine overall status
             success_count = sum([
@@ -1254,398 +1639,422 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
             
             video.save()
             
-            # Trigger the full transcription pipeline by calling the transcribe action's logic
-            # This will automatically run: transcription -> AI processing -> script generation -> TTS -> video processing
-            try:
-                # Set status to transcribing
-                video.transcription_status = 'transcribing'
-                video.transcript_started_at = timezone.now()
-                video.save()
-                
-                # Call transcribe_video which will trigger the full pipeline in the transcribe action
-                # We'll run this in a way that triggers the full automated pipeline
-                # The transcribe action handles the full pipeline automatically, so we'll just
-                # trigger it by calling the same logic
-                result = transcribe_video(video)
-                
-                if result['status'] == 'success':
-                    # Save transcript data
-                    transcript_text = result.get('text', '')
-                    timestamped_text = result.get('transcript_with_timestamps', '')
-                    transcript_without_timestamps = result.get('transcript_without_timestamps', transcript_text)
-                    srt_text = result.get('srt', '')
+            # Trigger the full transcription pipeline in a background thread
+            # This ensures the request doesn't timeout while processing
+            import threading
+            
+            def run_pipeline():
+                try:
+                    print(f"🔄 Starting reprocess pipeline for video {video.id} in background thread")
                     
-                    if timestamped_text:
-                        video.transcript = timestamped_text
-                    elif srt_text:
-                        from .utils import convert_srt_to_timestamped_text
-                        video.transcript = convert_srt_to_timestamped_text(srt_text) or srt_text
-                    else:
-                        video.transcript = transcript_text
-                    
-                    if transcript_without_timestamps:
-                        video.transcript_without_timestamps = transcript_without_timestamps
-                    elif timestamped_text:
-                        import re
-                        plain_text = re.sub(r'^\d{2}:\d{2}:\d{2}\s+', '', timestamped_text, flags=re.MULTILINE)
-                        plain_text = '\n'.join([line.strip() for line in plain_text.split('\n') if line.strip()])
-                        video.transcript_without_timestamps = plain_text
-                    else:
-                        video.transcript_without_timestamps = transcript_text
-                    
-                    hindi_transcript = result.get('text_hindi', '')
-                    if not hindi_transcript and transcript_without_timestamps:
-                        from .utils import translate_text
-                        print(f"Translating transcript to Hindi (language: {result.get('language', 'unknown')})...")
-                        hindi_transcript = translate_text(transcript_without_timestamps, target='hi')
-                    
-                    video.transcript_hindi = hindi_transcript
-                    video.transcript_language = result.get('language', '')
-                    video.transcription_status = 'transcribed'
-                    video.transcript_processed_at = timezone.now()
-                    video.transcript_error_message = ''
+                    # Set status to transcribing
+                    video.transcription_status = 'transcribing'
+                    video.transcript_started_at = timezone.now()
                     video.save()
                     
-                    # Continue with AI processing, script generation, TTS, and video processing
-                    # This is the same logic as in the transcribe action
-                    try:
-                        video.ai_processing_status = 'processing'
-                        video.save()
+                    # Call transcribe_video
+                    result = transcribe_video(video)
+                    
+                    # Handle dual transcription results (returns different structure)
+                    if result.get('status') in ['success', 'partial'] and ('whisper_result' in result or 'nca_result' in result):
+                        # Dual transcription mode - extract the best result
+                        video.refresh_from_db()
                         
-                        ai_result = process_video_with_ai(video)
+                        if result.get('whisper_result') and result['whisper_result'].get('status') == 'success':
+                            # Use Whisper result - it's already saved to video.whisper_transcript fields
+                            result = {
+                                'status': 'success',
+                                'text': video.whisper_transcript_without_timestamps or result['whisper_result'].get('text', ''),
+                                'transcript_with_timestamps': video.whisper_transcript or '',
+                                'transcript_without_timestamps': video.whisper_transcript_without_timestamps or '',
+                                'text_hindi': video.whisper_transcript_hindi or '',
+                                'language': video.whisper_transcript_language or '',
+                                'srt': '',
+                                'segments': result['whisper_result'].get('segments', [])
+                            }
+                            # Update main transcript fields from Whisper
+                            video.transcription_status = 'transcribed'
+                            video.transcript = video.whisper_transcript
+                            video.transcript_without_timestamps = video.whisper_transcript_without_timestamps
+                            video.transcript_hindi = video.whisper_transcript_hindi
+                            video.transcript_language = video.whisper_transcript_language
+                            video.transcript_processed_at = timezone.now()
+                            video.save()
+                        elif result.get('nca_result') and result['nca_result'].get('status') == 'success':
+                            # Use NCA result - it's already saved to video.transcript fields
+                            result = {
+                                'status': 'success',
+                                'text': video.transcript_without_timestamps or result['nca_result'].get('text', ''),
+                                'transcript_with_timestamps': video.transcript or '',
+                                'transcript_without_timestamps': video.transcript_without_timestamps or '',
+                                'text_hindi': video.transcript_hindi or '',
+                                'language': video.transcript_language or '',
+                                'srt': result['nca_result'].get('srt', ''),
+                                'segments': result['nca_result'].get('segments', [])
+                            }
+                        else:
+                            # Both failed
+                            error_msg = "Both NCA and Whisper transcription failed"
+                            if result.get('whisper_result'):
+                                error_msg = result['whisper_result'].get('error', error_msg)
+                            elif result.get('nca_result'):
+                                error_msg = result['nca_result'].get('error', error_msg)
+                            result = {
+                                'status': 'failed',
+                                'error': error_msg
+                            }
+                    
+                    if result.get('status') == 'success':
+                        # Refresh video to get latest data (dual transcription may have already saved it)
+                        video.refresh_from_db()
                         
-                        if ai_result['status'] == 'success':
-                            video.ai_processing_status = 'processed'
-                            video.ai_summary = ai_result.get('summary', '')
-                            video.ai_tags = ai_result.get('tags', [])
-                            video.ai_processed_at = timezone.now()
-                            video.ai_error_message = ''
+                        # Only update if not already set (dual transcription may have already saved to video)
+                        if not video.transcript or video.transcription_status != 'transcribed':
+                            # Save transcript data
+                            transcript_text = result.get('text', '')
+                            timestamped_text = result.get('transcript_with_timestamps', '')
+                            transcript_without_timestamps = result.get('transcript_without_timestamps', transcript_text)
+                            srt_text = result.get('srt', '')
+                            
+                            if timestamped_text:
+                                video.transcript = timestamped_text
+                            elif srt_text:
+                                from .utils import convert_srt_to_timestamped_text
+                                video.transcript = convert_srt_to_timestamped_text(srt_text) or srt_text
+                            else:
+                                video.transcript = transcript_text
+                            
+                            if transcript_without_timestamps:
+                                video.transcript_without_timestamps = transcript_without_timestamps
+                            elif timestamped_text:
+                                import re
+                                plain_text = re.sub(r'^\d{2}:\d{2}:\d{2}\s+', '', timestamped_text, flags=re.MULTILINE)
+                                plain_text = '\n'.join([line.strip() for line in plain_text.split('\n') if line.strip()])
+                                video.transcript_without_timestamps = plain_text
+                            else:
+                                video.transcript_without_timestamps = transcript_text
+                            
+                            hindi_transcript = result.get('text_hindi', '')
+                            if not hindi_transcript and transcript_without_timestamps:
+                                from .utils import translate_text_with_ai
+                                print(f"Translating transcript to Hindi using AI (preserves meaning) (language: {result.get('language', 'unknown')})...")
+                                hindi_transcript = translate_text_with_ai(transcript_without_timestamps, target='hi')
+                            
+                            video.transcript_hindi = hindi_transcript
+                            video.transcript_language = result.get('language', '')
+                            video.transcription_status = 'transcribed'
+                            video.transcript_processed_at = timezone.now()
+                            video.transcript_error_message = ''
                             video.save()
                         else:
-                            video.ai_processing_status = 'failed'
-                            video.ai_error_message = ai_result.get('error', 'Unknown error')
-                            video.save()
-                    except Exception as e:
-                        print(f"AI processing error during reprocess: {e}")
-                        video.ai_processing_status = 'failed'
-                        video.ai_error_message = str(e)
-                        video.save()
-                    
-                    # Script generation
-                    try:
-                        video.script_status = 'generating'
-                        video.save()
+                            print(f"✓ Transcript already saved by dual transcription, using existing data")
                         
-                        script_result = generate_hindi_script(video)
-                        
-                        if script_result['status'] == 'success':
-                            video.hindi_script = script_result['script']
-                            video.script_status = 'generated'
-                            video.script_generated_at = timezone.now()
-                            video.script_error_message = ''
-                            video.save()
-                        else:
-                            video.script_status = 'failed'
-                            video.script_error_message = script_result.get('error', 'Unknown error')
-                            video.save()
-                    except Exception as e:
-                        print(f"Script generation error during reprocess: {e}")
-                        video.script_status = 'failed'
-                        video.script_error_message = str(e)
-                        video.save()
-                    
-                    # Step 4: TTS Generation (automatically after script generation)
-                    if video.script_status == 'generated' and video.hindi_script:
+                        # Continue with AI processing, script generation, TTS, and video processing
+                        # This is the same logic as in the transcribe action
                         try:
-                            video.synthesis_status = 'synthesizing'
+                            # Set status to processing and ensure it's committed to database immediately
+                            # Refresh from DB to get latest state, then update and save
+                            video.refresh_from_db()
+                            video.ai_processing_status = 'processing'
+                            # Save with update_fields for efficiency and to ensure commit
+                            video.save(update_fields=['ai_processing_status'])
+                            # Log the status update for debugging
+                            print(f"✓ AI Processing status set to 'processing' for video {video.id} (saved to DB)")
+                            
+                            ai_result = process_video_with_ai(video)
+                            
+                            if ai_result['status'] == 'success':
+                                video.ai_processing_status = 'processed'
+                                video.ai_summary = ai_result.get('summary', '')
+                                video.ai_tags = ai_result.get('tags', [])
+                                video.ai_processed_at = timezone.now()
+                                video.ai_error_message = ''
+                                video.save()
+                            else:
+                                video.ai_processing_status = 'failed'
+                                video.ai_error_message = ai_result.get('error', 'Unknown error')
+                                video.save()
+                        except Exception as e:
+                            print(f"AI processing error during reprocess: {e}")
+                            video.ai_processing_status = 'failed'
+                            video.ai_error_message = str(e)
+                            video.save()
+                        
+                        # Script generation
+                        try:
+                            video.script_status = 'generating'
                             video.save()
                             
-                            from .utils import get_clean_script_for_tts
-                            clean_script = get_clean_script_for_tts(video.hindi_script)
+                            script_result = generate_hindi_script(video)
                             
-                            # Use XTTS service for TTS generation
-                            from .xtts_service import XTTSService, TTS_AVAILABLE
-                            if TTS_AVAILABLE:
-                                service = XTTSService()
+                            if script_result['status'] == 'success':
+                                video.hindi_script = script_result['script']
+                                video.script_status = 'generated'
+                                video.script_generated_at = timezone.now()
+                                video.script_error_message = ''
+                                video.save()
+                            else:
+                                video.script_status = 'failed'
+                                video.script_error_message = script_result.get('error', 'Unknown error')
+                                video.save()
+                        except Exception as e:
+                            print(f"Script generation error during reprocess: {e}")
+                            video.script_status = 'failed'
+                            video.script_error_message = str(e)
+                            video.save()
+                        
+                        # Step 4: TTS Generation (automatically after script generation)
+                        if video.script_status == 'generated' and video.hindi_script:
+                            try:
+                                video.synthesis_status = 'synthesizing'
+                                video.save()
                                 
+                                from .utils import get_clean_script_for_tts
+                                clean_script = get_clean_script_for_tts(video.hindi_script)
+                                
+                                # Use Gemini TTS service for TTS generation
+                                from .gemini_tts_service import GeminiTTSService, GEMINI_TTS_AVAILABLE
                                 import tempfile
                                 import os
-                                temp_audio = tempfile.NamedTemporaryFile(delete=False, suffix='.wav')
-                                temp_audio_path = temp_audio.name
-                                temp_audio.close()
                                 
-                                speaker_wav = None
-                                if video.voice_profile and video.voice_profile.file:
-                                    speaker_wav = video.voice_profile.file.path
-                                
-                                # If no voice profile, try to get default voice from ClonedVoice model
-                                if not speaker_wav:
-                                    from .models import ClonedVoice
-                                    default_voice = ClonedVoice.objects.filter(is_default=True).first()
-                                    if not default_voice:
-                                        # Try to get any available voice as fallback
-                                        default_voice = ClonedVoice.objects.first()
-                                    
-                                    if default_voice and default_voice.file:
-                                        try:
-                                            speaker_wav = default_voice.file.path
-                                            # Verify file exists and is accessible
-                                            if not os.path.exists(speaker_wav):
-                                                logger.error(f"Voice file not found: {speaker_wav}")
-                                                speaker_wav = None
-                                            else:
-                                                logger.info(f"Using default voice profile: {default_voice.name} (file: {speaker_wav})")
-                                        except Exception as e:
-                                            logger.error(f"Error accessing voice file: {str(e)}")
-                                            speaker_wav = None
-                                
-                                if not speaker_wav:
-                                    logger.error("No voice profile available, skipping TTS generation")
+                                if not GEMINI_TTS_AVAILABLE:
+                                    logger.error("Gemini TTS not available")
                                     video.synthesis_status = 'failed'
-                                    video.synthesis_error = 'No voice profile available for TTS. Please upload a voice sample in Voice Cloning section and set it as default.'
+                                    video.synthesis_error = 'Gemini TTS service not available'
                                     video.save()
                                 else:
-                                    # Generate TTS audio
                                     try:
+                                        # Get Gemini API key from AIProviderSettings
+                                        from .models import AIProviderSettings
+                                        settings_obj = AIProviderSettings.objects.first()
+                                        if not settings_obj or not settings_obj.api_key:
+                                            raise Exception("Gemini API key not configured. Please set it in AI Provider Settings.")
+                                        
+                                        service = GeminiTTSService(api_key=settings_obj.api_key)
+                                        
+                                        # Create temp audio file (Gemini TTS generates MP3)
+                                        temp_audio = tempfile.NamedTemporaryFile(delete=False, suffix='.mp3')
+                                        temp_audio_path = temp_audio.name
+                                        temp_audio.close()
+                                        
+                                        # Get TTS settings from video model
+                                        tts_temperature = video.tts_temperature if video.tts_temperature else 0.75
+                                        
+                                        # Use Charon voice for Hindi (as specified)
+                                        voice_name = 'Charon'
+                                        language_code = 'hi-IN'  # Hindi (India)
+                                        
+                                        print(f"Generating TTS with Gemini (voice: {voice_name}, temp: {tts_temperature})...")
+                                        
+                                        # Generate speech
                                         service.generate_speech(
                                             text=clean_script,
-                                            speaker_wav_path=speaker_wav,
-                                            language='hi',
-                                            output_path=temp_audio_path,
-                                            speed=video.tts_speed,
-                                            temperature=video.tts_temperature,
-                                            repetition_penalty=video.tts_repetition_penalty
+                                            output_file=temp_audio_path,
+                                            voice_name=voice_name,
+                                            language_code=language_code,
+                                            speaking_rate=video.tts_speed or 1.0
                                         )
-                                    except Exception as e:
-                                        error_msg = f"TTS generation failed: {str(e)}"
+                                        
+                                        # Save to video model
+                                        from django.core.files import File
+                                        with open(temp_audio_path, 'rb') as f:
+                                            video.synthesized_audio.save(f"synthesized_{video.pk}.mp3", File(f), save=False)
+                                        
+                                        video.synthesized_audio_url = request.build_absolute_uri(video.synthesized_audio.url)
+                                        
+                                        video.synthesis_status = 'synthesized'
+                                        video.synthesis_error = ''
+                                        video.synthesized_at = timezone.now()
+                                        video.save()
+                                        
+                                        # Clean up temp file
+                                        if os.path.exists(temp_audio_path):
+                                            os.unlink(temp_audio_path)
+                                        
+                                        print(f"✓ Gemini TTS audio generated successfully for video {video.pk} (voice: {voice_name})")
+                                    except Exception as tts_error:
+                                        error_msg = f"XTTS generation failed: {str(tts_error)}"
                                         logger.error(error_msg, exc_info=True)
                                         video.synthesis_status = 'failed'
                                         video.synthesis_error = error_msg
                                         video.save()
-                                        raise  # Re-raise to be caught by outer exception handler
+                                        print(f"✗ {error_msg}")
+                            except Exception as e:
+                                print(f"TTS generation error: {e}")
+                                import traceback
+                                traceback.print_exc()
+                                video.synthesis_status = 'failed'
+                                video.synthesis_error = str(e)
+                                video.save()
+
+                        # Step 5: Remove audio from video and combine with new TTS audio
+                        # ALWAYS use ffmpeg - it's more reliable than NCA Toolkit
+                        final_video_url = None
+                        voice_removed_url = None
+                        
+                        # Check if we have all prerequisites
+                        if video.synthesis_status == 'synthesized' and video.synthesized_audio:
+                            if not video.local_file:
+                                print(f"✗ Error: No local video file available for video {video.pk}")
+                                video.synthesis_error = "No local video file available for processing"
+                                video.save()
+                            else:
+                                # ALWAYS use ffmpeg - it's more reliable
+                                try:
+                                    from .utils import find_ffmpeg
+                                    import subprocess
+                                    import tempfile
+                                    import os
                                     
-                                    # Adjust audio duration to match video duration if available
-                                    if video.duration and os.path.exists(temp_audio_path):
-                                        from .utils import get_audio_duration, adjust_audio_duration
-                                        audio_duration = get_audio_duration(temp_audio_path)
-                                        if audio_duration:
-                                            duration_diff = abs(audio_duration - video.duration)
-                                            if duration_diff > 0.5:
-                                                print(f"Adjusting TTS audio duration: {audio_duration:.2f}s -> {video.duration:.2f}s")
-                                                adjusted_path = adjust_audio_duration(temp_audio_path, video.duration)
-                                                if adjusted_path and adjusted_path != temp_audio_path:
-                                                    if os.path.exists(temp_audio_path):
-                                                        os.unlink(temp_audio_path)
-                                                    temp_audio_path = adjusted_path
-                                    
-                                    # Save audio file
-                                    from django.core.files import File
-                                    with open(temp_audio_path, 'rb') as f:
-                                        video.synthesized_audio.save(f"synthesized_audio_{video.pk}.wav", File(f), save=False)
-                                    
-                                    video.synthesis_status = 'synthesized'
-                                    video.synthesis_error = ''
-                                    video.save()
-                                    
-                                    # Clean up temp file
-                                    if os.path.exists(temp_audio_path):
-                                        os.unlink(temp_audio_path)
-                                    
-                                    print(f"TTS audio generated successfully for video {video.pk}")
-                                    
-                                    # Step 5: Remove audio from video and combine with new TTS audio
-                                    if video.synthesis_status == 'synthesized' and video.synthesized_audio and video.local_file:
-                                        from .utils import find_ffmpeg
-                                        import subprocess
-                                        
-                                        ffmpeg_path = find_ffmpeg()
-                                        if ffmpeg_path and os.path.exists(video.local_file.path):
-                                            try:
-                                                # Step 5a: Remove audio
-                                                temp_no_audio = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
-                                                temp_no_audio_path = temp_no_audio.name
-                                                temp_no_audio.close()
+                                    ffmpeg_path = find_ffmpeg()
+                                    if not ffmpeg_path:
+                                        print("✗ ffmpeg not found")
+                                        video.synthesis_error = "ffmpeg not available"
+                                        video.save()
+                                    else:
+                                        video_path = video.local_file.path
+                                        if not os.path.exists(video_path):
+                                            print(f"✗ Video file not found: {video_path}")
+                                            video.synthesis_error = f"Video file not found: {video_path}"
+                                            video.save()
+                                        else:
+                                            # Step 5a: Remove audio using ffmpeg
+                                            print(f"Step 5a (ffmpeg): Removing audio from video {video.pk}...")
+                                            temp_no_audio = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
+                                            temp_no_audio_path = temp_no_audio.name
+                                            temp_no_audio.close()
+                                            
+                                            # Remove audio: -an flag removes audio
+                                            cmd = [
+                                                ffmpeg_path,
+                                                '-i', video_path,
+                                                '-c:v', 'copy',  # Copy video codec (no re-encoding)
+                                                '-an',  # Remove audio
+                                                '-y',  # Overwrite output
+                                                temp_no_audio_path
+                                            ]
+                                            
+                                            ffmpeg_result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                                            if ffmpeg_result.returncode == 0 and os.path.exists(temp_no_audio_path):
+                                                # Save voice-removed video
+                                                from django.core.files import File
+                                                with open(temp_no_audio_path, 'rb') as f:
+                                                    video.voice_removed_video.save(f"voice_removed_{video.pk}.mp4", File(f), save=False)
+                                                voice_removed_url = request.build_absolute_uri(video.voice_removed_video.url)
+                                                video.voice_removed_video_url = voice_removed_url
+                                                video.save()
+                                                print(f"✓ Step 5a (ffmpeg) completed: Voice removed video saved: {voice_removed_url}")
                                                 
-                                                cmd = [
-                                                    ffmpeg_path,
-                                                    '-i', video.local_file.path,
-                                                    '-c:v', 'copy',
-                                                    '-an',
-                                                    '-y',
-                                                    temp_no_audio_path
-                                                ]
+                                                # Clean up temp file
+                                                os.unlink(temp_no_audio_path)
                                                 
-                                                result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-                                                if result.returncode == 0 and os.path.exists(temp_no_audio_path):
-                                                    with open(temp_no_audio_path, 'rb') as f:
-                                                        video.voice_removed_video.save(f"voice_removed_{video.pk}.mp4", File(f), save=False)
-                                                    voice_removed_url = request.build_absolute_uri(video.voice_removed_video.url)
-                                                    video.voice_removed_video_url = voice_removed_url
-                                                    video.save()
-                                                    os.unlink(temp_no_audio_path)
+                                                # Use the saved file for next step
+                                                voice_removed_file_path = video.voice_removed_video.path
+                                                
+                                                # Step 5b: Combine TTS audio with video
+                                                if video.synthesized_audio and os.path.exists(video.synthesized_audio.path):
+                                                    print(f"Step 5b (ffmpeg): Combining TTS audio with video {video.pk}...")
+                                                    audio_path = video.synthesized_audio.path
+                                                    temp_final = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
+                                                    temp_final_path = temp_final.name
+                                                    temp_final.close()
                                                     
-                                                    # Step 5b: Combine TTS audio with video
-                                                    if os.path.exists(video.synthesized_audio.path):
-                                                        voice_removed_file_path = video.voice_removed_video.path
-                                                        temp_final = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
-                                                        temp_final_path = temp_final.name
-                                                        temp_final.close()
+                                                    # Combine audio and video - ensure proper sync
+                                                    # Use map to explicitly map streams and ensure sync
+                                                    cmd = [
+                                                        ffmpeg_path,
+                                                        '-i', voice_removed_file_path,
+                                                        '-i', audio_path,
+                                                        '-c:v', 'copy',  # Copy video stream
+                                                        '-c:a', 'aac',   # Encode audio to AAC
+                                                        '-map', '0:v:0', # Map first video stream from first input
+                                                        '-map', '1:a:0', # Map first audio stream from second input
+                                                        '-shortest',     # Stop when shortest input ends
+                                                        '-y',            # Overwrite output
+                                                        temp_final_path
+                                                    ]
+                                                    
+                                                    ffmpeg_result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                                                    
+                                                    if ffmpeg_result.returncode == 0 and os.path.exists(temp_final_path):
+                                                        # Save final video
+                                                        from django.core.files import File
+                                                        with open(temp_final_path, 'rb') as f:
+                                                            video.final_processed_video.save(f"final_{video.pk}.mp4", File(f), save=False)
                                                         
-                                                        cmd = [
-                                                            ffmpeg_path,
-                                                            '-i', voice_removed_file_path,
-                                                            '-i', video.synthesized_audio.path,
-                                                            '-c:v', 'copy',
-                                                            '-c:a', 'aac',
-                                                            '-b:a', '192k',
-                                                            '-map', '0:v:0',
-                                                            '-map', '1:a:0',
-                                                            '-shortest',
-                                                            '-y',
-                                                            temp_final_path
-                                                        ]
+                                                        final_video_url = request.build_absolute_uri(video.final_processed_video.url)
+                                                        video.final_processed_video_url = final_video_url
                                                         
-                                                        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-                                                        if result.returncode == 0 and os.path.exists(temp_final_path):
-                                                            with open(temp_final_path, 'rb') as f:
-                                                                video.final_processed_video.save(f"final_{video.pk}.mp4", File(f), save=False)
-                                                            final_video_url = request.build_absolute_uri(video.final_processed_video.url)
-                                                            video.final_processed_video_url = final_video_url
-                                                            video.review_status = 'pending_review'
-                                                            video.save()
-                                                            os.unlink(temp_final_path)
-                                                            print(f"✓ Reprocess completed: Final video created")
-                                                            
-                                                            # Generate metadata, upload to Cloudinary, and sync to Google Sheets
+                                                        # Upload to Cloudinary if configured
+                                                        if upload_video_file:
                                                             try:
-                                                                # Generate metadata using AI
-                                                                metadata_result = generate_video_metadata(video)
-                                                                if metadata_result.get('status') == 'success':
-                                                                    video.generated_title = metadata_result.get('title', '')
-                                                                    video.generated_description = metadata_result.get('description', '')
-                                                                    video.generated_tags = metadata_result.get('tags', '')
-                                                                    print(f"✓ Generated metadata: {video.generated_title[:50]}...")
-                                                                
-                                                                # Upload to Cloudinary if enabled
-                                                                cloudinary_result = upload_video_file(video.final_processed_video)
-                                                                if cloudinary_result:
-                                                                    video.cloudinary_url = cloudinary_result.get('secure_url') or cloudinary_result.get('url', '')
+                                                                print(f"Uploading final video to Cloudinary...")
+                                                                cloudinary_url = upload_video_file(video.final_processed_video.path, folder="rednote_final")
+                                                                if cloudinary_url:
+                                                                    video.cloudinary_url = cloudinary_url
                                                                     video.cloudinary_uploaded_at = timezone.now()
-                                                                    print(f"✓ Uploaded to Cloudinary: {video.cloudinary_url[:50]}...")
-                                                                
-                                                                # Save video with metadata and Cloudinary URL
-                                                                video.save()
-                                                                
-                                                                # Add to Google Sheets if enabled
-                                                                sheet_result = add_video_to_sheet(video, video.cloudinary_url)
-                                                                if sheet_result and sheet_result.get('success'):
-                                                                    print(f"✓ Added to Google Sheets")
-                                                                else:
-                                                                    error_msg = sheet_result.get('error', 'Unknown error') if sheet_result else 'Google Sheets not configured'
-                                                                    print(f"⚠ Google Sheets sync failed: {error_msg}")
-                                                                    logger.warning(f"Google Sheets sync failed for video {video.id}: {error_msg}")
+                                                                    print(f"✓ Uploaded to Cloudinary: {cloudinary_url}")
                                                             except Exception as e:
-                                                                print(f"⚠ Error in post-processing (Cloudinary/Sheets): {str(e)}")
-                                                                import traceback
-                                                                traceback.print_exc()
-                                                        else:
-                                                            error_msg = f"ffmpeg combine failed: {result.stderr[:500] if result.stderr else 'Unknown error'}"
-                                                            print(f"✗ Step 5b (ffmpeg) failed: {error_msg}")
-                                                            video.synthesis_error = error_msg
-                                                            video.save()
-                                                            if os.path.exists(temp_final_path):
-                                                                os.unlink(temp_final_path)
+                                                                print(f"Cloudinary upload failed: {e}")
+                                                        
+                                                        # Sync to Google Sheets if configured
+                                                        if add_video_to_sheet:
+                                                            try:
+                                                                print(f"Syncing to Google Sheets...")
+                                                                success = add_video_to_sheet(video)
+                                                                if success:
+                                                                    video.google_sheets_synced = True
+                                                                    video.google_sheets_synced_at = timezone.now()
+                                                                    print(f"✓ Synced to Google Sheets")
+                                                            except Exception as e:
+                                                                print(f"Google Sheets sync failed: {e}")
+                                                        
+                                                        video.save()
+                                                        print(f"✓ Step 5b (ffmpeg) completed: Final video saved: {final_video_url}")
+                                                        
+                                                        # Clean up temp file
+                                                        os.unlink(temp_final_path)
                                                     else:
-                                                        error_msg = "Synthesized audio file not found"
-                                                        print(f"✗ Step 5b (ffmpeg) failed: {error_msg}")
-                                                        video.synthesis_error = error_msg
+                                                        print(f"✗ ffmpeg merge failed: {ffmpeg_result.stderr}")
+                                                        video.synthesis_error = f"ffmpeg merge failed: {ffmpeg_result.stderr}"
                                                         video.save()
                                                 else:
-                                                    error_msg = f"ffmpeg remove audio failed: {result.stderr[:500] if result.stderr else 'Unknown error'}"
-                                                    print(f"✗ Step 5a (ffmpeg) failed: {error_msg}")
-                                                    video.synthesis_error = error_msg
-                                                    video.save()
-                                                    if os.path.exists(temp_no_audio_path):
-                                                        os.unlink(temp_no_audio_path)
-                                            except subprocess.TimeoutExpired:
-                                                error_msg = "ffmpeg processing timed out (exceeded 5 minutes)"
-                                                print(f"✗ {error_msg}")
-                                                video.synthesis_error = error_msg
+                                                    print("✗ TTS audio file missing for merge")
+                                            else:
+                                                print(f"✗ ffmpeg audio removal failed: {ffmpeg_result.stderr}")
+                                                video.synthesis_error = f"ffmpeg audio removal failed: {ffmpeg_result.stderr}"
                                                 video.save()
-                                            except Exception as e:
-                                                error_msg = f"ffmpeg processing error: {str(e)}"
-                                                print(f"✗ {error_msg}")
-                                                import traceback
-                                                traceback.print_exc()
-                                                video.synthesis_error = error_msg
-                                                video.save()
-                            else:
-                                error_msg = 'TTS service not available. Please install Coqui TTS: pip install TTS (requires Python 3.9-3.11, NOT 3.12+)'
-                                print(f"ERROR: {error_msg}")
-                                video.synthesis_status = 'failed'
-                                video.synthesis_error = error_msg
-                                video.save()
-                        except Exception as e:
-                            print(f"TTS generation error during reprocess: {e}")
-                            import traceback
-                            traceback.print_exc()
-                            video.synthesis_status = 'failed'
-                            video.synthesis_error = str(e)
-                            video.save()
-                    
-                    return Response({
-                        "status": "success",
-                        "message": "Video reprocessing completed successfully.",
-                        "video_id": video.id
-                    })
-                else:
-                    # Get detailed error message
-                    error_msg = result.get('error', '')
-                    if not error_msg or error_msg == 'Unknown error':
-                        # Try to get more specific error information
-                        if 'segments' in result and not result.get('segments'):
-                            error_msg = 'Transcription completed but no segments were generated. The audio may be too short or contain no speech.'
-                        elif 'language' in result and not result.get('language'):
-                            error_msg = 'Could not detect language in the audio. Please ensure the video contains clear speech.'
-                        else:
-                            error_msg = 'Transcription failed. Please check if the video file is valid and contains audio.'
-                    
+                                except Exception as e:
+                                    print(f"Video processing error: {e}")
+                                    import traceback
+                                    traceback.print_exc()
+                                    video.synthesis_error = str(e)
+                                    video.save()
+                    else:
+                        error_msg = result.get('error', 'Unknown error')
+                        video.transcription_status = 'failed'
+                        video.transcript_error_message = error_msg
+                        video.save()
+                except Exception as e:
+                    import traceback
+                    traceback.print_exc()
+                    print(f"Pipeline error: {e}")
                     video.transcription_status = 'failed'
-                    video.transcript_error_message = error_msg
+                    video.transcript_error_message = str(e)
                     video.save()
-                    return Response({
-                        "status": "failed",
-                        "error": error_msg,
-                        "step": "transcription"
-                    }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-                    
-            except Exception as e:
-                import traceback
-                error_details = str(e)
-                print(f"Transcription exception during reprocess: {error_details}")
-                traceback.print_exc()
-                
-                # Provide more detailed error message
-                if 'whisper' in error_details.lower():
-                    error_details = f"Whisper transcription error: {error_details}. Please check if Whisper is properly installed."
-                elif 'ffmpeg' in error_details.lower():
-                    error_details = f"FFmpeg error: {error_details}. Please ensure ffmpeg is installed."
-                elif 'file' in error_details.lower() or 'not found' in error_details.lower():
-                    error_details = f"File error: {error_details}. Please ensure the video file exists."
-                else:
-                    error_details = f"Transcription failed: {error_details}"
-                
-                video.transcription_status = 'failed'
-                video.transcript_error_message = error_details
-                video.save()
-                return Response({
-                    "status": "failed",
-                    "error": error_details,
-                    "step": "transcription"
-                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+            # Start the pipeline in a background thread
+            pipeline_thread = threading.Thread(target=run_pipeline, daemon=True)
+            pipeline_thread.start()
+            
+            return Response({
+                "status": "processing_started",
+                "message": "Reprocessing started in background",
+                "video_id": video.id
+            })
             
         except Exception as e:
-            print(f"Error during reprocess: {e}")
+            print(f"Error during reprocess setup: {e}")
             import traceback
             traceback.print_exc()
             return Response({
@@ -1653,33 +2062,124 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                 "error": str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+
     @action(detail=True, methods=['delete', 'post'])
     def delete(self, request, pk=None):
-        """Delete a video"""
+        """Delete a video and all associated media files"""
         video = self.get_object()
         
         try:
-            # Delete associated files if they exist
+            # Delete all associated media files
+            files_deleted = []
+            
+            # Delete local_file
             if video.local_file:
                 try:
                     video.local_file.delete(save=False)
-                except Exception:
-                    pass  # File might not exist
+                    files_deleted.append('local_file')
+                except Exception as e:
+                    logger.warning(f"Could not delete local_file: {e}")
             
+            # Delete voice_removed_video
+            if video.voice_removed_video:
+                try:
+                    video.voice_removed_video.delete(save=False)
+                    files_deleted.append('voice_removed_video')
+                except Exception as e:
+                    logger.warning(f"Could not delete voice_removed_video: {e}")
+            
+            # Delete final_processed_video
+            if video.final_processed_video:
+                try:
+                    video.final_processed_video.delete(save=False)
+                    files_deleted.append('final_processed_video')
+                except Exception as e:
+                    logger.warning(f"Could not delete final_processed_video: {e}")
+            
+            # Delete synthesized_audio
             if video.synthesized_audio:
                 try:
                     video.synthesized_audio.delete(save=False)
-                except Exception:
-                    pass
+                    files_deleted.append('synthesized_audio')
+                except Exception as e:
+                    logger.warning(f"Could not delete synthesized_audio: {e}")
+            
+            # Delete from Cloudinary if public_id exists
+            if upload_video_file and video.video_id:
+                try:
+                    from .cloudinary_service import get_cloudinary_config
+                    import cloudinary.uploader
+                    config = get_cloudinary_config()
+                    if config:
+                        cloudinary.config(
+                            cloud_name=config['cloud_name'],
+                            api_key=config['api_key'],
+                            api_secret=config['api_secret']
+                        )
+                        public_id = f"videos/final/{video.video_id}"
+                        cloudinary.uploader.destroy(public_id, resource_type='video')
+                        logger.info(f"Deleted video from Cloudinary: {public_id}")
+                        files_deleted.append('cloudinary_video')
+                except Exception as e:
+                    logger.warning(f"Could not delete from Cloudinary: {e}")
+            
+            # Delete from Google Sheets if synced
+            if video.google_sheets_synced and add_video_to_sheet:
+                try:
+                    from .google_sheets_service import get_google_sheets_service
+                    sheets_config = get_google_sheets_service()
+                    if sheets_config:
+                        service = sheets_config['service']
+                        spreadsheet_id = sheets_config['spreadsheet_id']
+                        sheet_name = sheets_config['sheet_name']
+                        video_id = video.video_id or str(video.id)
+                        
+                        # Find and delete row with matching video_id
+                        all_rows = service.spreadsheets().values().get(
+                            spreadsheetId=spreadsheet_id,
+                            range=f'{sheet_name}!A:J'
+                        ).execute()
+                        
+                        if all_rows.get('values'):
+                            for idx, row in enumerate(all_rows['values'], start=1):
+                                if len(row) > 5 and row[5] == video_id:  # Column F (index 5) is Video ID
+                                    # Delete the row
+                                    service.spreadsheets().values().clear(
+                                        spreadsheetId=spreadsheet_id,
+                                        range=f'{sheet_name}!A{idx + 1}:J{idx + 1}'
+                                    ).execute()
+                                    # Shift rows up
+                                    service.spreadsheets().batchUpdate(
+                                        spreadsheetId=spreadsheet_id,
+                                        body={
+                                            'requests': [{
+                                                'deleteDimension': {
+                                                    'range': {
+                                                        'sheetId': 0,  # Assuming first sheet
+                                                        'dimension': 'ROWS',
+                                                        'startIndex': idx,
+                                                        'endIndex': idx + 1
+                                                    }
+                                                }
+                                            }]
+                                        }
+                                    ).execute()
+                                    logger.info(f"Deleted video from Google Sheets: row {idx + 1}")
+                                    files_deleted.append('google_sheets_row')
+                                    break
+                except Exception as e:
+                    logger.warning(f"Could not delete from Google Sheets: {e}")
             
             # Delete the video record
             video.delete()
             
             return Response({
                 "status": "success",
-                "message": "Video deleted successfully"
+                "message": "Video and all associated files deleted successfully",
+                "files_deleted": files_deleted
             })
         except Exception as e:
+            logger.error(f"Error deleting video {pk}: {e}", exc_info=True)
             return Response({
                 "status": "failed",
                 "error": str(e)
@@ -1803,6 +2303,60 @@ class GoogleSheetsSettingsViewSet(viewsets.ViewSet):
             settings.save()
 
         return Response({"status": "saved", "enabled": enabled})
+
+
+class WatermarkSettingsViewSet(viewsets.ViewSet):
+    """ViewSet for Watermark Settings"""
+
+    def list(self, request):
+        """Get current watermark settings"""
+        settings = WatermarkSettings.objects.first()
+        if not settings:
+            return Response({
+                "enabled": False,
+                "watermark_text": "",
+                "font_size": 24,
+                "font_color": "white",
+                "opacity": 0.7,
+                "position_change_interval": 1.0
+            })
+
+        serializer = WatermarkSettingsSerializer(settings, context={'request': request})
+        return Response(serializer.data)
+
+    def create(self, request):
+        """Update watermark settings"""
+        enabled = request.data.get('enabled', False)
+        watermark_text = request.data.get('watermark_text', '')
+        font_size = int(request.data.get('font_size', 24))
+        font_color = request.data.get('font_color', 'white')
+        opacity = float(request.data.get('opacity', 0.7))
+        position_change_interval = float(request.data.get('position_change_interval', 1.0))
+        
+        settings, created = WatermarkSettings.objects.get_or_create(
+            id=1,
+            defaults={
+                "enabled": enabled,
+                "watermark_text": watermark_text,
+                "font_size": font_size,
+                "font_color": font_color,
+                "opacity": opacity,
+                "position_change_interval": position_change_interval
+            }
+        )
+
+        if not created:
+            settings.enabled = enabled
+            settings.watermark_text = watermark_text
+            settings.font_size = font_size
+            settings.font_color = font_color
+            settings.opacity = opacity
+            settings.position_change_interval = position_change_interval
+        
+        settings.save()
+
+        serializer = WatermarkSettingsSerializer(settings, context={'request': request})
+        return Response({"status": "saved", **serializer.data})
 
 
 @api_view(['GET', 'POST'])
@@ -2146,16 +2700,91 @@ def bulk_delete(request):
     
     for video in videos:
         try:
-            # Delete associated files if they exist
+            files_deleted = []
+            
+            # Delete all associated media files
             if video.local_file:
                 try:
                     video.local_file.delete(save=False)
+                    files_deleted.append('local_file')
                 except Exception:
-                    pass  # File might not exist
+                    pass
+            
+            if video.voice_removed_video:
+                try:
+                    video.voice_removed_video.delete(save=False)
+                    files_deleted.append('voice_removed_video')
+                except Exception:
+                    pass
+            
+            if video.final_processed_video:
+                try:
+                    video.final_processed_video.delete(save=False)
+                    files_deleted.append('final_processed_video')
+                except Exception:
+                    pass
             
             if video.synthesized_audio:
                 try:
                     video.synthesized_audio.delete(save=False)
+                    files_deleted.append('synthesized_audio')
+                except Exception:
+                    pass
+            
+            # Delete from Cloudinary if exists
+            if upload_video_file and video.video_id:
+                try:
+                    from .cloudinary_service import get_cloudinary_config
+                    import cloudinary.uploader
+                    config = get_cloudinary_config()
+                    if config:
+                        cloudinary.config(
+                            cloud_name=config['cloud_name'],
+                            api_key=config['api_key'],
+                            api_secret=config['api_secret']
+                        )
+                        public_id = f"videos/final/{video.video_id}"
+                        cloudinary.uploader.destroy(public_id, resource_type='video')
+                        files_deleted.append('cloudinary_video')
+                except Exception:
+                    pass
+            
+            # Delete from Google Sheets if synced
+            if video.google_sheets_synced and add_video_to_sheet:
+                try:
+                    from .google_sheets_service import get_google_sheets_service
+                    sheets_config = get_google_sheets_service()
+                    if sheets_config:
+                        service = sheets_config['service']
+                        spreadsheet_id = sheets_config['spreadsheet_id']
+                        sheet_name = sheets_config['sheet_name']
+                        video_id = video.video_id or str(video.id)
+                        
+                        all_rows = service.spreadsheets().values().get(
+                            spreadsheetId=spreadsheet_id,
+                            range=f'{sheet_name}!A:J'
+                        ).execute()
+                        
+                        if all_rows.get('values'):
+                            for idx, row in enumerate(all_rows['values'], start=1):
+                                if len(row) > 5 and row[5] == video_id:
+                                    service.spreadsheets().batchUpdate(
+                                        spreadsheetId=spreadsheet_id,
+                                        body={
+                                            'requests': [{
+                                                'deleteDimension': {
+                                                    'range': {
+                                                        'sheetId': 0,
+                                                        'dimension': 'ROWS',
+                                                        'startIndex': idx,
+                                                        'endIndex': idx + 1
+                                                    }
+                                                }
+                                            }]
+                                        }
+                                    ).execute()
+                                    files_deleted.append('google_sheets_row')
+                                    break
                 except Exception:
                     pass
             
@@ -2164,7 +2793,8 @@ def bulk_delete(request):
             deleted_count += 1
             results.append({
                 "id": video.id,
-                "status": "deleted"
+                "status": "deleted",
+                "files_deleted": files_deleted
             })
         except Exception as e:
             results.append({

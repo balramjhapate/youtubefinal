@@ -128,7 +128,9 @@ export function VideoDetailModal() {
       queryClient.invalidateQueries(['video', selectedVideoId]);
       queryClient.invalidateQueries(['videos']);
       // Start polling for updates
+      let pollCount = 0;
       const pollInterval = setInterval(() => {
+        pollCount++;
         refetch().then(({ data }) => {
           // Stop polling when processing is complete
           if (data && 
@@ -142,16 +144,41 @@ export function VideoDetailModal() {
             if (data.final_processed_video_url) {
               toast.success('Video processing completed!');
             }
+          } else if (data) {
+            // Show progress updates for long-running processes
+            if (pollCount % 30 === 0 && data.transcription_status === 'transcribing') {
+              const elapsed = data.elapsed_seconds || 0;
+              toast.info(`Transcription in progress... (${Math.floor(elapsed / 60)}m ${elapsed % 60}s)`, { duration: 3000 });
+            }
           }
+        }).catch((err) => {
+          // If refetch fails, don't stop polling immediately - might be temporary network issue
+          console.warn('Polling error:', err);
         });
       }, 2000);
       
-      // Clear interval after 5 minutes to prevent infinite polling
-      setTimeout(() => clearInterval(pollInterval), 5 * 60 * 1000);
+      // Increased timeout to 30 minutes for large videos
+      setTimeout(() => {
+        clearInterval(pollInterval);
+        // Check final status before showing timeout message
+        refetch().then(({ data }) => {
+          if (data && data.transcription_status === 'transcribing') {
+            toast.warning('Processing is taking longer than expected. It may still be running in the background. Please check back later.', { duration: 10000 });
+          }
+        });
+      }, 30 * 60 * 1000); // 30 minutes
     },
     onError: (error) => {
       completeProcessing(selectedVideoId);
-      toast.error(error?.response?.data?.error || 'Processing failed');
+      const errorMsg = error?.response?.data?.error || error?.message || 'Processing failed';
+      // Provide more helpful error messages
+      if (errorMsg.includes('timeout') || errorMsg.includes('timed out')) {
+        toast.error('Processing timed out. The video may be too long. Please try again or use a shorter video.');
+      } else if (errorMsg.includes('already_processing')) {
+        toast.info('Processing is already in progress. Please wait for it to complete.');
+      } else {
+        toast.error(`Processing failed: ${errorMsg}`);
+      }
     },
   });
 

@@ -143,19 +143,21 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 NCA_API_URL = os.environ.get('NCA_API_URL', 'http://localhost:8080')  # Base URL of NCA Toolkit API
 NCA_API_KEY = os.environ.get('NCA_API_KEY', 'my_secret_key_123')  # API key for authentication (matches Docker container)
 NCA_API_TIMEOUT = int(os.environ.get('NCA_API_TIMEOUT', '600'))  # Request timeout in seconds (10 minutes)
-# Enable NCA API by default if running locally (can be overridden via environment variable)
-NCA_API_ENABLED = os.environ.get('NCA_API_ENABLED', 'true').lower() == 'true'  # Enable/disable NCA API
+# NCA API is disabled by default (requires separate server). Set NCA_API_ENABLED=true to enable.
+NCA_API_ENABLED = os.environ.get('NCA_API_ENABLED', 'false').lower() == 'true'  # Enable/disable NCA API
 
 # If NCA_API_ENABLED is False, will fallback to local processing (Whisper, ffmpeg)
 
 # Whisper Transcription Configuration (Primary method)
+# Changed default from 'large' to 'base' for faster transcription
+# 'large' model can take 10-30 minutes for a 27-second video, 'base' takes ~30 seconds
 WHISPER_MODEL_SIZE = os.environ.get('WHISPER_MODEL_SIZE', 'base')  # tiny, base, small, medium, large
 # Model size recommendations:
 #   - tiny: Fastest, least accurate (~1GB RAM, ~32x realtime)
-#   - base: Good balance (~1GB RAM, ~16x realtime) - RECOMMENDED
+#   - base: Good balance (~1GB RAM, ~16x realtime) - RECOMMENDED (DEFAULT)
 #   - small: Better accuracy (~2GB RAM, ~6x realtime)
 #   - medium: High accuracy (~5GB RAM, ~2x realtime)
-#   - large: Best accuracy (~10GB RAM, ~1x realtime)
+#   - large: Best accuracy (~10GB RAM, ~1x realtime) - VERY SLOW, use only for high-quality needs
 
 WHISPER_DEVICE = os.environ.get('WHISPER_DEVICE', 'cpu')  # 'cpu' or 'cuda' (GPU)
 WHISPER_CONFIDENCE_THRESHOLD = float(os.environ.get('WHISPER_CONFIDENCE_THRESHOLD', '-1.5'))  # Confidence threshold for retry

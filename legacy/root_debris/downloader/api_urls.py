@@ -11,6 +11,7 @@ router.register(r'videos', api_views.VideoDownloadViewSet, basename='video')
 router.register(r'ai-settings', api_views.AISettingsViewSet, basename='ai-settings')
 router.register(r'cloudinary-settings', api_views.CloudinarySettingsViewSet, basename='cloudinary-settings')
 router.register(r'google-sheets-settings', api_views.GoogleSheetsSettingsViewSet, basename='google-sheets-settings')
+router.register(r'watermark-settings', api_views.WatermarkSettingsViewSet, basename='watermark-settings')
 
 # The API URLs are now determined automatically by the router
 urlpatterns = [

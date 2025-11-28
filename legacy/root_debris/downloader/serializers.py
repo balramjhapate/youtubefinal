@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import VideoDownload, AIProviderSettings, ClonedVoice, CloudinarySettings, GoogleSheetsSettings
+from .models import VideoDownload, AIProviderSettings, ClonedVoice, CloudinarySettings, GoogleSheetsSettings, WatermarkSettings
 
 
 class AIProviderSettingsSerializer(serializers.ModelSerializer):
@@ -62,6 +62,14 @@ class GoogleSheetsSettingsSerializer(serializers.ModelSerializer):
             data['credentials_json'] = '***hidden***'
         return data
 
+
+class WatermarkSettingsSerializer(serializers.ModelSerializer):
+    """Serializer for Watermark Settings"""
+
+    class Meta:
+        model = WatermarkSettings
+        fields = ['id', 'enabled', 'watermark_text', 'font_size', 'font_color', 'opacity', 'position_change_interval']
+
 class ClonedVoiceSerializer(serializers.ModelSerializer):
     file_url = serializers.SerializerMethodField()
     
@@ -117,6 +125,15 @@ class VideoDownloadSerializer(serializers.ModelSerializer):
     whisper_transcript_started_at = serializers.SerializerMethodField()
     whisper_transcript_processed_at = serializers.SerializerMethodField()
     whisper_transcript_error_message = serializers.SerializerMethodField()
+    # Visual transcription fields
+    has_audio = serializers.SerializerMethodField()
+    visual_transcript = serializers.SerializerMethodField()
+    visual_transcript_without_timestamps = serializers.SerializerMethodField()
+    visual_transcript_hindi = serializers.SerializerMethodField()
+    # Enhanced transcription fields
+    enhanced_transcript = serializers.SerializerMethodField()
+    enhanced_transcript_without_timestamps = serializers.SerializerMethodField()
+    enhanced_transcript_hindi = serializers.SerializerMethodField()
 
     class Meta:
         model = VideoDownload
@@ -141,6 +158,10 @@ class VideoDownloadSerializer(serializers.ModelSerializer):
             'whisper_transcript_hindi', 'whisper_transcript_language', 'whisper_model_used',
             'whisper_confidence_avg', 'whisper_transcript_started_at', 'whisper_transcript_processed_at',
             'whisper_transcript_error_message',
+            # Visual Transcription
+            'has_audio', 'visual_transcript', 'visual_transcript_without_timestamps', 'visual_transcript_hindi',
+            # Enhanced Transcription
+            'enhanced_transcript', 'enhanced_transcript_without_timestamps', 'enhanced_transcript_hindi',
             # Script Generation
             'script_status', 'hindi_script', 'clean_script_for_tts', 'script_error_message', 'script_generated_at',
             # TTS Parameters
@@ -353,6 +374,57 @@ class VideoDownloadSerializer(serializers.ModelSerializer):
         """Safely get whisper_transcript_error_message field"""
         try:
             return getattr(obj, 'whisper_transcript_error_message', '')
+        except (AttributeError, ValueError):
+            return ''
+    
+    # Visual transcription getters
+    def get_has_audio(self, obj):
+        """Safely get has_audio field"""
+        try:
+            return getattr(obj, 'has_audio', True)
+        except (AttributeError, ValueError):
+            return True
+    
+    def get_visual_transcript(self, obj):
+        """Safely get visual_transcript field"""
+        try:
+            return getattr(obj, 'visual_transcript', '')
+        except (AttributeError, ValueError):
+            return ''
+    
+    def get_visual_transcript_without_timestamps(self, obj):
+        """Safely get visual_transcript_without_timestamps field"""
+        try:
+            return getattr(obj, 'visual_transcript_without_timestamps', '')
+        except (AttributeError, ValueError):
+            return ''
+    
+    def get_visual_transcript_hindi(self, obj):
+        """Safely get visual_transcript_hindi field"""
+        try:
+            return getattr(obj, 'visual_transcript_hindi', '')
+        except (AttributeError, ValueError):
+            return ''
+    
+    # Enhanced transcription getters
+    def get_enhanced_transcript(self, obj):
+        """Safely get enhanced_transcript field"""
+        try:
+            return getattr(obj, 'enhanced_transcript', '')
+        except (AttributeError, ValueError):
+            return ''
+    
+    def get_enhanced_transcript_without_timestamps(self, obj):
+        """Safely get enhanced_transcript_without_timestamps field"""
+        try:
+            return getattr(obj, 'enhanced_transcript_without_timestamps', '')
+        except (AttributeError, ValueError):
+            return ''
+    
+    def get_enhanced_transcript_hindi(self, obj):
+        """Safely get enhanced_transcript_hindi field"""
+        try:
+            return getattr(obj, 'enhanced_transcript_hindi', '')
         except (AttributeError, ValueError):
             return ''
 

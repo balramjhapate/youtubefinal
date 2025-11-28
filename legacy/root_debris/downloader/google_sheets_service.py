@@ -4,13 +4,91 @@ Google Sheets service for tracking video data
 import json
 import logging
 import re
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
+
+try:
+    from google.oauth2 import service_account
+    from googleapiclient.discovery import build
+    from googleapiclient.errors import HttpError
+    GOOGLE_SHEETS_AVAILABLE = True
+except ImportError:
+    GOOGLE_SHEETS_AVAILABLE = False
+    service_account = None
+    build = None
+    HttpError = Exception
+
 from .models import GoogleSheetsSettings
 from django.utils import timezone
+import re
 
 logger = logging.getLogger(__name__)
+
+
+def format_hindi_title_for_sheets(title):
+    """
+    Format title for Google Sheets:
+    - Ensure it's in Hindi
+    - Make it shorter (max 100 chars)
+    - Add #shorts #trending hashtags
+    
+    Args:
+        title: Original title (may be in Hindi or English)
+    
+    Returns:
+        str: Formatted Hindi title with hashtags
+    """
+    if not title:
+        return "#shorts #trending"
+    
+    # Remove existing hashtags to avoid duplicates
+    title = re.sub(r'#\w+\s*', '', title).strip()
+    
+    # Truncate to max 80 chars (leaving room for hashtags)
+    if len(title) > 80:
+        title = title[:77] + "..."
+    
+    # Add hashtags
+    formatted_title = f"{title} #shorts #trending"
+    
+    return formatted_title
+
+
+def format_hindi_description_for_sheets(description):
+    """
+    Format description for Google Sheets:
+    - Ensure it's in Hindi
+    - Add relevant hashtags at the end
+    
+    Args:
+        description: Original description (may be in Hindi or English)
+    
+    Returns:
+        str: Formatted Hindi description with hashtags
+    """
+    if not description:
+        return ""
+    
+    # Remove existing hashtags to avoid duplicates
+    description = re.sub(r'#\w+\s*', '', description).strip()
+    
+    # Add hashtags at the end
+    # Common hashtags for Hindi shorts content
+    hashtags = [
+        "#shorts",
+        "#trending",
+        "#viral",
+        "#hindi",
+        "#india",
+        "#youtubeshorts",
+        "#funny",
+        "#experiment",
+        "#science",
+        "#amazing"
+    ]
+    
+    # Add hashtags
+    formatted_description = f"{description}\n\n{' '.join(hashtags)}"
+    
+    return formatted_description
 
 
 def extract_spreadsheet_id(spreadsheet_id_or_url):
@@ -29,6 +107,10 @@ def extract_spreadsheet_id(spreadsheet_id_or_url):
 
 def get_google_sheets_service():
     """Get Google Sheets API service instance"""
+    if not GOOGLE_SHEETS_AVAILABLE:
+        logger.warning("Google Sheets packages not installed. Install with: pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib")
+        return None
+    
     sheets_settings = GoogleSheetsSettings.objects.first()
     if not sheets_settings or not sheets_settings.enabled:
         return None
@@ -156,19 +238,83 @@ def add_video_to_sheet(video, cloudinary_url=None):
         # Ensure header row exists
         ensure_header_row(sheets_config)
         
-        # Prepare row data
+        # Prepare row data with Hindi formatting
         video_url = cloudinary_url or video.cloudinary_url or video.final_processed_video_url or ''
-        title = video.generated_title or video.title or 'Untitled'
-        description = video.generated_description or video.description or ''
+        
+        # Format title: Hindi, shorter, with #shorts #trending hashtags
+        raw_title = video.generated_title or video.title or 'Untitled'
+        title = format_hindi_title_for_sheets(raw_title)
+        
+        # Format description: Hindi with hashtags
+        raw_description = video.generated_description or video.description or ''
+        description = format_hindi_description_for_sheets(raw_description)
+        
         tags = video.generated_tags or video.ai_tags or ''
         original_url = video.url or ''
-        video_id = video.video_id or ''
+        video_id = video.video_id or str(video.id)  # Use video_id or fallback to database ID
         duration = str(video.duration) if video.duration else ''
         created_at = video.created_at.strftime('%Y-%m-%d %H:%M:%S') if video.created_at else ''
         status = video.review_status or 'pending_review'
         synced_at = timezone.now().strftime('%Y-%m-%d %H:%M:%S')
         
-        # Append row
+        # Check if video already exists in sheet (by Video ID in column F)
+        # Read all rows to find existing video and remove duplicates (keep only latest)
+        try:
+            all_rows = service.spreadsheets().values().get(
+                spreadsheetId=spreadsheet_id,
+                range=f'{sheet_name}!A:J'
+            ).execute()
+            
+            existing_row_index = None
+            duplicate_row_indices = []
+            
+            if all_rows.get('values'):
+                # Column F (index 5) contains Video ID, Column J (index 9) contains Synced At
+                # Find all rows with matching video_id
+                matching_rows = []
+                for idx, row in enumerate(all_rows['values'], start=1):  # Start at 1 (row 1 is header)
+                    if len(row) > 5 and row[5] == video_id:  # Check Video ID column
+                        synced_at = row[9] if len(row) > 9 else ''
+                        matching_rows.append({
+                            'index': idx + 1,  # +1 because sheet rows are 1-indexed
+                            'synced_at': synced_at
+                        })
+                
+                if matching_rows:
+                    # Sort by synced_at (most recent first) - keep the latest one
+                    matching_rows.sort(key=lambda x: x['synced_at'], reverse=True)
+                    existing_row_index = matching_rows[0]['index']  # Keep the latest
+                    duplicate_row_indices = [r['index'] for r in matching_rows[1:]]  # Mark others for deletion
+                    
+                    logger.info(f"Found {len(matching_rows)} existing video(s) in Google Sheet. Keeping row {existing_row_index}, removing {len(duplicate_row_indices)} duplicate(s)")
+                    
+                    # Delete duplicate rows (in reverse order to maintain indices)
+                    if duplicate_row_indices:
+                        for row_idx in sorted(duplicate_row_indices, reverse=True):
+                            try:
+                                service.spreadsheets().batchUpdate(
+                                    spreadsheetId=spreadsheet_id,
+                                    body={
+                                        'requests': [{
+                                            'deleteDimension': {
+                                                'range': {
+                                                    'sheetId': 0,  # Assuming first sheet
+                                                    'dimension': 'ROWS',
+                                                    'startIndex': row_idx - 1,  # Convert to 0-indexed
+                                                    'endIndex': row_idx
+                                                }
+                                            }
+                                        }]
+                                    }
+                                ).execute()
+                                logger.info(f"Deleted duplicate row {row_idx} from Google Sheets")
+                            except Exception as e:
+                                logger.warning(f"Could not delete duplicate row {row_idx}: {e}")
+        except Exception as e:
+            logger.warning(f"Error checking for existing video in sheet: {str(e)}")
+            existing_row_index = None
+        
+        # Prepare row data
         values = [[
             title,
             description,
@@ -186,15 +332,25 @@ def add_video_to_sheet(video, cloudinary_url=None):
             'values': values
         }
         
-        result = service.spreadsheets().values().append(
-            spreadsheetId=spreadsheet_id,
-            range=f'{sheet_name}!A:J',
-            valueInputOption='RAW',
-            insertDataOption='INSERT_ROWS',
-            body=body
-        ).execute()
-        
-        logger.info(f"Successfully added video to Google Sheet: {video.id}")
+        if existing_row_index:
+            # Update existing row
+            result = service.spreadsheets().values().update(
+                spreadsheetId=spreadsheet_id,
+                range=f'{sheet_name}!A{existing_row_index}:J{existing_row_index}',
+                valueInputOption='RAW',
+                body=body
+            ).execute()
+            logger.info(f"Successfully updated video in Google Sheet at row {existing_row_index}: {video.id}")
+        else:
+            # Append new row
+            result = service.spreadsheets().values().append(
+                spreadsheetId=spreadsheet_id,
+                range=f'{sheet_name}!A:J',
+                valueInputOption='RAW',
+                insertDataOption='INSERT_ROWS',
+                body=body
+            ).execute()
+            logger.info(f"Successfully added video to Google Sheet: {video.id}")
         
         # Update video model
         video.google_sheets_synced = True

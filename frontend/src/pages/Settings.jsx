@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import { Save, Eye, EyeOff, Info, ExternalLink, Cloud, FileSpreadsheet, TestTube } from 'lucide-react';
+import { Save, Eye, EyeOff, Info, ExternalLink, Cloud, FileSpreadsheet, TestTube, Image } from 'lucide-react';
 import { Button, Input, Select, LoadingSpinner } from '../components/common';
 import { settingsApi } from '../api';
 import { AI_PROVIDERS } from '../utils/constants';
@@ -26,6 +26,14 @@ export function Settings() {
   const [testResult, setTestResult] = useState(null);
   const [serviceAccountEmail, setServiceAccountEmail] = useState('');
   
+  // Watermark state
+  const [watermarkEnabled, setWatermarkEnabled] = useState(false);
+  const [watermarkText, setWatermarkText] = useState('');
+  const [watermarkFontSize, setWatermarkFontSize] = useState(24);
+  const [watermarkFontColor, setWatermarkFontColor] = useState('white');
+  const [watermarkOpacity, setWatermarkOpacity] = useState(0.7);
+  const [watermarkInterval, setWatermarkInterval] = useState(1.0);
+  
   const queryClient = useQueryClient();
 
   // Fetch current settings
@@ -42,6 +50,11 @@ export function Settings() {
   const { data: googleSheetsSettings } = useQuery({
     queryKey: ['google-sheets-settings'],
     queryFn: settingsApi.getGoogleSheetsSettings,
+  });
+
+  const { data: watermarkSettings } = useQuery({
+    queryKey: ['watermark-settings'],
+    queryFn: settingsApi.getWatermarkSettings,
   });
 
   // Update state when settings load
@@ -79,6 +92,17 @@ export function Settings() {
       }
     }
   }, [googleSheetsSettings]);
+
+  useEffect(() => {
+    if (watermarkSettings) {
+      setWatermarkEnabled(watermarkSettings.enabled || false);
+      setWatermarkText(watermarkSettings.watermark_text || '');
+      setWatermarkFontSize(watermarkSettings.font_size || 24);
+      setWatermarkFontColor(watermarkSettings.font_color || 'white');
+      setWatermarkOpacity(watermarkSettings.opacity || 0.7);
+      setWatermarkInterval(watermarkSettings.position_change_interval || 1.0);
+    }
+  }, [watermarkSettings]);
 
   // Extract service account email when credentials JSON changes
   useEffect(() => {
@@ -154,6 +178,24 @@ export function Settings() {
     },
   });
 
+  const saveWatermarkMutation = useMutation({
+    mutationFn: () => {
+      return settingsApi.saveWatermarkSettings({
+        enabled: watermarkEnabled,
+        watermark_text: watermarkText,
+        font_size: watermarkFontSize,
+        font_color: watermarkFontColor,
+        opacity: watermarkOpacity,
+        position_change_interval: watermarkInterval,
+      });
+    },
+    onSuccess: () => {
+      toast.success('Watermark settings saved successfully');
+      queryClient.invalidateQueries(['watermark-settings']);
+    },
+    onError: (error) => toast.error(error.message || 'Failed to save watermark settings'),
+  });
+
   const handleAISubmit = (e) => {
     e.preventDefault();
     saveAIMutation.mutate();
@@ -168,6 +210,12 @@ export function Settings() {
     e.preventDefault();
     saveGoogleSheetsMutation.mutate();
   };
+
+  const handleWatermarkSubmit = (e) => {
+    e.preventDefault();
+    saveWatermarkMutation.mutate();
+  };
+
 
   // Extract spreadsheet ID from Google Sheets URL
   const handleSpreadsheetUrlChange = (url) => {
@@ -575,6 +623,153 @@ export function Settings() {
           </ol>
         </div>
       </div>
+
+        {/* Watermark Settings Card */}
+        <div className="glass-card p-6">
+          <div className="flex items-center gap-2 mb-6">
+            <Image className="w-5 h-5 text-purple-400" />
+            <h2 className="text-lg font-semibold text-white">Watermark Settings</h2>
+          </div>
+          <p className="text-sm text-gray-400 mb-4">
+            Add a moving text watermark to your videos. The watermark will change position at regular intervals to prevent easy removal.
+          </p>
+
+          <form onSubmit={handleWatermarkSubmit} className="space-y-6">
+            <div className="flex items-center gap-3">
+              <input
+                type="checkbox"
+                id="watermark-enabled"
+                checked={watermarkEnabled}
+                onChange={(e) => setWatermarkEnabled(e.target.checked)}
+                className="w-4 h-4 rounded"
+              />
+              <label htmlFor="watermark-enabled" className="text-sm font-medium text-gray-300">
+                Enable watermark on videos
+              </label>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1.5">
+                Watermark Text
+              </label>
+              <Input
+                type="text"
+                value={watermarkText}
+                onChange={(e) => setWatermarkText(e.target.value)}
+                placeholder="Enter watermark text (e.g., Your Channel Name)"
+                disabled={!watermarkEnabled}
+                maxLength={100}
+              />
+              <p className="mt-1 text-xs text-gray-500">
+                Text that will appear as watermark on videos
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1.5">
+                Font Size: {watermarkFontSize}px
+              </label>
+              <input
+                type="range"
+                min="12"
+                max="72"
+                step="2"
+                value={watermarkFontSize}
+                onChange={(e) => setWatermarkFontSize(parseInt(e.target.value))}
+                disabled={!watermarkEnabled}
+                className="w-full"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1.5">
+                Font Color
+              </label>
+              <div className="flex gap-2">
+                <select
+                  value={watermarkFontColor.startsWith('#') ? 'custom' : watermarkFontColor}
+                  onChange={(e) => {
+                    if (e.target.value === 'custom') {
+                      setWatermarkFontColor('#FFFFFF');
+                    } else {
+                      setWatermarkFontColor(e.target.value);
+                    }
+                  }}
+                  disabled={!watermarkEnabled}
+                  className="flex-1 px-4 py-2.5 rounded-lg input-dark disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <option value="white">White</option>
+                  <option value="black">Black</option>
+                  <option value="yellow">Yellow</option>
+                  <option value="red">Red</option>
+                  <option value="blue">Blue</option>
+                  <option value="green">Green</option>
+                  <option value="custom">Custom Color</option>
+                </select>
+                <input
+                  type="color"
+                  value={watermarkFontColor.startsWith('#') ? watermarkFontColor : 
+                         watermarkFontColor === 'white' ? '#FFFFFF' : 
+                         watermarkFontColor === 'black' ? '#000000' :
+                         watermarkFontColor === 'yellow' ? '#FFFF00' :
+                         watermarkFontColor === 'red' ? '#FF0000' :
+                         watermarkFontColor === 'blue' ? '#0000FF' :
+                         watermarkFontColor === 'green' ? '#00FF00' : '#FFFFFF'}
+                  onChange={(e) => {
+                    setWatermarkFontColor(e.target.value);
+                  }}
+                  disabled={!watermarkEnabled}
+                  className="w-16 h-10 rounded cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1.5">
+                Opacity: {Math.round(watermarkOpacity * 100)}%
+              </label>
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.1"
+                value={watermarkOpacity}
+                onChange={(e) => setWatermarkOpacity(parseFloat(e.target.value))}
+                disabled={!watermarkEnabled}
+                className="w-full"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1.5">
+                Position Change Interval: {watermarkInterval} seconds
+              </label>
+              <input
+                type="range"
+                min="0.5"
+                max="5"
+                step="0.5"
+                value={watermarkInterval}
+                onChange={(e) => setWatermarkInterval(parseFloat(e.target.value))}
+                disabled={!watermarkEnabled}
+                className="w-full"
+              />
+              <p className="mt-1 text-xs text-gray-500">
+                How often the watermark moves to a new position
+              </p>
+            </div>
+
+            <Button
+              type="submit"
+              variant="primary"
+              icon={Save}
+              loading={saveWatermarkMutation.isPending}
+              disabled={!watermarkEnabled || !watermarkText.trim()}
+            >
+              Save Watermark Settings
+            </Button>
+          </form>
+        </div>
       </div>
 
       {/* Provider Info Cards */}
