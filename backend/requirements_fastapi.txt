@@ -1,0 +1,29 @@
+# FastAPI Requirements
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+sqlalchemy>=2.0.0
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+python-multipart>=0.0.6
+
+# Database - MySQL
+pymysql>=1.1.0
+cryptography>=41.0.0  # Required for pymysql SSL support
+
+# HTTP & Requests
+requests>=2.31.0
+httpx>=0.25.0
+
+# Translation
+deep-translator>=1.11.4
+
+# Video Processing
+yt-dlp>=2023.10.0
+
+# Optional: TTS (for voice cloning)
+# TTS>=0.20.0
+# torch>=2.0.0
+# torchaudio>=2.0.0
+
+# CORS is built into FastAPI, no additional package needed
+
