@@ -48,7 +48,7 @@ class GeminiTTSService:
         self,
         text,
         language_code='hi-IN',
-        voice_name='Charon',
+        voice_name='Enceladus',
         output_path=None,
         temperature=None,
         style_prompt=None
@@ -59,7 +59,7 @@ class GeminiTTSService:
         Args:
             text: Text to synthesize (can include markup tags like [sigh], [laughing], [short pause], etc.)
             language_code: Language code (default: 'hi-IN' for Hindi)
-            voice_name: Voice name (default: 'Charon' for Hindi)
+            voice_name: Voice name (default: 'Enceladus' for Hindi)
             output_path: Output file path (if None, returns audio bytes)
             temperature: Temperature for generation (optional)
             style_prompt: Style prompt for overall tone (e.g., "You are an engaging explainer speaking in a friendly and energetic tone")

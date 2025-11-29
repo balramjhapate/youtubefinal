@@ -814,27 +814,80 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                         print(f"  - Enhanced Transcript: ✓")
                         print(f"  - Visual Analysis: {'✓ (available)' if has_visual else '⚠ (optional - not available, continuing without it)'}")
                         
-                        script_result = generate_hindi_script(video)
-                    
-                        if script_result['status'] == 'success':
-                            video.hindi_script = script_result['script']
-                            video.script_status = 'generated'
-                            video.script_generated_at = timezone.now()
-                            video.script_error_message = ''
-                            video.save()
-                            print(f"✓ Hindi script generated successfully (explainer style)")
-                        else:
+                        # Generate script with timeout protection
+                        import threading
+                        import queue
+                        script_queue = queue.Queue()
+                        exception_queue = queue.Queue()
+                        
+                        def run_script_generation():
+                            try:
+                                result = generate_hindi_script(video)
+                                script_queue.put(result)
+                            except Exception as e:
+                                exception_queue.put(e)
+                        
+                        script_thread = threading.Thread(target=run_script_generation, daemon=True)
+                        script_thread.start()
+                        script_thread.join(timeout=300)  # 5 minutes timeout
+                        
+                        if script_thread.is_alive():
+                            # Script generation timed out
+                            error_msg = "Script generation timed out after 5 minutes"
+                            print(f"✗ {error_msg}")
                             video.script_status = 'failed'
-                            video.script_error_message = script_result.get('error', 'Unknown error')
+                            video.script_error_message = error_msg
                             video.save()
-                            print(f"✗ Script generation failed: {script_result.get('error', 'Unknown error')}")
+                        elif not exception_queue.empty():
+                            # Exception occurred
+                            e = exception_queue.get()
+                            error_msg = f"Script generation error: {str(e)}"
+                            print(f"✗ {error_msg}")
+                            import traceback
+                            traceback.print_exc()
+                            video.script_status = 'failed'
+                            video.script_error_message = error_msg
+                            video.save()
+                        elif not script_queue.empty():
+                            # Script generation completed
+                            script_result = script_queue.get()
+                            
+                            if script_result['status'] == 'success':
+                                video.hindi_script = script_result['script']
+                                video.script_status = 'generated'
+                                video.script_generated_at = timezone.now()
+                                video.script_error_message = ''
+                                video.save()
+                                print(f"✓ Hindi script generated successfully (explainer style)")
+                            else:
+                                video.script_status = 'failed'
+                                video.script_error_message = script_result.get('error', 'Unknown error')
+                                video.save()
+                                print(f"✗ Script generation failed: {script_result.get('error', 'Unknown error')}")
+                        else:
+                            # No result and no exception - something went wrong
+                            error_msg = "Script generation completed but no result was returned"
+                            print(f"✗ {error_msg}")
+                            video.script_status = 'failed'
+                            video.script_error_message = error_msg
+                            video.save()
                     except Exception as e:
                         print(f"Script generation error: {e}")
+                        import traceback
+                        traceback.print_exc()
                         video.script_status = 'failed'
                         video.script_error_message = str(e)
                         video.save()
 
                 # Step 4: TTS Generation (automatically after script generation)
+                # Fix: If script exists but status is still 'generating', update status to 'generated'
+                if video.hindi_script and video.script_status == 'generating':
+                    print(f"⚠ Script exists but status is 'generating' - fixing status to 'generated'")
+                    video.script_status = 'generated'
+                    if not video.script_generated_at:
+                        video.script_generated_at = timezone.now()
+                    video.save()
+                
                 tts_audio_url = None
                 if video.script_status == 'generated' and video.hindi_script:
                     try:
@@ -872,8 +925,8 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                                 # Get TTS settings from video model
                                 tts_temperature = video.tts_temperature if video.tts_temperature else 0.75
                                 
-                                # Use Charon voice for Hindi (as specified)
-                                voice_name = 'Charon'
+                                # Use Enceladus voice for Hindi (as specified in n8n workflow)
+                                voice_name = 'Enceladus'
                                 language_code = 'hi-IN'  # Hindi (India)
                                 
                                 # Analyze script content for appropriate style prompt
@@ -1030,7 +1083,7 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                                         voice_removed_url = request.build_absolute_uri(video.voice_removed_video.url)
                                         video.voice_removed_video_url = voice_removed_url
                                         video.save()
-                                        print(f"✓ Step 5a (ffmpeg) completed: Voice removed video saved: {voice_removed_url}")
+                                        print(f"✓ Step 5a (ffmpeg) completed: Voice removed video saved")
                                         
                                         # Clean up temp file
                                         os.unlink(temp_no_audio_path)
@@ -1439,8 +1492,8 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
             # Get TTS settings from video model
             tts_temperature = video.tts_temperature if video.tts_temperature else 0.75
             
-            # Use Charon voice for Hindi (as specified)
-            voice_name = 'Charon'
+            # Use Enceladus voice for Hindi (as specified in n8n workflow)
+            voice_name = 'Enceladus'
             language_code = 'hi-IN'  # Hindi (India)
             
             # Analyze script content for appropriate style prompt
@@ -2127,25 +2180,80 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                             video.script_status = 'generating'
                             video.save()
                             
-                            script_result = generate_hindi_script(video)
+                            # Generate script with timeout protection
+                            import threading
+                            import queue
+                            script_queue = queue.Queue()
+                            exception_queue = queue.Queue()
                             
-                            if script_result['status'] == 'success':
-                                video.hindi_script = script_result['script']
-                                video.script_status = 'generated'
-                                video.script_generated_at = timezone.now()
-                                video.script_error_message = ''
-                                video.save()
-                            else:
+                            def run_script_generation():
+                                try:
+                                    result = generate_hindi_script(video)
+                                    script_queue.put(result)
+                                except Exception as e:
+                                    exception_queue.put(e)
+                            
+                            script_thread = threading.Thread(target=run_script_generation, daemon=True)
+                            script_thread.start()
+                            script_thread.join(timeout=300)  # 5 minutes timeout
+                            
+                            if script_thread.is_alive():
+                                # Script generation timed out
+                                error_msg = "Script generation timed out after 5 minutes"
+                                print(f"✗ {error_msg}")
                                 video.script_status = 'failed'
-                                video.script_error_message = script_result.get('error', 'Unknown error')
+                                video.script_error_message = error_msg
+                                video.save()
+                            elif not exception_queue.empty():
+                                # Exception occurred
+                                e = exception_queue.get()
+                                error_msg = f"Script generation error: {str(e)}"
+                                print(f"✗ {error_msg}")
+                                import traceback
+                                traceback.print_exc()
+                                video.script_status = 'failed'
+                                video.script_error_message = error_msg
+                                video.save()
+                            elif not script_queue.empty():
+                                # Script generation completed
+                                script_result = script_queue.get()
+                                
+                                if script_result['status'] == 'success':
+                                    video.hindi_script = script_result['script']
+                                    video.script_status = 'generated'
+                                    video.script_generated_at = timezone.now()
+                                    video.script_error_message = ''
+                                    video.save()
+                                    print(f"✓ Hindi script generated successfully")
+                                else:
+                                    video.script_status = 'failed'
+                                    video.script_error_message = script_result.get('error', 'Unknown error')
+                                    video.save()
+                                    print(f"✗ Script generation failed: {script_result.get('error', 'Unknown error')}")
+                            else:
+                                # No result - something went wrong
+                                error_msg = "Script generation completed but no result was returned"
+                                print(f"✗ {error_msg}")
+                                video.script_status = 'failed'
+                                video.script_error_message = error_msg
                                 video.save()
                         except Exception as e:
                             print(f"Script generation error during reprocess: {e}")
+                            import traceback
+                            traceback.print_exc()
                             video.script_status = 'failed'
                             video.script_error_message = str(e)
                             video.save()
                         
                         # Step 4: TTS Generation (automatically after script generation)
+                        # Fix: If script exists but status is still 'generating', update status to 'generated'
+                        if video.hindi_script and video.script_status == 'generating':
+                            print(f"⚠ Script exists but status is 'generating' - fixing status to 'generated'")
+                            video.script_status = 'generated'
+                            if not video.script_generated_at:
+                                video.script_generated_at = timezone.now()
+                            video.save()
+                        
                         if video.script_status == 'generated' and video.hindi_script:
                             try:
                                 video.synthesis_status = 'synthesizing'
@@ -2182,19 +2290,50 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                                         # Get TTS settings from video model
                                         tts_temperature = video.tts_temperature if video.tts_temperature else 0.75
                                         
-                                        # Use Charon voice for Hindi (as specified)
-                                        voice_name = 'Charon'
+                                        # Use Enceladus voice for Hindi (as specified in n8n workflow)
+                                        voice_name = 'Enceladus'
                                         language_code = 'hi-IN'  # Hindi (India)
                                         
-                                        print(f"Generating TTS with Gemini (voice: {voice_name}, temp: {tts_temperature})...")
+                                        # Analyze script content for appropriate style prompt
+                                        has_fear = any(keyword in clean_script.lower() for keyword in ['राक्षस', 'डर', 'अंधेरा', 'भय', 'साहस', 'पीछा', 'भाग', 'दौड़'])
+                                        has_exciting = any(keyword in clean_script.lower() for keyword in ['देखो', 'वाह', 'अरे', 'मजेदार', 'रोमांचक'])
                                         
-                                        # Generate speech
+                                        # Create context-aware style prompt
+                                        if has_fear:
+                                            style_prompt = """You are narrating a suspenseful and engaging story for children in Hindi.
+                                            - Use a dramatic, slightly tense tone when describing scary or suspenseful moments (राक्षस, अंधेरा, डर)
+                                            - Use [whispering] tags to create atmosphere for fear elements
+                                            - Use [sigh] for relief or tension
+                                            - Maintain energy and engagement throughout
+                                            - This is children's content, so keep it exciting but not too scary
+                                            - Respect all markup tags: [short pause], [medium pause], [long pause], [sigh], [laughing], [uhm], [whispering]
+                                            - Pause tags control timing: [short pause] = brief pause (~250ms), [medium pause] = sentence break (~500ms), [long pause] = dramatic pause (~1000ms+)
+                                            - Expression tags add sounds: [sigh] = sigh sound, [laughing] = laugh, [uhm] = hesitation
+                                            - Style tags modify delivery: [whispering] = quieter voice
+                                            - Read the text exactly as written, following all markup tags precisely"""
+                                        elif has_exciting:
+                                            style_prompt = """You are an engaging, energetic, and detailed explainer for children's content in Hindi.
+                                            - Speak in a friendly, vivid, and enthusiastic tone
+                                            - Be enthusiastic about scenes and actions
+                                            - Use [laughing] tags naturally for fun moments
+                                            - Maintain high energy and excitement
+                                            - Respect all markup tags: [short pause], [medium pause], [long pause], [sigh], [laughing], [uhm]
+                                            - Pause tags control timing: [short pause] = brief pause (~250ms), [medium pause] = sentence break (~500ms), [long pause] = dramatic pause (~1000ms+)
+                                            - Expression tags add sounds: [sigh] = sigh sound, [laughing] = laugh, [uhm] = hesitation
+                                            - Read the text exactly as written, following all markup tags precisely"""
+                                        else:
+                                            style_prompt = None  # Use default
+                                        
+                                        print(f"Generating TTS with Gemini TTS (voice: {voice_name}, language: {language_code}, temp: {tts_temperature})...")
+                                        
+                                        # Generate speech using correct parameter names
                                         service.generate_speech(
                                             text=clean_script,
-                                            output_file=temp_audio_path,
-                                            voice_name=voice_name,
                                             language_code=language_code,
-                                            speaking_rate=video.tts_speed or 1.0
+                                            voice_name=voice_name,
+                                            output_path=temp_audio_path,
+                                            temperature=tts_temperature,
+                                            style_prompt=style_prompt
                                         )
                                         
                                         # Save to video model
@@ -2202,7 +2341,8 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                                         with open(temp_audio_path, 'rb') as f:
                                             video.synthesized_audio.save(f"synthesized_{video.pk}.mp3", File(f), save=False)
                                         
-                                        video.synthesized_audio_url = request.build_absolute_uri(video.synthesized_audio.url)
+                                        # Note: synthesized_audio_url will be generated by serializer if needed
+                                        # Don't set it here in background thread (request not available)
                                         
                                         video.synthesis_status = 'synthesized'
                                         video.synthesis_error = ''
@@ -2282,10 +2422,10 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                                                 from django.core.files import File
                                                 with open(temp_no_audio_path, 'rb') as f:
                                                     video.voice_removed_video.save(f"voice_removed_{video.pk}.mp4", File(f), save=False)
-                                                voice_removed_url = request.build_absolute_uri(video.voice_removed_video.url)
-                                                video.voice_removed_video_url = voice_removed_url
+                                                # Note: voice_removed_video_url will be generated by serializer if needed
+                                                # Don't set it here in background thread (request not available)
                                                 video.save()
-                                                print(f"✓ Step 5a (ffmpeg) completed: Voice removed video saved: {voice_removed_url}")
+                                                print(f"✓ Step 5a (ffmpeg) completed: Voice removed video saved")
                                                 
                                                 # Clean up temp file
                                                 os.unlink(temp_no_audio_path)
@@ -2324,8 +2464,8 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                                                         with open(temp_final_path, 'rb') as f:
                                                             video.final_processed_video.save(f"final_{video.pk}.mp4", File(f), save=False)
                                                         
-                                                        final_video_url = request.build_absolute_uri(video.final_processed_video.url)
-                                                        video.final_processed_video_url = final_video_url
+                                                        # Note: final_processed_video_url will be generated by serializer if needed
+                                                        # Don't set it here in background thread (request not available)
                                                         
                                                         # Upload to Cloudinary if configured
                                                         if upload_video_file:
@@ -2352,7 +2492,7 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                                                                 print(f"Google Sheets sync failed: {e}")
                                                         
                                                         video.save()
-                                                        print(f"✓ Step 5b (ffmpeg) completed: Final video saved: {final_video_url}")
+                                                        print(f"✓ Step 5b (ffmpeg) completed: Final video saved")
                                                         
                                                         # Clean up temp file
                                                         os.unlink(temp_final_path)

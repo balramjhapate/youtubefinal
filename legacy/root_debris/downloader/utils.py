@@ -93,11 +93,16 @@ def translate_text(text, target='en', use_ai=None):
     """
     Translate text to target language
     
+    Optimized for performance:
+    - For very long texts (>5000 chars), always uses GoogleTranslator (faster)
+    - For Hindi, uses optimized translation (AI for short, GoogleTranslator for long)
+    - For other languages, uses GoogleTranslator by default
+    
     Args:
         text: Text to translate
         target: Target language code (default 'en')
         use_ai: If True, use AI for translation (better quality, preserves meaning). 
-                If None (default), automatically use AI for Hindi, GoogleTranslator for others.
+                If None (default), automatically optimized based on text length.
                 If False, always use GoogleTranslator (faster but may miss words/meaning)
     
     Returns:
@@ -106,8 +111,18 @@ def translate_text(text, target='en', use_ai=None):
     if not text:
         return ""
     
-    # For Hindi translation, automatically use AI for better quality and meaning preservation
-    # This ensures no words are missed and meaning is preserved
+    text_length = len(text)
+    
+    # Performance optimization: For very long texts, always use GoogleTranslator (much faster)
+    if text_length > 5000:
+        print(f"⚡ Very long text ({text_length} chars) detected, using GoogleTranslator for speed")
+        try:
+            return GoogleTranslator(source='auto', target=target).translate(text)
+        except Exception as e:
+            print(f"Translation error: {e}")
+            return text
+    
+    # For Hindi translation, use optimized approach
     if target == 'hi':
         if use_ai is False:
             # Explicitly requested to NOT use AI
@@ -116,8 +131,12 @@ def translate_text(text, target='en', use_ai=None):
             except Exception as e:
                 print(f"Translation error: {e}")
                 return text
+        elif use_ai is True:
+            # Explicitly requested to use AI
+            return translate_text_with_ai(text, target='hi')
         else:
-            # Default: Use AI for Hindi (better quality, preserves all words and meaning)
+            # Default: Use optimized translation (AI for short/medium, GoogleTranslator for long)
+            # translate_text_with_ai will handle the optimization internally
             return translate_text_with_ai(text, target='hi')
     
     # For other languages, use AI if explicitly requested, otherwise GoogleTranslator
@@ -132,9 +151,92 @@ def translate_text(text, target='en', use_ai=None):
         return text
 
 
+def _translate_text_chunked(text, target, source, has_timestamps, settings_obj):
+    """
+    Translate long text by chunking it into smaller pieces for better performance
+    
+    Args:
+        text: Text to translate
+        target: Target language code
+        source: Source language
+        has_timestamps: Whether text contains timestamps
+        settings_obj: AIProviderSettings object
+    
+    Returns:
+        str: Translated text
+    """
+    # Chunk size: ~1500 characters per chunk (optimal for API calls)
+    chunk_size = 1500
+    chunks = []
+    
+    if has_timestamps:
+        # For timestamped text, split by lines to preserve timestamps
+        lines = text.split('\n')
+        current_chunk = []
+        current_length = 0
+        
+        for line in lines:
+            line_length = len(line)
+            if current_length + line_length > chunk_size and current_chunk:
+                chunks.append('\n'.join(current_chunk))
+                current_chunk = [line]
+                current_length = line_length
+            else:
+                current_chunk.append(line)
+                current_length += line_length + 1  # +1 for newline
+        
+        if current_chunk:
+            chunks.append('\n'.join(current_chunk))
+    else:
+        # For plain text, split by sentences or at word boundaries
+        words = text.split()
+        current_chunk = []
+        current_length = 0
+        
+        for word in words:
+            word_length = len(word) + 1  # +1 for space
+            if current_length + word_length > chunk_size and current_chunk:
+                chunks.append(' '.join(current_chunk))
+                current_chunk = [word]
+                current_length = word_length
+            else:
+                current_chunk.append(word)
+                current_length += word_length
+        
+        if current_chunk:
+            chunks.append(' '.join(current_chunk))
+    
+    if not chunks:
+        # Fallback: just split by character count
+        chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
+    
+    print(f"📝 Translating {len(chunks)} chunks ({len(text)} total chars)...")
+    
+    # Translate chunks sequentially (parallel would be faster but more complex)
+    translated_chunks = []
+    for i, chunk in enumerate(chunks, 1):
+        print(f"  Translating chunk {i}/{len(chunks)} ({len(chunk)} chars)...")
+        try:
+            # Use GoogleTranslator for chunks (faster than AI for individual chunks)
+            translated_chunk = GoogleTranslator(source=source, target=target).translate(chunk)
+            translated_chunks.append(translated_chunk)
+        except Exception as e:
+            print(f"  ⚠ Chunk {i} translation failed: {e}, using original")
+            translated_chunks.append(chunk)
+    
+    result = '\n'.join(translated_chunks) if has_timestamps else ' '.join(translated_chunks)
+    print(f"✓ Chunked translation complete: {len(text)} chars -> {len(result)} chars")
+    return result
+
+
 def translate_text_with_ai(text, target='hi', source='auto'):
     """
     Translate text using AI (Gemini/OpenAI/Anthropic) for better quality and meaning preservation
+    
+    Optimized for performance:
+    - For long texts (>3000 chars), uses GoogleTranslator (faster)
+    - For medium texts (1000-3000 chars), chunks and translates in batches
+    - For short texts (<1000 chars), uses AI directly
     
     Args:
         text: Text to translate
@@ -146,6 +248,16 @@ def translate_text_with_ai(text, target='hi', source='auto'):
     """
     if not text:
         return ""
+    
+    # Performance optimization: For very long texts, use GoogleTranslator (much faster)
+    text_length = len(text)
+    if text_length > 3000:
+        print(f"⚠ Long text ({text_length} chars) detected, using GoogleTranslator for faster translation")
+        try:
+            return GoogleTranslator(source=source, target=target).translate(text)
+        except Exception as e:
+            print(f"GoogleTranslator failed: {e}, falling back to AI")
+            # Continue with AI translation below
     
     try:
         from .models import AIProviderSettings
@@ -159,6 +271,10 @@ def translate_text_with_ai(text, target='hi', source='auto'):
         
         # Check if text contains timestamps
         has_timestamps = bool(re.search(r'\d{1,2}:\d{2}:\d{2}\s+', text))
+        
+        # For medium-length texts, chunk and translate in batches for better performance
+        if text_length > 1000 and text_length <= 3000:
+            return _translate_text_chunked(text, target, source, has_timestamps, settings_obj)
         
         # Create system prompt for translation
         system_prompt = """You are an expert translator. Your task is to translate text accurately while preserving the complete meaning, context, and ALL words.
