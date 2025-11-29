@@ -33,7 +33,11 @@ class Settings(BaseSettings):
     @property
     def DATABASE_URL(self) -> str:
         """Construct MySQL database URL"""
-        return f"mysql+pymysql://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}?charset=utf8mb4"
+        # Handle empty password (localhost MySQL often doesn't require password)
+        if self.DB_PASSWORD:
+            return f"mysql+pymysql://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}?charset=utf8mb4"
+        else:
+            return f"mysql+pymysql://{self.DB_USER}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}?charset=utf8mb4"
     
     # Media
     MEDIA_ROOT: str = os.getenv("MEDIA_ROOT", "media")

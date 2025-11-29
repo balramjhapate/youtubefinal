@@ -7,7 +7,7 @@ import os
 import sqlite3
 import pymysql
 from app.config import settings
-from app.database import SessionLocal, VideoDownload, AIProviderSettings, SavedVoice
+from app.models import SessionLocal, VideoDownload, AIProviderSettings, SavedVoice
 from datetime import datetime
 
 def parse_datetime(dt_str):

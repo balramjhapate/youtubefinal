@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from typing import List
 from pathlib import Path
 
-from app.database import get_db, SavedVoice
+from app.models import get_db, SavedVoice
 from app.schemas import (
     XTTSLanguageResponse, XTTSVoiceResponse,
     XTTSGenerateRequest, XTTSGenerateResponse

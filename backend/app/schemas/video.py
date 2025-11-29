@@ -1,12 +1,11 @@
 """
-Pydantic schemas for request/response validation
+Video-related Pydantic schemas
 """
 from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
 
 
-# Video Schemas
 class VideoExtractRequest(BaseModel):
     """Request to extract video from URL"""
     url: str = Field(..., description="Xiaohongshu/RedNote video URL")
@@ -51,20 +50,6 @@ class VideoListResponse(BaseModel):
     videos: List[VideoResponse]
 
 
-# AI Settings Schemas
-class AISettingsResponse(BaseModel):
-    """AI Settings response"""
-    provider: str
-    api_key: str
-
-
-class AISettingsUpdate(BaseModel):
-    """AI Settings update request"""
-    provider: str = Field(default="gemini")
-    api_key: str = Field(default="")
-
-
-# Transcription Schemas
 class TranscriptionResponse(BaseModel):
     """Transcription response"""
     status: str
@@ -81,7 +66,6 @@ class TranscriptionStatusResponse(BaseModel):
     language: Optional[str] = None
 
 
-# AI Processing Schemas
 class AIProcessingResponse(BaseModel):
     """AI Processing response"""
     status: str
@@ -90,7 +74,6 @@ class AIProcessingResponse(BaseModel):
     tags: Optional[str] = None
 
 
-# Audio Synthesis Schemas
 class AudioSynthesisRequest(BaseModel):
     """Audio synthesis request"""
     profile_id: Optional[int] = None
@@ -105,53 +88,12 @@ class AudioSynthesisResponse(BaseModel):
     clean_script: Optional[str] = None
 
 
-# Bulk Operations Schemas
-class BulkDeleteRequest(BaseModel):
-    """Bulk delete request"""
-    video_ids: List[int] = Field(..., description="List of video IDs to delete")
-
-
-class BulkDeleteResponse(BaseModel):
-    """Bulk delete response"""
-    status: str
-    message: str
-    deleted_count: int
-
-
-# Retry Schemas
-class RetryResponse(BaseModel):
-    """Retry operation response"""
-    status: str
-    message: str
-
-
-# XTTS Schemas
-class XTTSLanguageResponse(BaseModel):
-    """XTTS language response"""
-    languages: List[dict]
-
-
-class XTTSVoiceResponse(BaseModel):
-    """XTTS voice response"""
-    id: int
-    name: str
-    file: Optional[str] = None
-    created_at: datetime
-    
-    class Config:
-        from_attributes = True
-
-
-class XTTSGenerateRequest(BaseModel):
-    """XTTS generation request"""
-    text: str
-    language: str
-    voice_id: Optional[int] = None
-
-
-class XTTSGenerateResponse(BaseModel):
-    """XTTS generation response"""
-    status: str
-    audio_url: Optional[str] = None
-    message: Optional[str] = None
+class VideoStatsResponse(BaseModel):
+    """Video statistics response"""
+    total: int
+    downloaded: int
+    cloud: int
+    success: int
+    failed: int
+    pending: int
 

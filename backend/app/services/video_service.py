@@ -3,7 +3,7 @@ Video service for background processing tasks
 """
 from datetime import datetime
 from sqlalchemy.orm import Session
-from app.database import VideoDownload, AIProviderSettings
+from app.models import VideoDownload, AIProviderSettings
 from app.services.utils import (
     transcribe_video, translate_text, process_video_with_ai,
     download_file

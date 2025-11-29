@@ -137,7 +137,7 @@ python run_fastapi.py
 ### Database Issues
 The database is created automatically. If you have issues:
 ```bash
-python -c "from app.database import init_db; init_db()"
+python -c "from app.models import init_db; init_db()"
 ```
 
 ## 🔗 Next Steps

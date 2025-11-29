@@ -4,7 +4,7 @@ Retry operations router for failed pipeline steps
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 
-from app.database import get_db, VideoDownload
+from app.models import get_db, VideoDownload
 from app.schemas import RetryResponse
 from app.services.video_service import VideoService
 

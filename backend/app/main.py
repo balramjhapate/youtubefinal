@@ -11,7 +11,7 @@ import uvicorn
 import os
 from pathlib import Path
 
-from app.database import init_db, get_db
+from app.models import init_db, get_db
 from app.routers import videos, ai_settings, xtts, bulk, retry
 from app.config import settings
 

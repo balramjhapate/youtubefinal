@@ -4,7 +4,7 @@ AI Settings endpoints router
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.database import get_db, AIProviderSettings
+from app.models import get_db, AIProviderSettings
 from app.schemas import AISettingsResponse, AISettingsUpdate
 
 router = APIRouter(prefix="/ai-settings", tags=["AI Settings"])

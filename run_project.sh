@@ -6,7 +6,7 @@ mkdir -p "$LOG_DIR"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 MAIN_LOG="$LOG_DIR/run_project_${TIMESTAMP}.log"
 ERROR_LOG="$LOG_DIR/errors_${TIMESTAMP}.log"
-DJANGO_LOG="$LOG_DIR/django_${TIMESTAMP}.log"
+FASTAPI_LOG="$LOG_DIR/fastapi_${TIMESTAMP}.log"
 REACT_LOG="$LOG_DIR/react_${TIMESTAMP}.log"
 DOCKER_LOG="$LOG_DIR/docker_${TIMESTAMP}.log"
 PIP_LOG="$LOG_DIR/pip_${TIMESTAMP}.log"
@@ -62,17 +62,45 @@ check_command() {
 # Function to kill background processes on exit
 cleanup() {
     log_info "Stopping servers..."
-    if [ ! -z "$DJANGO_PID" ]; then
-        log_debug "Killing Django (PID: $DJANGO_PID)"
-        kill $DJANGO_PID 2>/dev/null
+    if [ ! -z "$FASTAPI_PID" ]; then
+        log_debug "Killing FastAPI (PID: $FASTAPI_PID)"
+        kill $FASTAPI_PID 2>/dev/null
     fi
     if [ ! -z "$REACT_PID" ]; then
         log_debug "Killing React (PID: $REACT_PID)"
         kill $REACT_PID 2>/dev/null
     fi
+    if [ ! -z "$MONITOR_PID" ]; then
+        log_debug "Stopping monitor (PID: $MONITOR_PID)"
+        kill $MONITOR_PID 2>/dev/null
+    fi
     log_info "Stopping NCA Toolkit..."
     docker stop nca-toolkit 2>/dev/null || true
-    log_info "Cleanup complete. Logs saved to: $LOG_DIR"
+    
+    # Remove all log files created in this session
+    log_info "Cleaning up log files..."
+    if [ ! -z "$TIMESTAMP" ]; then
+        # Remove logs with this session's timestamp
+        rm -f "$MAIN_LOG" 2>/dev/null || true
+        rm -f "$ERROR_LOG" 2>/dev/null || true
+        rm -f "$FASTAPI_LOG" 2>/dev/null || true
+        rm -f "$REACT_LOG" 2>/dev/null || true
+        rm -f "$DOCKER_LOG" 2>/dev/null || true
+        rm -f "$PIP_LOG" 2>/dev/null || true
+        rm -f "$NPM_LOG" 2>/dev/null || true
+        log_info "✓ Removed all log files from this session"
+    else
+        # Fallback: remove logs if variables are set
+        [ ! -z "$MAIN_LOG" ] && rm -f "$MAIN_LOG" 2>/dev/null || true
+        [ ! -z "$ERROR_LOG" ] && rm -f "$ERROR_LOG" 2>/dev/null || true
+        [ ! -z "$FASTAPI_LOG" ] && rm -f "$FASTAPI_LOG" 2>/dev/null || true
+        [ ! -z "$REACT_LOG" ] && rm -f "$REACT_LOG" 2>/dev/null || true
+        [ ! -z "$DOCKER_LOG" ] && rm -f "$DOCKER_LOG" 2>/dev/null || true
+        [ ! -z "$PIP_LOG" ] && rm -f "$PIP_LOG" 2>/dev/null || true
+        [ ! -z "$NPM_LOG" ] && rm -f "$NPM_LOG" 2>/dev/null || true
+    fi
+    
+    log_info "Cleanup complete. All log files removed."
     exit
 }
 
@@ -82,6 +110,22 @@ trap 'log_error "Script failed at line $LINENO. Check logs in $LOG_DIR"' ERR
 
 log_info "Starting RedNote Project..."
 log_system_info
+
+# Ensure we're in the project root directory
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$PROJECT_ROOT" || {
+    log_error "Failed to change to project root directory"
+    exit 1
+}
+log_debug "Project root: $PROJECT_ROOT"
+
+# Verify project structure
+if [ ! -d "backend" ] || [ ! -d "frontend" ]; then
+    log_error "Invalid project structure. Expected backend/ and frontend/ directories."
+    log_error "Current directory: $(pwd)"
+    log_error "Please run this script from the project root directory."
+    exit 1
+fi
 
 # Check for Docker (optional - only needed for NCA Toolkit)
 log_info "Checking for Docker (optional for NCA Toolkit)..."
@@ -121,8 +165,8 @@ fi
 
 # Install Python dependencies
 log_info "Setting up Python environment..."
-cd legacy/root_debris || {
-    log_error "Failed to change directory to legacy/root_debris"
+cd backend || {
+    log_error "Failed to change directory to backend"
     log_error "Current directory: $(pwd)"
     exit 1
 }
@@ -158,12 +202,18 @@ PYTHON_MINOR=$(echo $PYTHON_VERSION | cut -d. -f2)
 
 log_info "Python version: $PYTHON_VERSION (from: $PYTHON_CMD)"
 
-# Check if Python version is compatible (3.9-3.11, NOT 3.12+)
-if [ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" -ge 9 ] && [ "$PYTHON_MINOR" -le 11 ]; then
-    log_info "✓ Python version is compatible with TTS"
+# Check if Python version is compatible (3.8+ for FastAPI, 3.9-3.11 for TTS)
+if [ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" -ge 8 ]; then
+    if [ "$PYTHON_MINOR" -ge 9 ] && [ "$PYTHON_MINOR" -le 11 ]; then
+        log_info "✓ Python version is compatible with FastAPI and TTS"
+    else
+        log_info "✓ Python version is compatible with FastAPI"
+        log_warning "Python 3.9-3.11 recommended for TTS. Current: $PYTHON_VERSION"
+        log_warning "TTS features may not work properly."
+    fi
 else
-    log_warning "Python 3.9-3.11 recommended for TTS. Current: $PYTHON_VERSION"
-    log_warning "TTS features may not work properly."
+    log_error "Python 3.8+ is required for FastAPI. Current: $PYTHON_VERSION"
+    exit 1
 fi
 
 # Recreate venv if it exists with wrong Python version
@@ -205,8 +255,8 @@ log_debug "Virtual environment activated: $(which python)"
 # Check if dependencies need to be installed
 log_info "Checking Python dependencies..."
 NEEDS_INSTALL=false
-if [ ! -f "requirements.txt" ]; then
-    log_error "requirements.txt not found in $(pwd)"
+if [ ! -f "requirements_fastapi.txt" ]; then
+    log_error "requirements_fastapi.txt not found in $(pwd)"
     exit 1
 fi
 
@@ -214,15 +264,15 @@ if [ ! -f "venv/.deps_installed" ]; then
     NEEDS_INSTALL=true
     log_debug "No .deps_installed marker found"
 else
-    # Check if requirements.txt has changed
-    if [ "requirements.txt" -nt "venv/.deps_installed" ]; then
+    # Check if requirements_fastapi.txt has changed
+    if [ "requirements_fastapi.txt" -nt "venv/.deps_installed" ]; then
         NEEDS_INSTALL=true
-        log_debug "requirements.txt has been modified"
+        log_debug "requirements_fastapi.txt has been modified"
     fi
 fi
 
-# Quick check if Django is installed (as a proxy for all dependencies)
-if pip show django > /dev/null 2>&1; then
+# Quick check if FastAPI is installed (as a proxy for all dependencies)
+if pip show fastapi > /dev/null 2>&1; then
     if [ "$NEEDS_INSTALL" = false ]; then
         log_info "✓ Python dependencies already installed"
     else
@@ -233,8 +283,8 @@ if pip show django > /dev/null 2>&1; then
             log_warning "pip upgrade had issues, but continuing..."
         fi
         # Run pip install and capture output
-        log_info "Installing/updating packages from requirements.txt..."
-        PIP_OUTPUT=$(pip install -r requirements.txt 2>&1)
+        log_info "Installing/updating packages from requirements_fastapi.txt..."
+        PIP_OUTPUT=$(pip install -r requirements_fastapi.txt 2>&1)
         PIP_EXIT=$?
         echo "$PIP_OUTPUT" >> "$PIP_LOG"
         # Only show output if there are actual changes (not just "already satisfied")
@@ -261,8 +311,8 @@ else
         log_warning "pip upgrade had issues, but continuing..."
     fi
     # Show progress for initial installation, filter out "already satisfied"
-    log_info "Installing packages from requirements.txt..."
-    PIP_OUTPUT=$(pip install -r requirements.txt 2>&1)
+    log_info "Installing packages from requirements_fastapi.txt..."
+    PIP_OUTPUT=$(pip install -r requirements_fastapi.txt 2>&1)
     PIP_EXIT=$?
     echo "$PIP_OUTPUT" >> "$PIP_LOG"
     echo "$PIP_OUTPUT" | grep -v "Requirement already satisfied" | grep -v "^$" || true
@@ -301,10 +351,20 @@ else
     log_warning "Check $PIP_LOG for details"
 fi
 
-cd ../.. || {
+# Return to project root (one level up from backend)
+cd .. || {
     log_error "Failed to return to project root"
+    log_error "Current directory: $(pwd)"
     exit 1
 }
+
+# Verify we're in project root
+if [ ! -d "frontend" ]; then
+    log_error "Not in project root. frontend/ directory not found."
+    log_error "Current directory: $(pwd)"
+    log_error "Expected directory structure: youtubefinal/{backend,frontend}"
+    exit 1
+fi
 
 # Install npm dependencies
 log_info "Setting up frontend dependencies..."
@@ -433,34 +493,34 @@ else
 fi
 
 # Check if ports are available
-DJANGO_PORT=8000
+FASTAPI_PORT=8000
 REACT_PORT=5173
 NCA_PORT=8080
 
 log_info "Checking port availability..."
-log_debug "Django port: $DJANGO_PORT, React port: $REACT_PORT, NCA port: $NCA_PORT"
+log_debug "FastAPI port: $FASTAPI_PORT, React port: $REACT_PORT, NCA port: $NCA_PORT"
 
-if lsof -ti:$DJANGO_PORT &> /dev/null; then
-    PORT_PID=$(lsof -ti:$DJANGO_PORT | head -1)
+if lsof -ti:$FASTAPI_PORT &> /dev/null; then
+    PORT_PID=$(lsof -ti:$FASTAPI_PORT | head -1)
     PORT_PROCESS=$(ps -p $PORT_PID -o comm= 2>/dev/null || echo "unknown")
     PORT_CMD=$(ps -p $PORT_PID -o args= 2>/dev/null | head -c 100 || echo "unknown")
     
-    # Check if it's a previous Django instance
-    if echo "$PORT_CMD" | grep -qE "(manage.py|runserver|django)" 2>/dev/null; then
-        log_warning "Port $DJANGO_PORT is already in use by a previous Django instance (PID: $PORT_PID)"
+    # Check if it's a previous FastAPI instance
+    if echo "$PORT_CMD" | grep -qE "(uvicorn|fastapi|run_fastapi)" 2>/dev/null; then
+        log_warning "Port $FASTAPI_PORT is already in use by a previous FastAPI instance (PID: $PORT_PID)"
         log_info "Killing previous instance..."
         kill $PORT_PID 2>/dev/null
         sleep 1
         # Verify it's killed
-        if lsof -ti:$DJANGO_PORT &> /dev/null; then
+        if lsof -ti:$FASTAPI_PORT &> /dev/null; then
             log_error "Failed to kill process. Please manually kill it: kill $PORT_PID"
         else
             log_info "✓ Previous instance killed"
         fi
     else
-        log_warning "Port $DJANGO_PORT is already in use by: $PORT_PROCESS (PID: $PORT_PID)"
+        log_warning "Port $FASTAPI_PORT is already in use by: $PORT_PROCESS (PID: $PORT_PID)"
         log_warning "Command: $PORT_CMD"
-        log_warning "Django will try to start, but may fail. To free the port, run: kill $PORT_PID"
+        log_warning "FastAPI will try to start, but may fail. To free the port, run: kill $PORT_PID"
     fi
 fi
 
@@ -501,56 +561,120 @@ if lsof -ti:$NCA_PORT &> /dev/null; then
     fi
 fi
 
-# Start Django Backend
-log_info "Starting Django Backend..."
-cd legacy/root_debris || {
-    log_error "Failed to change directory to legacy/root_debris"
-    exit 1
-}
-source venv/bin/activate || {
-    log_error "Failed to activate virtual environment"
+# Initialize MySQL Database
+log_info "Initializing MySQL database..."
+
+# Check if XAMPP MySQL is running
+log_info "Checking for XAMPP MySQL..."
+XAMPP_MYSQL_RUNNING=false
+if lsof -ti:3306 &> /dev/null; then
+    XAMPP_MYSQL_RUNNING=true
+    log_info "✓ MySQL is running on port 3306"
+elif [ -d "/Applications/XAMPP" ] || [ -d "/opt/lampp" ]; then
+    log_warning "XAMPP detected but MySQL may not be running"
+    log_warning "Please start MySQL from XAMPP Control Panel"
+    log_warning "  macOS: Open XAMPP and click 'Start' next to MySQL"
+    log_warning "  Linux: sudo /opt/lampp/lampp startmysql"
+    log_warning "  Windows: Open XAMPP Control Panel and start MySQL"
+else
+    log_info "XAMPP not detected, assuming standard MySQL installation"
+fi
+
+if [ ! -f ".env" ]; then
+    log_info ".env file not found. Creating with XAMPP/localhost settings (no password)..."
+    cat > .env << 'EOF'
+# FastAPI Application Configuration
+# Database - MySQL (XAMPP/localhost, no password by default)
+DB_HOST=localhost
+DB_PORT=3306
+DB_USER=root
+DB_PASSWORD=
+DB_NAME=youtubefinal
+
+# Server Configuration
+HOST=0.0.0.0
+PORT=8000
+DEBUG=True
+
+# Media Files
+MEDIA_ROOT=media
+
+# NCA Toolkit API (optional)
+NCA_API_ENABLED=False
+NCA_API_URL=http://localhost:8080
+NCA_API_KEY=
+NCA_API_TIMEOUT=600
+
+# AI Provider (optional)
+GEMINI_API_KEY=
+EOF
+    log_info "✓ Created .env file with XAMPP/localhost settings"
+    log_info "  Database: youtubefinal on localhost:3306 (no password)"
+    log_info "  If your XAMPP MySQL has a password, edit .env and set DB_PASSWORD"
+fi
+
+# Check if database needs initialization
+log_info "Checking database setup..."
+# Need to be in backend/ directory for Python imports to work
+cd backend || {
+    log_error "Failed to change directory to backend"
+    log_error "Current directory: $(pwd)"
     exit 1
 }
 
-# Check if manage.py exists
-if [ ! -f "manage.py" ]; then
-    log_error "manage.py not found in $(pwd)"
+# Activate virtual environment if not already activated
+if [ -z "$VIRTUAL_ENV" ]; then
+    if [ -f "venv/bin/activate" ]; then
+        source venv/bin/activate || {
+            log_error "Failed to activate virtual environment"
+            exit 1
+        }
+    fi
+fi
+
+# Check database connection
+if python3 -c "from app.database import engine; engine.connect()" 2>/dev/null; then
+    log_info "✓ Database connection successful"
+else
+    log_info "Initializing database (this will create database and tables if needed)..."
+    DB_INIT_OUTPUT=$(python3 init_database.py 2>&1)
+    DB_INIT_EXIT=$?
+    echo "$DB_INIT_OUTPUT" | tee -a "$FASTAPI_LOG"
+    if [ $DB_INIT_EXIT -ne 0 ]; then
+        log_error "Database initialization failed."
+        log_error "Exit code: $DB_INIT_EXIT"
+        log_error "Common issues:"
+        log_error "  - MySQL server not running"
+        log_error "  - Incorrect credentials in .env"
+        log_error "  - User lacks CREATE DATABASE privileges"
+        log_error "  - Connection refused (check DB_HOST and DB_PORT)"
+        exit 1
+    fi
+    log_info "✓ Database initialized"
+fi
+
+# Start FastAPI Backend
+log_info "Starting FastAPI Backend..."
+if [ ! -f "run_fastapi.py" ]; then
+    log_error "run_fastapi.py not found in $(pwd)"
     exit 1
 fi
 
-# Run migrations
-log_info "Running database migrations..."
-MIGRATION_OUTPUT=$(python3 manage.py migrate --noinput 2>&1)
-MIGRATION_EXIT=$?
-echo "$MIGRATION_OUTPUT" | tee -a "$DJANGO_LOG"
-if [ $MIGRATION_EXIT -ne 0 ]; then
-    log_error "Database migrations failed."
-    log_error "Exit code: $MIGRATION_EXIT"
-    log_error "Migration output saved to: $DJANGO_LOG"
-    log_error "Common issues:"
-    log_error "  - Database connection problems"
-    log_error "  - Missing database file or permissions"
-    log_error "  - Migration conflicts"
-    exit 1
-fi
-log_info "✓ Migrations completed"
+log_info "Starting FastAPI server on port $FASTAPI_PORT..."
+log_debug "FastAPI log file: $FASTAPI_LOG"
+python3 run_fastapi.py >> "$FASTAPI_LOG" 2>&1 &
+FASTAPI_PID=$!
+log_debug "FastAPI PID: $FASTAPI_PID"
 
-# Start Django server
-log_info "Starting Django server on port $DJANGO_PORT..."
-log_debug "Django log file: $DJANGO_LOG"
-python3 manage.py runserver 0.0.0.0:$DJANGO_PORT >> "$DJANGO_LOG" 2>&1 &
-DJANGO_PID=$!
-log_debug "Django PID: $DJANGO_PID"
-
-# Wait for Django to be ready (check if port is listening)
+# Wait for FastAPI to be ready (check if port is listening)
 MAX_WAIT=30
 WAIT_COUNT=0
-log_info "Waiting for Django to start (max ${MAX_WAIT}s)..."
+log_info "Waiting for FastAPI to start (max ${MAX_WAIT}s)..."
 while [ $WAIT_COUNT -lt $MAX_WAIT ]; do
-    if lsof -ti:$DJANGO_PORT &> /dev/null; then
+    if lsof -ti:$FASTAPI_PORT &> /dev/null; then
         # Port is listening, check if it's responding
-        if curl -s http://localhost:$DJANGO_PORT/admin/ > /dev/null 2>&1; then
-            log_info "✓ Django is responding"
+        if curl -s http://localhost:$FASTAPI_PORT/health > /dev/null 2>&1; then
+            log_info "✓ FastAPI is responding"
             break
         fi
     fi
@@ -561,31 +685,35 @@ while [ $WAIT_COUNT -lt $MAX_WAIT ]; do
     fi
 done
 
-# Check if Django started successfully
-if ! lsof -ti:$DJANGO_PORT &> /dev/null; then
-    log_error "Django failed to start on port $DJANGO_PORT after $MAX_WAIT seconds."
-    log_error "Django log file: $DJANGO_LOG"
-    log_error "Last 50 lines of Django log:"
-    tail -50 "$DJANGO_LOG" | tee -a "$ERROR_LOG"
+# Check if FastAPI started successfully
+if ! lsof -ti:$FASTAPI_PORT &> /dev/null; then
+    log_error "FastAPI failed to start on port $FASTAPI_PORT after $MAX_WAIT seconds."
+    log_error "FastAPI log file: $FASTAPI_LOG"
+    log_error "Last 50 lines of FastAPI log:"
+    tail -50 "$FASTAPI_LOG" | tee -a "$ERROR_LOG"
     log_error "Process status:"
-    if kill -0 $DJANGO_PID 2>/dev/null; then
-        log_error "Django process (PID: $DJANGO_PID) is still running but not listening on port"
+    if kill -0 $FASTAPI_PID 2>/dev/null; then
+        log_error "FastAPI process (PID: $FASTAPI_PID) is still running but not listening on port"
     else
-        log_error "Django process (PID: $DJANGO_PID) has exited"
+        log_error "FastAPI process (PID: $FASTAPI_PID) has exited"
     fi
     log_error "Common issues:"
     log_error "  - Port already in use"
-    log_error "  - Database connection errors"
+    log_error "  - Database connection errors (check .env and MySQL)"
     log_error "  - Missing environment variables"
     log_error "  - Import errors or missing dependencies"
     cleanup
     exit 1
 fi
 
-log_info "✓ Django is running on port $DJANGO_PORT"
+log_info "✓ FastAPI is running on port $FASTAPI_PORT"
+log_info "  API: http://localhost:$FASTAPI_PORT/api"
+log_info "  Swagger UI: http://localhost:$FASTAPI_PORT/docs"
 
-cd ../.. || {
+# Return to project root (one level up from backend)
+cd .. || {
     log_error "Failed to return to project root"
+    log_error "Current directory: $(pwd)"
     exit 1
 }
 
@@ -647,7 +775,9 @@ echo ""
 log_info "=========================================="
 log_info "All services are running!"
 log_info "=========================================="
-echo "Backend: http://localhost:8000"
+echo "Backend API: http://localhost:8000/api"
+echo "Swagger UI: http://localhost:8000/docs"
+echo "ReDoc: http://localhost:8000/redoc"
 echo "Frontend: http://localhost:5173"
 if [ "$NCA_AVAILABLE" = true ]; then
     echo "NCA Toolkit: http://localhost:8080"
@@ -655,14 +785,15 @@ else
     echo "NCA Toolkit: Not available (optional service)"
 fi
 log_info "=========================================="
-log_info "Log files location: $LOG_DIR"
+log_info "Note: Log files will be removed when services stop"
+log_info "Log files location (temporary): $LOG_DIR"
 log_info "  - Main log: $MAIN_LOG"
-log_info "  - Django log: $DJANGO_LOG"
+log_info "  - FastAPI log: $FASTAPI_LOG"
 log_info "  - React log: $REACT_LOG"
 log_info "  - Error log: $ERROR_LOG"
 log_info "  - Docker log: $DOCKER_LOG"
 log_info "=========================================="
-echo "Press Ctrl+C to stop all services."
+echo "Press Ctrl+C to stop all services and remove logs."
 echo ""
 
 # Function to check process health and log status
@@ -681,32 +812,32 @@ check_process_health() {
 monitor_background_tasks() {
     local iteration=0
     # Use exported PIDs or fall back to checking if they're set
-    local django_pid=${DJANGO_PID:-0}
+    local fastapi_pid=${FASTAPI_PID:-0}
     local react_pid=${REACT_PID:-0}
     
-    if [ "$django_pid" -eq 0 ] || [ "$react_pid" -eq 0 ]; then
+    if [ "$fastapi_pid" -eq 0 ] || [ "$react_pid" -eq 0 ]; then
         log_error "Monitor started before PIDs were set. Waiting..."
         sleep 5
-        django_pid=${DJANGO_PID:-0}
+        fastapi_pid=${FASTAPI_PID:-0}
         react_pid=${REACT_PID:-0}
-        if [ "$django_pid" -eq 0 ] || [ "$react_pid" -eq 0 ]; then
+        if [ "$fastapi_pid" -eq 0 ] || [ "$react_pid" -eq 0 ]; then
             log_error "Monitor: PIDs still not available. Exiting monitor."
             return 1
         fi
     fi
     
-    log_debug "Monitor: Tracking Django PID: $django_pid, React PID: $react_pid"
+    log_debug "Monitor: Tracking FastAPI PID: $fastapi_pid, React PID: $react_pid"
     
     while true; do
         sleep 30
         iteration=$((iteration + 1))
         
         # Refresh PIDs in case they changed
-        django_pid=${DJANGO_PID:-$django_pid}
+        fastapi_pid=${FASTAPI_PID:-$fastapi_pid}
         react_pid=${REACT_PID:-$react_pid}
         
         # Check if main processes are still running
-        if ! check_process_health $django_pid "Django"; then
+        if ! check_process_health $fastapi_pid "FastAPI"; then
             return 1
         fi
         if ! check_process_health $react_pid "React"; then
@@ -715,11 +846,11 @@ monitor_background_tasks() {
         
         # Show periodic status every 60 seconds (visible to user)
         if [ $((iteration % 2)) -eq 0 ]; then
-            echo "[$(date +'%H:%M:%S')] ✓ Services running (Django: $django_pid, React: $react_pid)"
+            echo "[$(date +'%H:%M:%S')] ✓ Services running (FastAPI: $fastapi_pid, React: $react_pid)"
         fi
         
         # Log detailed status to log file
-        log_debug "Services running - Django (PID: $django_pid), React (PID: $react_pid)"
+        log_debug "Services running - FastAPI (PID: $fastapi_pid), React (PID: $react_pid)"
         
         # Check for transcription/processing processes
         STUCK_TRANSCRIPTION=$(ps aux | grep -E "(whisper|transcrib|ffmpeg.*audio|python.*transcribe)" | grep -v grep | wc -l | tr -d ' ')
@@ -731,22 +862,22 @@ monitor_background_tasks() {
             fi
         fi
         
-        # Check Django log for recent errors (excluding normal API requests and expected errors)
-        if [ -f "$DJANGO_LOG" ]; then
-            RECENT_ERRORS=$(tail -200 "$DJANGO_LOG" | grep -iE "(error|exception|traceback|failed)" | grep -v "GET /api" | grep -v "POST /api" | grep -v "Broken pipe" | grep -v "must be transcribed" | tail -3)
+        # Check FastAPI log for recent errors (excluding normal API requests and expected errors)
+        if [ -f "$FASTAPI_LOG" ]; then
+            RECENT_ERRORS=$(tail -200 "$FASTAPI_LOG" | grep -iE "(error|exception|traceback|failed)" | grep -v "GET /api" | grep -v "POST /api" | grep -v "Broken pipe" | grep -v "must be transcribed" | tail -3)
             if [ ! -z "$RECENT_ERRORS" ]; then
                 # Check if it's a critical error or just a user error
                 CRITICAL_ERROR=$(echo "$RECENT_ERRORS" | grep -iE "(internal server|500|traceback|exception)" | head -1)
                 if [ ! -z "$CRITICAL_ERROR" ]; then
-                    log_warning "Recent Django errors detected (check $DJANGO_LOG for details)"
-                    echo "[$(date +'%H:%M:%S')] ⚠️  Django errors detected - check logs: $DJANGO_LOG"
+                    log_warning "Recent FastAPI errors detected (check $FASTAPI_LOG for details)"
+                    echo "[$(date +'%H:%M:%S')] ⚠️  FastAPI errors detected - check logs: $FASTAPI_LOG"
                 fi
             fi
         fi
         
         # Check if ports are still listening
-        if ! lsof -ti:$DJANGO_PORT &> /dev/null; then
-            log_error "Django port $DJANGO_PORT is no longer listening!"
+        if ! lsof -ti:$FASTAPI_PORT &> /dev/null; then
+            log_error "FastAPI port $FASTAPI_PORT is no longer listening!"
             return 1
         fi
         if ! lsof -ti:$REACT_PORT &> /dev/null; then
@@ -761,36 +892,47 @@ sleep 0.5
 
 # Start background monitoring
 # Export PIDs so the background function can access them
-export DJANGO_PID REACT_PID DJANGO_PORT REACT_PORT DJANGO_LOG REACT_LOG
+export FASTAPI_PID REACT_PID FASTAPI_PORT REACT_PORT FASTAPI_LOG REACT_LOG
 monitor_background_tasks &
 MONITOR_PID=$!
 log_debug "Started background monitor (PID: $MONITOR_PID)"
 
 # Wait for processes with periodic status updates
-log_info "Waiting for processes (Django PID: $DJANGO_PID, React PID: $REACT_PID)..."
+log_info "Waiting for processes (FastAPI PID: $FASTAPI_PID, React PID: $REACT_PID)..."
 log_info "Note: Script will continue running while services are active."
 log_info "Status updates will appear every 60 seconds to confirm services are running."
 log_info "If transcription appears stuck:"
-log_info "  - Check Django logs: $DJANGO_LOG"
+log_info "  - Check FastAPI logs: $FASTAPI_LOG"
 log_info "  - Check for background processes: ps aux | grep -E '(whisper|transcrib|ffmpeg)'"
 log_info "  - Transcription can take several minutes for long videos"
 
 # Wait for processes (this blocks until one exits)
-wait $DJANGO_PID $REACT_PID
+wait $FASTAPI_PID $REACT_PID
 EXIT_CODE=$?
 
 # Stop monitor
 kill $MONITOR_PID 2>/dev/null || true
 
 # Log which process exited
-if ! kill -0 $DJANGO_PID 2>/dev/null; then
-    log_error "Django process exited (code: $EXIT_CODE)"
-    log_error "Check Django logs: $DJANGO_LOG"
+if ! kill -0 $FASTAPI_PID 2>/dev/null; then
+    log_error "FastAPI process exited (code: $EXIT_CODE)"
 fi
 
 if ! kill -0 $REACT_PID 2>/dev/null; then
     log_error "React process exited (code: $EXIT_CODE)"
-    log_error "Check React logs: $REACT_LOG"
 fi
 
 log_info "One or more services have stopped. Cleaning up..."
+
+# Remove all log files created in this session
+log_info "Removing log files from this session..."
+if [ ! -z "$TIMESTAMP" ]; then
+    rm -f "$MAIN_LOG" 2>/dev/null || true
+    rm -f "$ERROR_LOG" 2>/dev/null || true
+    rm -f "$FASTAPI_LOG" 2>/dev/null || true
+    rm -f "$REACT_LOG" 2>/dev/null || true
+    rm -f "$DOCKER_LOG" 2>/dev/null || true
+    rm -f "$PIP_LOG" 2>/dev/null || true
+    rm -f "$NPM_LOG" 2>/dev/null || true
+    log_info "✓ All log files removed"
+fi

@@ -6,11 +6,11 @@ from sqlalchemy.orm import Session
 from typing import Optional, List
 from datetime import datetime
 
-from app.database import get_db, VideoDownload
+from app.models import get_db, VideoDownload
 from app.schemas import (
     VideoExtractRequest, VideoExtractResponse, VideoResponse,
     TranscriptionResponse, TranscriptionStatusResponse,
-    AIProcessingResponse, AudioSynthesisResponse
+    AIProcessingResponse, AudioSynthesisResponse, VideoStatsResponse
 )
 from app.services.video_service import VideoService
 from app.services.utils import perform_extraction, extract_video_id
@@ -49,17 +49,10 @@ async def extract_video(
                     cached=True
                 )
             else:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Video with ID '{video_id}' already exists but extraction failed."
-                )
-    
-    # Check for duplicate
-    if video_id and db.query(VideoDownload).filter(VideoDownload.video_id == video_id).exists():
-        raise HTTPException(
-            status_code=400,
-            detail=f"Video with ID '{video_id}' already exists."
-        )
+                # Video exists but failed - delete it and retry
+                print(f"Video {video_id} exists but failed. Deleting and retrying...")
+                db.delete(existing)
+                db.commit()
     
     # Create pending download record
     download = VideoDownload(
@@ -72,7 +65,23 @@ async def extract_video(
     db.refresh(download)
     
     # Try extraction
-    video_data = perform_extraction(url)
+    try:
+        video_data = perform_extraction(url)
+    except Exception as e:
+        import traceback
+        error_msg = str(e)
+        traceback.print_exc()
+        print(f"Extraction error: {error_msg}")
+        
+        # Update download record with error
+        download.status = 'failed'
+        download.error_message = f"Extraction failed: {error_msg}"
+        db.commit()
+        
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to extract video: {error_msg}"
+        )
     
     if video_data:
         # Update with success
@@ -345,4 +354,24 @@ async def delete_video(video_id: int, db: Session = Depends(get_db)):
     db.commit()
     
     return {"status": "success", "message": "Video deleted"}
+
+
+@router.get("/stats/", response_model=VideoStatsResponse)
+async def get_video_stats(db: Session = Depends(get_db)):
+    """Get video statistics"""
+    total = db.query(VideoDownload).count()
+    downloaded = db.query(VideoDownload).filter(VideoDownload.is_downloaded == True).count()
+    cloud = total - downloaded
+    success = db.query(VideoDownload).filter(VideoDownload.status == 'success').count()
+    failed = db.query(VideoDownload).filter(VideoDownload.status == 'failed').count()
+    pending = db.query(VideoDownload).filter(VideoDownload.status == 'pending').count()
+    
+    return VideoStatsResponse(
+        total=total,
+        downloaded=downloaded,
+        cloud=cloud,
+        success=success,
+        failed=failed,
+        pending=pending
+    )
 
