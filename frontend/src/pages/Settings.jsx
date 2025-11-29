@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import toast from 'react-hot-toast';
+import { showSuccess, showError } from '../utils/alerts';
 import { Save, Eye, EyeOff, Info, ExternalLink, Cloud, FileSpreadsheet, TestTube, Image } from 'lucide-react';
 import { Button, Input, Select, LoadingSpinner } from '../components/common';
 import { settingsApi } from '../api';
@@ -158,19 +158,19 @@ export function Settings() {
   const saveAIMutation = useMutation({
     mutationFn: () => settingsApi.saveAISettings(provider, apiKey),
     onSuccess: () => {
-      toast.success('AI settings saved successfully');
+      showSuccess('Settings Saved', 'AI settings saved successfully.', { timer: 3000 });
       queryClient.invalidateQueries(['ai-settings']);
     },
-    onError: (error) => toast.error(error.message || 'Failed to save AI settings'),
+    onError: (error) => showError('Save Failed', error.message || 'Failed to save AI settings. Please try again.'),
   });
 
   const saveCloudinaryMutation = useMutation({
     mutationFn: () => settingsApi.saveCloudinarySettings(cloudName, cloudinaryApiKey, cloudinaryApiSecret, cloudinaryEnabled),
     onSuccess: () => {
-      toast.success('Cloudinary settings saved successfully');
+      showSuccess('Settings Saved', 'Cloudinary settings saved successfully.', { timer: 3000 });
       queryClient.invalidateQueries(['cloudinary-settings']);
     },
-    onError: (error) => toast.error(error.message || 'Failed to save Cloudinary settings'),
+    onError: (error) => showError('Save Failed', error.message || 'Failed to save Cloudinary settings. Please try again.'),
   });
 
   const saveGoogleSheetsMutation = useMutation({
@@ -192,12 +192,12 @@ export function Settings() {
       return settingsApi.saveGoogleSheetsSettings(spreadsheetId, sheetName, credentialsJson, googleSheetsEnabled);
     },
     onSuccess: () => {
-      toast.success('Google Sheets settings saved successfully');
+      showSuccess('Settings Saved', 'Google Sheets settings saved successfully.', { timer: 3000 });
       queryClient.invalidateQueries(['google-sheets-settings']);
     },
     onError: (error) => {
       const errorMessage = error.message || error?.response?.data?.error || 'Failed to save Google Sheets settings';
-      toast.error(errorMessage, { duration: 7000 });
+      showError('Save Failed', errorMessage);
     },
   });
 
@@ -236,8 +236,8 @@ export function Settings() {
     onSuccess: (data) => {
       setTestResult(data);
       if (data.success) {
-        toast.success('Google Sheets connection test passed!', {
-          duration: 5000,
+        showSuccess('Connection Test Passed', 'Google Sheets connection test passed!', {
+          timer: 5000,
         });
         // Show detailed info
         if (data.info) {
@@ -245,7 +245,8 @@ export function Settings() {
         }
       } else {
         const errorMessages = data.errors || ['Test failed'];
-        errorMessages.forEach(error => toast.error(error, { duration: 7000 }));
+        const errorText = errorMessages.join('\n');
+        showError('Connection Test Failed', errorText);
         
         if (data.warnings) {
           data.warnings.forEach(warning => toast(warning, { icon: '⚠️', duration: 5000 }));
@@ -257,15 +258,15 @@ export function Settings() {
       setTestResult(errorData || { success: false, errors: ['Failed to test connection'] });
       
       // Handle different error scenarios
+      let errorMessage = 'Failed to test Google Sheets connection. Please ensure settings are saved first.';
       if (errorData?.errors && Array.isArray(errorData.errors)) {
-        errorData.errors.forEach(err => toast.error(err, { duration: 7000 }));
+        errorMessage = errorData.errors.join('\n');
       } else if (errorData?.error) {
-        toast.error(errorData.error, { duration: 7000 });
+        errorMessage = errorData.error;
       } else if (error?.message) {
-        toast.error(error.message, { duration: 7000 });
-      } else {
-        toast.error('Failed to test Google Sheets connection. Please ensure settings are saved first.', { duration: 7000 });
+        errorMessage = error.message;
       }
+      showError('Connection Test Failed', errorMessage);
     },
   });
 
@@ -281,10 +282,10 @@ export function Settings() {
       });
     },
     onSuccess: () => {
-      toast.success('Watermark settings saved successfully');
+      showSuccess('Settings Saved', 'Watermark settings saved successfully.', { timer: 3000 });
       queryClient.invalidateQueries(['watermark-settings']);
     },
-    onError: (error) => toast.error(error.message || 'Failed to save watermark settings'),
+    onError: (error) => showError('Save Failed', error.message || 'Failed to save watermark settings. Please try again.'),
   });
 
   const handleAISubmit = (e) => {
@@ -609,9 +610,9 @@ export function Settings() {
                     const validation = validateAndFormatCredentials(credentialsJson);
                     if (validation.valid && validation.formatted) {
                       setCredentialsJson(validation.formatted);
-                      toast.success('JSON formatted successfully');
+                      showSuccess('JSON Formatted', 'JSON formatted successfully.', { timer: 2000 });
                     } else {
-                      toast.error(validation.error || 'Cannot format invalid JSON');
+                      showError('Format Failed', validation.error || 'Cannot format invalid JSON. Please check your JSON syntax.');
                     }
                   }}
                   className="text-xs text-blue-400 hover:text-blue-300 underline"
@@ -657,7 +658,7 @@ export function Settings() {
               onClick={() => {
                 // Warn user if settings aren't filled
                 if (!googleSheetsEnabled || !spreadsheetId || !credentialsJson) {
-                  toast.error('Please fill in all Google Sheets settings before testing', { duration: 5000 });
+                  showError('Missing Settings', 'Please fill in all Google Sheets settings before testing.');
                   return;
                 }
                 testGoogleSheetsMutation.mutate();

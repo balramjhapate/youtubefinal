@@ -71,6 +71,7 @@ class VideoDownload(models.Model):
     cover_url = models.URLField(max_length=1000, blank=True, help_text="Cover/thumbnail URL")
     local_file = models.FileField(upload_to='videos/', blank=True, null=True, help_text="Locally downloaded video file")
     is_downloaded = models.BooleanField(default=False, help_text="Is video saved locally?")
+    duration = models.IntegerField(default=0, help_text="Video duration in seconds")
     
     # Metadata
     extraction_method = models.CharField(

@@ -21,7 +21,7 @@ import {
 import { useStore } from "../../store";
 import { videosApi } from "../../api";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import toast from "react-hot-toast";
+import { showSuccess, showError, showConfirm } from "../../utils/alerts";
 
 export function VideoCard({
 	video,
@@ -51,7 +51,7 @@ export function VideoCard({
 			return videosApi.reprocess(video.id);
 		},
 		onSuccess: () => {
-			toast.success("Video reprocessing started");
+			showSuccess("Reprocessing Started", "Video reprocessing has been started in the background.", { timer: 3000 });
 			queryClient.invalidateQueries(["videos"]);
 			queryClient.invalidateQueries(["video", video.id]);
 			// Start polling for updates
@@ -64,7 +64,7 @@ export function VideoCard({
 		},
 		onError: (error) => {
 			completeProcessing(video.id);
-			toast.error(error?.response?.data?.error || "Reprocessing failed");
+			showError("Reprocessing Failed", error?.response?.data?.error || "Reprocessing failed. Please try again.");
 		},
 	});
 
@@ -129,15 +129,18 @@ export function VideoCard({
 		}
 	}, [video, processingState, completeProcessing]);
 
-	const handleDelete = (e) => {
+	const handleDelete = async (e) => {
 		e.stopPropagation();
-		if (
-			window.confirm(
-				`Are you sure you want to delete "${
-					video.title || "this video"
-				}"?`
-			)
-		) {
+		const result = await showConfirm(
+			"Delete Video",
+			`Are you sure you want to delete "${video.title || "this video"}"? This action cannot be undone.`,
+			{
+				confirmText: "Yes, Delete",
+				cancelText: "Cancel",
+				confirmButtonColor: "#dc2626",
+			}
+		);
+		if (result.isConfirmed) {
 			onDelete();
 		}
 	};
@@ -383,86 +386,93 @@ export function VideoCard({
 
 					{/* Action buttons - Compact row */}
 					<div className="flex flex-wrap gap-1.5 mt-2">
-						{!video.is_downloaded && video.status === "success" && (
-							<Button
-								size="sm"
-								variant="secondary"
-								icon={Download}
-								onClick={(e) => {
-									e.stopPropagation();
-									startProcessing(video.id, "download");
-									onDownload();
-								}}
-								disabled={
-									!!processingState &&
-									processingState.type === "download"
-								}
-								loading={
-									!!processingState &&
-									processingState.type === "download"
-								}>
-								Download
-							</Button>
+						{/* Hide download/process buttons when video is processing or completed */}
+						{!isVideoProcessing && !video.final_processed_video_url && (
+							<>
+								{!video.is_downloaded && video.status === "success" && (
+									<Button
+										size="sm"
+										variant="secondary"
+										icon={Download}
+										onClick={(e) => {
+											e.stopPropagation();
+											startProcessing(video.id, "download");
+											onDownload();
+										}}
+										disabled={
+											!!processingState &&
+											processingState.type === "download"
+										}
+										loading={
+											!!processingState &&
+											processingState.type === "download"
+										}>
+										Download
+									</Button>
+								)}
+
+								{(video.transcription_status === "not_transcribed" ||
+									video.transcription_status === "failed") && (
+									<Button
+										size="sm"
+										variant={
+											video.transcription_status === "failed"
+												? "danger"
+												: "primary"
+										}
+										icon={FileText}
+										onClick={(e) => {
+											e.stopPropagation();
+											startProcessing(video.id, "transcribe");
+											onTranscribe();
+										}}
+										disabled={
+											(!!processingState &&
+												processingState.type ===
+													"transcribe") ||
+											video.transcription_status ===
+												"transcribing" ||
+											video.ai_processing_status ===
+												"processing" ||
+											video.script_status === "generating"
+										}
+										loading={
+											(!!processingState &&
+												processingState.type ===
+													"transcribe") ||
+											video.transcription_status ===
+												"transcribing" ||
+											video.ai_processing_status ===
+												"processing" ||
+											video.script_status === "generating"
+										}>
+										{video.transcription_status === "failed" ? "Retry" : "Process"}
+									</Button>
+								)}
+							</>
 						)}
 
-						{(video.transcription_status === "not_transcribed" ||
-							video.transcription_status === "failed") && (
-							<Button
-								size="sm"
-								variant={
-									video.transcription_status === "failed"
-										? "danger"
-										: "primary"
-								}
-								icon={FileText}
-								onClick={(e) => {
-									e.stopPropagation();
-									startProcessing(video.id, "transcribe");
-									onTranscribe();
-								}}
-								disabled={
-									(!!processingState &&
-										processingState.type ===
-											"transcribe") ||
-									video.transcription_status ===
-										"transcribing" ||
-									video.ai_processing_status ===
-										"processing" ||
-									video.script_status === "generating"
-								}
-								loading={
-									(!!processingState &&
-										processingState.type ===
-											"transcribe") ||
-									video.transcription_status ===
-										"transcribing" ||
-									video.ai_processing_status ===
-										"processing" ||
-									video.script_status === "generating"
-								}>
-								{video.transcription_status === "failed" ? "Retry" : "Process"}
-							</Button>
-						)}
-
-						{/* Reprocess button - Show when video has been transcribed (allows reprocessing at any stage) */}
-						{(video.transcription_status === "transcribed" ||
+						{/* Reprocess button - Show only when video is completed (has final_processed_video_url) or when processing failed */}
+						{(video.final_processed_video_url || 
+							(video.transcription_status === "transcribed" && !isVideoProcessing && !video.final_processed_video_url) ||
 							video.transcription_status === "failed" ||
-							video.script_status === "generated" ||
 							video.script_status === "failed" ||
-							video.synthesis_status === "synthesized" ||
-							video.synthesis_status === "failed" ||
-							video.final_processed_video_url) && (
+							video.synthesis_status === "failed") && (
 							<Button
 								size="sm"
 								variant="secondary"
 								icon={RefreshCw}
-								onClick={(e) => {
+								onClick={async (e) => {
 									e.stopPropagation();
-									if (
-										window.confirm(
-											"Reprocess this video? This will reset all processing and regenerate the video."
-										)
-									) {
+									const result = await showConfirm(
+										"Reprocess Video",
+										"Are you sure you want to reprocess this video? This will reset all processing and regenerate the video with new audio.",
+										{
+											confirmText: "Yes, Reprocess",
+											cancelText: "Cancel",
+										}
+									);
+									if (result.isConfirmed) {
 										reprocessMutation.mutate();
 									}
 								}}

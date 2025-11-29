@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import toast from 'react-hot-toast';
+import { showSuccess, showError, showConfirm } from '../../utils/alerts';
 import {
   Download,
   FileText,
@@ -37,11 +37,11 @@ export function VideoList({ videos, isLoading }) {
     onSuccess: (data, videoId) => {
       queryClient.invalidateQueries(['videos']);
       queryClient.invalidateQueries(['video', videoId]);
-      toast.success('Download started');
+      showSuccess('Download Started', 'Video download has been started.', { timer: 3000 });
     },
     onError: (error, videoId) => {
       completeProcessing(videoId);
-      toast.error(error?.response?.data?.error || 'Download failed');
+      showError('Download Failed', error?.response?.data?.error || 'Download failed. Please try again.');
     },
   });
 
@@ -54,12 +54,12 @@ export function VideoList({ videos, isLoading }) {
       queryClient.invalidateQueries(['videos']);
       queryClient.invalidateQueries(['video', videoId]);
       completeProcessing(videoId);
-      toast.success('Transcription, AI processing, and script generation completed!');
+      showSuccess('Processing Completed', 'Transcription, AI processing, and script generation completed!', { timer: 5000 });
     },
     onError: (error, videoId) => {
       completeProcessing(videoId);
       const errorMessage = error?.response?.data?.error || error?.message || 'Processing failed';
-      toast.error(errorMessage);
+      showError('Processing Failed', errorMessage);
     },
   });
 
@@ -71,33 +71,33 @@ export function VideoList({ videos, isLoading }) {
     onSuccess: (data, videoId) => {
       queryClient.invalidateQueries(['videos']);
       queryClient.invalidateQueries(['video', videoId]);
-      toast.success('AI processing started');
+      showSuccess('AI Processing Started', 'AI processing has been started.', { timer: 3000 });
     },
     onError: (error, videoId) => {
       completeProcessing(videoId);
-      toast.error(error?.response?.data?.error || 'AI processing failed');
+      showError('AI Processing Failed', error?.response?.data?.error || 'AI processing failed. Please try again.');
     },
   });
 
   const generatePromptMutation = useMutation({
     mutationFn: videosApi.generateAudioPrompt,
     onSuccess: () => {
-      toast.success('Audio prompt generated');
+      showSuccess('Prompt Generated', 'Audio prompt generated successfully.', { timer: 3000 });
       queryClient.invalidateQueries(['videos']);
     },
-    onError: (error) => toast.error(error),
+    onError: (error) => showError('Generation Failed', error?.message || 'Failed to generate audio prompt. Please try again.'),
   });
 
   const deleteMutation = useMutation({
     mutationFn: videosApi.delete,
     onSuccess: () => {
-      toast.success('Video deleted successfully');
+      showSuccess('Video Deleted', 'Video deleted successfully.', { timer: 3000 });
       queryClient.invalidateQueries(['videos']);
       queryClient.invalidateQueries(['dashboard-stats']);
     },
     onError: (error) => {
       const errorMessage = error?.response?.data?.error || error?.message || error || 'Failed to delete video';
-      toast.error(errorMessage);
+      showError('Delete Failed', errorMessage);
     },
   });
 
@@ -105,51 +105,51 @@ export function VideoList({ videos, isLoading }) {
   const bulkDownloadMutation = useMutation({
     mutationFn: videosApi.bulkDownload,
     onSuccess: () => {
-      toast.success('Bulk download started');
+      showSuccess('Bulk Download Started', 'Bulk download has been started.', { timer: 3000 });
       queryClient.invalidateQueries(['videos']);
       clearSelection();
     },
-    onError: (error) => toast.error(error),
+    onError: (error) => showError('Bulk Download Failed', error?.message || 'Failed to start bulk download. Please try again.'),
   });
 
   const bulkTranscribeMutation = useMutation({
     mutationFn: videosApi.bulkTranscribe,
     onSuccess: () => {
-      toast.success('Bulk transcription started');
+      showSuccess('Bulk Transcription Started', 'Bulk transcription has been started.', { timer: 3000 });
       queryClient.invalidateQueries(['videos']);
       clearSelection();
     },
-    onError: (error) => toast.error(error),
+    onError: (error) => showError('Bulk Transcription Failed', error?.message || 'Failed to start bulk transcription. Please try again.'),
   });
 
   const bulkProcessAIMutation = useMutation({
     mutationFn: videosApi.bulkProcessAI,
     onSuccess: () => {
-      toast.success('Bulk AI processing started');
+      showSuccess('Bulk AI Processing Started', 'Bulk AI processing has been started.', { timer: 3000 });
       queryClient.invalidateQueries(['videos']);
       clearSelection();
     },
-    onError: (error) => toast.error(error),
+    onError: (error) => showError('Bulk AI Processing Failed', error?.message || 'Failed to start bulk AI processing. Please try again.'),
   });
 
   const bulkGeneratePromptsMutation = useMutation({
     mutationFn: videosApi.bulkGeneratePrompts,
     onSuccess: () => {
-      toast.success('Bulk prompt generation started');
+      showSuccess('Bulk Prompt Generation Started', 'Bulk prompt generation has been started.', { timer: 3000 });
       queryClient.invalidateQueries(['videos']);
       clearSelection();
     },
-    onError: (error) => toast.error(error),
+    onError: (error) => showError('Bulk Prompt Generation Failed', error?.message || 'Failed to start bulk prompt generation. Please try again.'),
   });
 
   const bulkDeleteMutation = useMutation({
     mutationFn: videosApi.bulkDelete,
     onSuccess: () => {
-      toast.success('Videos deleted successfully');
+      showSuccess('Videos Deleted', 'Videos deleted successfully.', { timer: 3000 });
       queryClient.invalidateQueries(['videos']);
       clearSelection();
     },
-    onError: (error) => toast.error(error),
+    onError: (error) => showError('Bulk Delete Failed', error?.message || 'Failed to delete videos. Please try again.'),
   });
 
   const handleSelectAll = () => {
@@ -236,8 +236,17 @@ export function VideoList({ videos, isLoading }) {
               size="sm"
               variant="danger"
               icon={Trash2}
-              onClick={() => {
-                if (window.confirm(`Delete ${selectedVideos.length} video(s)?`)) {
+              onClick={async () => {
+                const result = await showConfirm(
+                  'Delete Videos',
+                  `Are you sure you want to delete ${selectedVideos.length} video(s)? This action cannot be undone.`,
+                  {
+                    confirmText: 'Yes, Delete',
+                    cancelText: 'Cancel',
+                    confirmButtonColor: '#dc2626',
+                  }
+                );
+                if (result.isConfirmed) {
                   bulkDeleteMutation.mutate(selectedVideos);
                 }
               }}

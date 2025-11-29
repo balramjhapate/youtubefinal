@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import toast from 'react-hot-toast';
+import { showSuccess, showError } from '../../utils/alerts';
 import { Link2, Upload, Video as VideoIcon, FileVideo } from 'lucide-react';
 import { Modal, Button, Input } from '../common';
 import { videosApi } from '../../api';
@@ -83,15 +83,29 @@ export function VideoExtractModal({ isOpen, onClose }) {
       }
     },
     onSuccess: (data) => {
-      toast.success(data.cached ? 'Video found in cache!' : 'Video added successfully!');
+      if (data.auto_processing) {
+        showSuccess('Video Extracted', 'Video extracted successfully. Auto-processing has started in the background!', { timer: 5000 });
+      } else {
+        showSuccess(
+          data.cached ? 'Video Found in Cache' : 'Video Added',
+          data.cached ? 'Video was found in cache and added successfully!' : 'Video added successfully!',
+          { timer: 3000 }
+        );
+      }
       queryClient.invalidateQueries(['videos']);
       queryClient.invalidateQueries(['dashboard-stats']);
+      // Start polling to show processing status
+      const pollInterval = setInterval(() => {
+        queryClient.invalidateQueries(['videos']);
+      }, 3000);
+      // Stop polling after 10 minutes
+      setTimeout(() => clearInterval(pollInterval), 10 * 60 * 1000);
       handleClose();
     },
     onError: (error) => {
       const errorMessage = error?.response?.data?.error || error?.message || error || 'Failed to add video';
       setError(errorMessage);
-      toast.error(errorMessage);
+      showError('Extraction Failed', errorMessage);
     },
   });
 

@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import { Button, Input, Textarea, Select, AudioPlayer, LoadingSpinner } from '../components/common';
 import { xttsApi } from '../api';
-import { showSuccess, showError, showWarning, showLoading, closeAlert } from '../utils/alerts';
+import { showSuccess, showError, showWarning, showLoading, closeAlert, showConfirm } from '../utils/alerts';
 
 export function VoiceCloning() {
     const [activeTab, setActiveTab] = useState('generate'); // 'generate' or 'voices'
@@ -795,8 +795,17 @@ export function VoiceCloning() {
                                                         <Edit className="w-5 h-5" />
                                                     </button>
                                                     <button
-                                                        onClick={() => {
-                                                            if (window.confirm(`Are you sure you want to delete "${voice.name}"?`)) {
+                                                        onClick={async () => {
+                                                            const result = await showConfirm(
+                                                                'Delete Voice',
+                                                                `Are you sure you want to delete "${voice.name}"? This action cannot be undone.`,
+                                                                {
+                                                                    confirmText: 'Yes, Delete',
+                                                                    cancelText: 'Cancel',
+                                                                    confirmButtonColor: '#dc2626',
+                                                                }
+                                                            );
+                                                            if (result.isConfirmed) {
                                                                 deleteVoiceMutation.mutate(voice.id);
                                                             }
                                                         }}

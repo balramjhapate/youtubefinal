@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import toast from "react-hot-toast";
 import {
 	Download,
 	FileText,
@@ -90,7 +89,7 @@ export function VideoDetail() {
 					video.script_status === "pending");
 
 			if (isProcessing) {
-				return 2000; // Poll every 2 seconds during processing
+				return 5000; // Poll every 5 seconds during processing (reduced from 2s for better performance)
 			}
 			return false;
 		},
@@ -143,9 +142,10 @@ export function VideoDetail() {
 			console.log(`Auto-clearing stuck processing state for ${type}`);
 			clearProcessingForVideo(id);
 			if (isTranscriptionStuck) {
-				toast.warning(
+				showWarning(
+					"Processing State Cleared",
 					"Processing state cleared. Transcription appears stuck. You can retry now.",
-					{ duration: 5000 }
+					{ timer: 5000 }
 				);
 			}
 		}
@@ -238,11 +238,11 @@ export function VideoDetail() {
 		onSuccess: () => {
 			queryClient.invalidateQueries(["video", id]);
 			queryClient.invalidateQueries(["videos"]);
-			toast.success("Download started");
+			showSuccess("Download Started", "Video download has been started.", { timer: 3000 });
 		},
 		onError: (error) => {
 			completeProcessing(id);
-			toast.error(error?.response?.data?.error || "Download failed");
+			showError("Download Failed", error?.response?.data?.error || "Download failed. Please try again.");
 		},
 	});
 
@@ -275,7 +275,7 @@ export function VideoDetail() {
 					{ confirmButtonText: "OK", width: "600px" }
 				);
 			} else {
-				toast.success("Processing started");
+				showSuccess("Processing Started", "Video processing has been started.", { timer: 3000 });
 			}
 
 			let pollCount = 0;
@@ -335,8 +335,10 @@ export function VideoDetail() {
 										}
 									);
 								} else {
-									toast.success(
-										"Transcription completed successfully!"
+									showSuccess(
+										"Transcription Completed",
+										"Transcription completed successfully!",
+										{ timer: 3000 }
 									);
 								}
 							}
@@ -420,7 +422,7 @@ export function VideoDetail() {
 						// If refetch fails, don't stop polling immediately - might be temporary network issue
 						console.warn("Polling error:", err);
 					});
-			}, 2000);
+			}, 5000); // Poll every 5 seconds (reduced from 2s)
 			// Increased timeout to 30 minutes for large videos
 			setTimeout(() => {
 				clearInterval(pollInterval);
@@ -477,11 +479,11 @@ export function VideoDetail() {
 		},
 		onSuccess: () => {
 			queryClient.invalidateQueries(["video", id]);
-			toast.success("AI processing started");
+			showSuccess("AI Processing Started", "AI processing has been started.", { timer: 3000 });
 		},
 		onError: (error) => {
 			completeProcessing(id);
-			toast.error(error?.response?.data?.error || "AI processing failed");
+			showError("AI Processing Failed", error?.response?.data?.error || "AI processing failed. Please try again.");
 		},
 	});
 
@@ -630,7 +632,7 @@ export function VideoDetail() {
 			let attempts = 0;
 			while (!processingComplete && attempts < 150) {
 				// 5 minutes max
-				await new Promise((resolve) => setTimeout(resolve, 2000));
+				await new Promise((resolve) => setTimeout(resolve, 5000)); // Increased from 2s to 5s
 				currentVideo = await videosApi.getById(id);
 
 				// Check if transcription, AI, script, TTS, and final video are complete
@@ -728,7 +730,7 @@ export function VideoDetail() {
 			queryClient.invalidateQueries(["video", id]);
 			queryClient.invalidateQueries(["videos"]);
 			completeProcessing(id);
-			toast.success("Video processing completed successfully! 🎉");
+			showSuccess("Processing Completed", "Video processing completed successfully! 🎉", { timer: 5000 });
 		},
 		onError: (error) => {
 			completeProcessing(id);
@@ -736,7 +738,7 @@ export function VideoDetail() {
 				error?.response?.data?.error ||
 				error?.message ||
 				"Processing failed";
-			toast.error(`Processing failed: ${errorMsg}`);
+			showError("Processing Failed", `Processing failed: ${errorMsg}`);
 		},
 	});
 
@@ -746,7 +748,7 @@ export function VideoDetail() {
 			return videosApi.reprocess(id);
 		},
 		onSuccess: () => {
-			toast.success("Video reprocessing started");
+			showSuccess("Reprocessing Started", "Video reprocessing has been started in the background.", { timer: 3000 });
 			queryClient.invalidateQueries(["video", id]);
 			queryClient.invalidateQueries(["videos"]);
 			// Start immediate refetch to get updated status
@@ -772,16 +774,17 @@ export function VideoDetail() {
 							clearInterval(pollInterval);
 							completeProcessing(id);
 							if (data.final_processed_video_url) {
-								toast.success("Video reprocessing completed!");
+								showSuccess("Reprocessing Completed", "Video reprocessing completed successfully!", { timer: 5000 });
 							} else if (data.synthesis_status === "failed") {
-								toast.error(
+								showError(
+									"Reprocessing Incomplete",
 									"Reprocessing completed but TTS synthesis failed. Check video details."
 								);
 							}
 						}
 					}
 				});
-			}, 2000);
+			}, 5000); // Poll every 5 seconds (reduced from 2s)
 
 			// Clean up polling after 5 minutes
 			setTimeout(() => {
@@ -791,7 +794,7 @@ export function VideoDetail() {
 		},
 		onError: (error) => {
 			completeProcessing(id);
-			toast.error(error?.response?.data?.error || "Reprocessing failed");
+			showError("Reprocessing Failed", error?.response?.data?.error || "Reprocessing failed. Please try again.");
 		},
 	});
 
@@ -800,22 +803,20 @@ export function VideoDetail() {
 			return videosApi.resetTranscription(id);
 		},
 		onSuccess: (data) => {
-			toast.success(data.message || "Transcription reset successfully");
+			showSuccess("Transcription Reset", data.message || "Transcription reset successfully.", { timer: 3000 });
 			queryClient.invalidateQueries(["video", id]);
 			queryClient.invalidateQueries(["videos"]);
 			refetch();
 			completeProcessing(id);
 		},
 		onError: (error) => {
-			toast.error(
-				error?.response?.data?.error || "Failed to reset transcription"
-			);
+			showError("Reset Failed", error?.response?.data?.error || "Failed to reset transcription. Please try again.");
 		},
 	});
 
 	const copyToClipboard = (text) => {
 		navigator.clipboard.writeText(text);
-		toast.success("Copied to clipboard");
+		showSuccess("Copied", "Text copied to clipboard.", { timer: 2000 });
 	};
 
 	const tabs = [
@@ -844,15 +845,15 @@ export function VideoDetail() {
 					startProcessing(id, "synthesis");
 					// Call synthesize without voice profile - backend will use Google TTS
 					await videosApi.synthesize(id, null);
-					toast.success("Synthesis retried");
+					showSuccess("Synthesis Retried", "Synthesis has been retried.", { timer: 3000 });
 					refetch();
 				} catch (error) {
-					toast.error("Failed to retry synthesis");
+					showError("Retry Failed", "Failed to retry synthesis. Please try again.");
 					completeProcessing(id);
 				}
 				break;
 			default:
-				toast.error("Unknown step to retry");
+				showError("Unknown Step", "Unknown step to retry. Please select a valid step.");
 		}
 	};
 
@@ -1092,8 +1093,10 @@ export function VideoDetail() {
 											icon={RefreshCw}
 											onClick={() => {
 												clearProcessingForVideo(id);
-												toast.success(
-													"Processing state cleared. You can now retry the operation."
+												showSuccess(
+													"Processing State Cleared",
+													"Processing state cleared. You can now retry the operation.",
+													{ timer: 3000 }
 												);
 											}}>
 											{isTranscriptionStuck

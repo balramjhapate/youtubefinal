@@ -929,35 +929,9 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                                 voice_name = 'Enceladus'
                                 language_code = 'hi-IN'  # Hindi (India)
                                 
-                                # Analyze script content for appropriate style prompt
-                                has_fear = any(keyword in clean_script.lower() for keyword in ['राक्षस', 'डर', 'अंधेरा', 'भय', 'साहस', 'पीछा', 'भाग', 'दौड़'])
-                                has_exciting = any(keyword in clean_script.lower() for keyword in ['देखो', 'वाह', 'अरे', 'मजेदार', 'रोमांचक'])
-                                
-                                # Create context-aware style prompt
-                                if has_fear:
-                                    style_prompt = """You are narrating a suspenseful and engaging story for children in Hindi.
-                                    - Use a dramatic, slightly tense tone when describing scary or suspenseful moments (राक्षस, अंधेरा, डर)
-                                    - Use [whispering] tags to create atmosphere for fear elements
-                                    - Use [sigh] for relief or tension
-                                    - Maintain energy and engagement throughout
-                                    - This is children's content, so keep it exciting but not too scary
-                                    - Respect all markup tags: [short pause], [medium pause], [long pause], [sigh], [laughing], [uhm], [whispering]
-                                    - Pause tags control timing: [short pause] = brief pause (~250ms), [medium pause] = sentence break (~500ms), [long pause] = dramatic pause (~1000ms+)
-                                    - Expression tags add sounds: [sigh] = sigh sound, [laughing] = laugh, [uhm] = hesitation
-                                    - Style tags modify delivery: [whispering] = quieter voice
-                                    - Read the text exactly as written, following all markup tags precisely"""
-                                elif has_exciting:
-                                    style_prompt = """You are an engaging, energetic, and detailed explainer for children's content in Hindi.
-                                    - Speak in a friendly, vivid, and enthusiastic tone
-                                    - Be enthusiastic about scenes and actions
-                                    - Use [laughing] tags naturally for fun moments
-                                    - Maintain high energy and excitement
-                                    - Respect all markup tags: [short pause], [medium pause], [long pause], [sigh], [laughing], [uhm]
-                                    - Pause tags control timing: [short pause] = brief pause (~250ms), [medium pause] = sentence break (~500ms), [long pause] = dramatic pause (~1000ms+)
-                                    - Expression tags add sounds: [sigh] = sigh sound, [laughing] = laugh, [uhm] = hesitation
-                                    - Read the text exactly as written, following all markup tags precisely"""
-                                else:
-                                    style_prompt = None  # Use default
+                                # Let GeminiTTSService generate comprehensive style prompt automatically
+                                # It will analyze content and create optimal prompt with all best practices
+                                style_prompt = None  # Let service generate comprehensive prompt
                                 
                                 # Generate TTS audio using Gemini TTS
                                 print(f"Generating TTS with Gemini TTS (voice: {voice_name}, language: {language_code}, temp: {tts_temperature})...")
@@ -1496,35 +1470,9 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
             voice_name = 'Enceladus'
             language_code = 'hi-IN'  # Hindi (India)
             
-            # Analyze script content for appropriate style prompt
-            has_fear = any(keyword in clean_script.lower() for keyword in ['राक्षस', 'डर', 'अंधेरा', 'भय', 'साहस', 'पीछा', 'भाग', 'दौड़'])
-            has_exciting = any(keyword in clean_script.lower() for keyword in ['देखो', 'वाह', 'अरे', 'मजेदार', 'रोमांचक'])
-            
-            # Create context-aware style prompt
-            if has_fear:
-                style_prompt = """You are narrating a suspenseful and engaging story for children in Hindi.
-                - Use a dramatic, slightly tense tone when describing scary or suspenseful moments (राक्षस, अंधेरा, डर)
-                - Use [whispering] tags to create atmosphere for fear elements
-                - Use [sigh] for relief or tension
-                - Maintain energy and engagement throughout
-                - This is children's content, so keep it exciting but not too scary
-                - Respect all markup tags: [short pause], [medium pause], [long pause], [sigh], [laughing], [uhm], [whispering]
-                - Pause tags control timing: [short pause] = brief pause (~250ms), [medium pause] = sentence break (~500ms), [long pause] = dramatic pause (~1000ms+)
-                - Expression tags add sounds: [sigh] = sigh sound, [laughing] = laugh, [uhm] = hesitation
-                - Style tags modify delivery: [whispering] = quieter voice
-                - Read the text exactly as written, following all markup tags precisely"""
-            elif has_exciting:
-                style_prompt = """You are an engaging, energetic, and detailed explainer for children's content in Hindi.
-                - Speak in a friendly, vivid, and enthusiastic tone
-                - Be enthusiastic about scenes and actions
-                - Use [laughing] tags naturally for fun moments
-                - Maintain high energy and excitement
-                - Respect all markup tags: [short pause], [medium pause], [long pause], [sigh], [laughing], [uhm]
-                - Pause tags control timing: [short pause] = brief pause (~250ms), [medium pause] = sentence break (~500ms), [long pause] = dramatic pause (~1000ms+)
-                - Expression tags add sounds: [sigh] = sigh sound, [laughing] = laugh, [uhm] = hesitation
-                - Read the text exactly as written, following all markup tags precisely"""
-            else:
-                style_prompt = None  # Use default
+            # Let GeminiTTSService generate comprehensive style prompt automatically
+            # It will analyze content and create optimal prompt with all best practices
+            style_prompt = None  # Let service generate comprehensive prompt
             
             # Generate TTS audio using Gemini TTS
             print(f"Generating TTS with Gemini TTS (voice: {voice_name}, language: {language_code}, temp: {tts_temperature})...")
@@ -2294,35 +2242,9 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                                         voice_name = 'Enceladus'
                                         language_code = 'hi-IN'  # Hindi (India)
                                         
-                                        # Analyze script content for appropriate style prompt
-                                        has_fear = any(keyword in clean_script.lower() for keyword in ['राक्षस', 'डर', 'अंधेरा', 'भय', 'साहस', 'पीछा', 'भाग', 'दौड़'])
-                                        has_exciting = any(keyword in clean_script.lower() for keyword in ['देखो', 'वाह', 'अरे', 'मजेदार', 'रोमांचक'])
-                                        
-                                        # Create context-aware style prompt
-                                        if has_fear:
-                                            style_prompt = """You are narrating a suspenseful and engaging story for children in Hindi.
-                                            - Use a dramatic, slightly tense tone when describing scary or suspenseful moments (राक्षस, अंधेरा, डर)
-                                            - Use [whispering] tags to create atmosphere for fear elements
-                                            - Use [sigh] for relief or tension
-                                            - Maintain energy and engagement throughout
-                                            - This is children's content, so keep it exciting but not too scary
-                                            - Respect all markup tags: [short pause], [medium pause], [long pause], [sigh], [laughing], [uhm], [whispering]
-                                            - Pause tags control timing: [short pause] = brief pause (~250ms), [medium pause] = sentence break (~500ms), [long pause] = dramatic pause (~1000ms+)
-                                            - Expression tags add sounds: [sigh] = sigh sound, [laughing] = laugh, [uhm] = hesitation
-                                            - Style tags modify delivery: [whispering] = quieter voice
-                                            - Read the text exactly as written, following all markup tags precisely"""
-                                        elif has_exciting:
-                                            style_prompt = """You are an engaging, energetic, and detailed explainer for children's content in Hindi.
-                                            - Speak in a friendly, vivid, and enthusiastic tone
-                                            - Be enthusiastic about scenes and actions
-                                            - Use [laughing] tags naturally for fun moments
-                                            - Maintain high energy and excitement
-                                            - Respect all markup tags: [short pause], [medium pause], [long pause], [sigh], [laughing], [uhm]
-                                            - Pause tags control timing: [short pause] = brief pause (~250ms), [medium pause] = sentence break (~500ms), [long pause] = dramatic pause (~1000ms+)
-                                            - Expression tags add sounds: [sigh] = sigh sound, [laughing] = laugh, [uhm] = hesitation
-                                            - Read the text exactly as written, following all markup tags precisely"""
-                                        else:
-                                            style_prompt = None  # Use default
+                                        # Let GeminiTTSService generate comprehensive style prompt automatically
+                                        # It will analyze content and create optimal prompt with all best practices
+                                        style_prompt = None  # Let service generate comprehensive prompt
                                         
                                         print(f"Generating TTS with Gemini TTS (voice: {voice_name}, language: {language_code}, temp: {tts_temperature})...")
                                         

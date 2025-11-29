@@ -134,6 +134,42 @@ export const videosApi = {
     const response = await apiClient.post('/bulk/delete/', { video_ids: videoIds });
     return response.data;
   },
+
+  // Retry methods for failed pipeline steps
+  retryTranscription: async (id) => {
+    const response = await apiClient.post(`/videos/${id}/retry/transcription/`);
+    return response.data;
+  },
+
+  retryAIProcessing: async (id) => {
+    const response = await apiClient.post(`/videos/${id}/retry/ai-processing/`);
+    return response.data;
+  },
+
+  retryScriptGeneration: async (id) => {
+    const response = await apiClient.post(`/videos/${id}/retry/script-generation/`);
+    return response.data;
+  },
+
+  retryTTSSynthesis: async (id) => {
+    const response = await apiClient.post(`/videos/${id}/retry/tts-synthesis/`);
+    return response.data;
+  },
+
+  retryFinalVideo: async (id) => {
+    const response = await apiClient.post(`/videos/${id}/retry/final-video/`);
+    return response.data;
+  },
+
+  retryCloudinaryUpload: async (id) => {
+    const response = await apiClient.post(`/videos/${id}/retry/cloudinary-upload/`);
+    return response.data;
+  },
+
+  retryGoogleSheetsSync: async (id) => {
+    const response = await apiClient.post(`/videos/${id}/retry/google-sheets-sync/`);
+    return response.data;
+  },
 };
 
 export default videosApi;

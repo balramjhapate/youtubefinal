@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import toast from 'react-hot-toast';
+import { showSuccess, showError } from '../../utils/alerts';
 import { Eye, EyeOff, Save } from 'lucide-react';
 import { Modal, Button, Input, Select } from '../common';
 import { settingsApi } from '../../api';
@@ -31,18 +31,18 @@ export function AISettingsModal({ isOpen, onClose }) {
   const saveMutation = useMutation({
     mutationFn: () => settingsApi.saveAISettings(provider, apiKey),
     onSuccess: () => {
-      toast.success('Settings saved successfully');
+      showSuccess('Settings Saved', 'Settings saved successfully.', { timer: 3000 });
       queryClient.invalidateQueries(['ai-settings']);
       onClose();
     },
-    onError: (error) => toast.error(error),
+    onError: (error) => showError('Save Failed', error?.message || 'Failed to save settings. Please try again.'),
   });
 
   const handleSubmit = (e) => {
     e.preventDefault();
 
     if (!apiKey.trim()) {
-      toast.error('Please enter an API key');
+      showError('API Key Required', 'Please enter an API key to save settings.');
       return;
     }
 

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import toast from 'react-hot-toast';
+import { showSuccess, showError, showWarning, showInfo, showConfirm } from '../../utils/alerts';
 import {
   Download,
   FileText,
@@ -109,11 +109,11 @@ export function VideoDetailModal() {
     onSuccess: () => {
       queryClient.invalidateQueries(['video', selectedVideoId]);
       queryClient.invalidateQueries(['videos']);
-      toast.success('Download started');
+      showSuccess('Download Started', 'Video download has been started.', { timer: 3000 });
     },
     onError: (error) => {
       completeProcessing(selectedVideoId);
-      toast.error(error?.response?.data?.error || 'Download failed');
+      showError('Download Failed', error?.response?.data?.error || 'Download failed. Please try again.');
     },
   });
 
@@ -123,7 +123,7 @@ export function VideoDetailModal() {
       return videosApi.transcribe(selectedVideoId);
     },
     onSuccess: () => {
-      toast.success('Processing started');
+      showSuccess('Processing Started', 'Video processing has been started.', { timer: 3000 });
       // Invalidate and refetch to get updated status
       queryClient.invalidateQueries(['video', selectedVideoId]);
       queryClient.invalidateQueries(['videos']);
@@ -142,13 +142,13 @@ export function VideoDetailModal() {
             clearInterval(pollInterval);
             completeProcessing(selectedVideoId);
             if (data.final_processed_video_url) {
-              toast.success('Video processing completed!');
+              showSuccess('Processing Completed', 'Video processing completed successfully!', { timer: 5000 });
             }
           } else if (data) {
             // Show progress updates for long-running processes
             if (pollCount % 30 === 0 && data.transcription_status === 'transcribing') {
               const elapsed = data.elapsed_seconds || 0;
-              toast.info(`Transcription in progress... (${Math.floor(elapsed / 60)}m ${elapsed % 60}s)`, { duration: 3000 });
+              showInfo('Transcription in Progress', `Transcription in progress... (${Math.floor(elapsed / 60)}m ${elapsed % 60}s)`, { timer: 3000 });
             }
           }
         }).catch((err) => {
@@ -163,7 +163,7 @@ export function VideoDetailModal() {
         // Check final status before showing timeout message
         refetch().then(({ data }) => {
           if (data && data.transcription_status === 'transcribing') {
-            toast.warning('Processing is taking longer than expected. It may still be running in the background. Please check back later.', { duration: 10000 });
+            showWarning('Processing Taking Longer', 'Processing is taking longer than expected. It may still be running in the background. Please check back later.', { timer: 10000 });
           }
         });
       }, 30 * 60 * 1000); // 30 minutes
@@ -173,11 +173,11 @@ export function VideoDetailModal() {
       const errorMsg = error?.response?.data?.error || error?.message || 'Processing failed';
       // Provide more helpful error messages
       if (errorMsg.includes('timeout') || errorMsg.includes('timed out')) {
-        toast.error('Processing timed out. The video may be too long. Please try again or use a shorter video.');
+        showError('Processing Timeout', 'Processing timed out. The video may be too long. Please try again or use a shorter video.');
       } else if (errorMsg.includes('already_processing')) {
-        toast.info('Processing is already in progress. Please wait for it to complete.');
+        showInfo('Processing in Progress', 'Processing is already in progress. Please wait for it to complete.', { timer: 3000 });
       } else {
-        toast.error(`Processing failed: ${errorMsg}`);
+        showError('Processing Failed', `Processing failed: ${errorMsg}`);
       }
     },
   });
@@ -189,11 +189,11 @@ export function VideoDetailModal() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries(['video', selectedVideoId]);
-      toast.success('AI processing started');
+      showSuccess('AI Processing Started', 'AI processing has been started.', { timer: 3000 });
     },
     onError: (error) => {
       completeProcessing(selectedVideoId);
-      toast.error(error?.response?.data?.error || 'AI processing failed');
+      showError('AI Processing Failed', error?.response?.data?.error || 'AI processing failed. Please try again.');
     },
   });
 
@@ -203,7 +203,7 @@ export function VideoDetailModal() {
       return videosApi.reprocess(selectedVideoId);
     },
     onSuccess: () => {
-      toast.success('Video reprocessing started');
+      showSuccess('Reprocessing Started', 'Video reprocessing has been started in the background.', { timer: 3000 });
       queryClient.invalidateQueries(['video', selectedVideoId]);
       queryClient.invalidateQueries(['videos']);
       // Start polling for updates
@@ -219,7 +219,7 @@ export function VideoDetailModal() {
             clearInterval(pollInterval);
             completeProcessing(selectedVideoId);
             if (data.final_processed_video_url) {
-              toast.success('Video reprocessing completed!');
+              showSuccess('Reprocessing Completed', 'Video reprocessing completed successfully!', { timer: 5000 });
             }
           }
         });
@@ -230,7 +230,7 @@ export function VideoDetailModal() {
     },
     onError: (error) => {
       completeProcessing(selectedVideoId);
-      toast.error(error?.response?.data?.error || 'Reprocessing failed');
+      showError('Reprocessing Failed', error?.response?.data?.error || 'Reprocessing failed. Please try again.');
     },
   });
 
@@ -238,7 +238,7 @@ export function VideoDetailModal() {
 
   const copyToClipboard = (text) => {
     navigator.clipboard.writeText(text);
-    toast.success('Copied to clipboard');
+    showSuccess('Copied', 'Text copied to clipboard.', { timer: 2000 });
   };
 
   if (!videoDetailModalOpen) return null;
@@ -521,8 +521,16 @@ export function VideoDetailModal() {
                   size="sm"
                   variant="secondary"
                   icon={RefreshCw}
-                  onClick={() => {
-                    if (window.confirm('Are you sure you want to reprocess this video? This will reset all processing and regenerate the video with new audio.')) {
+                  onClick={async () => {
+                    const result = await showConfirm(
+                      'Reprocess Video',
+                      'Are you sure you want to reprocess this video? This will reset all processing and regenerate the video with new audio.',
+                      {
+                        confirmText: 'Yes, Reprocess',
+                        cancelText: 'Cancel',
+                      }
+                    );
+                    if (result.isConfirmed) {
                       reprocessMutation.mutate();
                     }
                   }}

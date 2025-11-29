@@ -89,7 +89,8 @@ def extract_video_seekin(url):
                     "title": title,
                     "cover_url": video_data.get("imageUrl"),
                     "original_title": title,
-                    "original_description": title  # API might not give desc, use title
+                    "original_description": title,  # API might not give desc, use title
+                    "duration": video_data.get("duration", 0)
                 }
         
         return None
@@ -129,12 +130,14 @@ def extract_video_ytdlp(url):
         if video_url:
             title = data.get('title', 'Xiaohongshu Video')
             description = data.get('description', '')
+            duration = data.get('duration', 0)
             return {
                 "video_url": video_url,
                 "title": title,
                 "cover_url": data.get('thumbnail'),
                 "original_title": title,
-                "original_description": description
+                "original_description": description,
+                "duration": duration
             }
         
         return None
@@ -184,13 +187,15 @@ def extract_video_requests(url):
                 title = note_data.get('title', 'Xiaohongshu Video')
                 desc = note_data.get('desc', '')
                 cover_url = note_data.get('imageList', [{}])[0].get('url') if note_data.get('imageList') else None
+                duration = video_info.get('duration', 0)
                 
                 return {
                     "video_url": video_url,
                     "title": title,
                     "cover_url": cover_url,
                     "original_title": title,
-                    "original_description": desc
+                    "original_description": desc,
+                    "duration": duration
                 }
         
         return None

@@ -12,7 +12,7 @@ import {
     ChevronDown,
     ChevronUp
 } from 'lucide-react';
-import toast from 'react-hot-toast';
+import { showSuccess, showError } from '../utils/alerts';
 import { videosApi, settingsApi } from '../api';
 import { scriptGeneratorApi } from '../api/scriptGenerator';
 import { Button, Card, LoadingSpinner, Select } from '../components/common';
@@ -42,16 +42,16 @@ export function ScriptGenerator() {
         mutationFn: scriptGeneratorApi.generate,
         onSuccess: (data) => {
             setGeneratedScript(data.script);
-            toast.success('Script generated successfully!');
+            showSuccess('Script Generated', 'Script generated successfully!', { timer: 3000 });
         },
         onError: (error) => {
-            toast.error(error.response?.data?.error || 'Failed to generate script');
+            showError('Generation Failed', error.response?.data?.error || 'Failed to generate script. Please try again.');
         },
     });
 
     const handleGenerate = () => {
         if (!prompt.trim()) {
-            toast.error('Please enter a prompt');
+            showError('Prompt Required', 'Please enter a prompt to generate the script.');
             return;
         }
 
@@ -65,7 +65,7 @@ export function ScriptGenerator() {
     const handleCopy = () => {
         navigator.clipboard.writeText(generatedScript);
         setIsCopied(true);
-        toast.success('Copied to clipboard');
+        showSuccess('Copied', 'Text copied to clipboard.', { timer: 2000 });
         setTimeout(() => setIsCopied(false), 2000);
     };
 
