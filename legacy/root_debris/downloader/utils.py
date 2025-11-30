@@ -4055,7 +4055,7 @@ Use only what is actually happening in the video.
 YOUR GOAL:
 Create a smooth, natural Hindi narration that explains the video step-by-step, in my signature style:
 - Start with "देखो —"
-- Explain what the person/animal/object is doing
+- Explain what the person/animal/object is doing (Third Person Narration)
 - Describe events in the same order they happen
 - Use simple dramatic Hindi, not heavy Hindi
 - Use short, TTS-friendly sentences
@@ -4073,28 +4073,49 @@ STRICT RULES:
 - No long paragraphs. Break sentences for TTS airflow.
 - Final line MUST be: "आपकी मम्मी कसम — सब्सक्राइब कर लेना!"
 
-2. VIDEO EXPLANATION RULE (MOST IMPORTANT):
+2. NARRATION PERSPECTIVE (CRITICAL):
+- Use THIRD PERSON perspective (Woh, Usne, Ladka, Police, etc.).
+- Do NOT use First Person (Main, Mujhe) unless quoting a specific character briefly.
+- Do NOT just translate the input dialogue. Read the input to understand the STORY, then RETELL it as an observer.
+- If the input says "Police aunty let me go", you must write "Police aunty uss ladki ko jane nahi de rahi thi" (Third Person).
+
+3. VIDEO EXPLANATION RULE:
 Your script MUST directly explain the actual visuals.
 Describe ONLY what the camera shows.
 No imagination outside the given frames.
 No assumptions.
 Explain the real actions clearly and in correct order.
 
-Example style:
-"देखो — ये लड़का गाड़ी खींच रहा था।  
-फिर अचानक गाड़ी फँस गई।  
-फिर उसकी मम्मी आई और मदद की।  
-और आख़िर में सब ठीक हो गया।"
+Example style (CORRECT):
+"देखो — पुलिस आंटी इस लड़की को निकलने ही नहीं दे रही थीं।
+लड़की बार-बार कह रही थी कि वह एक अच्छी इंसान है।
+वह बाहर जाकर देखना चाहती थी कि असल में हुआ क्या है।
+पुलिस आंटी उसे बताती हैं कि सुपरमार्केट से सब कुछ चोरी हो गया है।
+मालिक को भारी नुकसान हुआ है।
+और उस पर शक इस लड़की पर जा रहा है।
+फिर पुलिस आंटी दूसरा मामला दिखाती हैं।
+पार्क में बच्चों की साइकिल गायब कर दी गई थी।
+बच्चे दुखी हैं।
+कुछ तो रो भी रहे हैं।
+लड़की बार-बार कहती है कि उसने कुछ नहीं किया।
+सब एक गलतफहमी है।
+तभी पुलिस आंटी चौंक जाती हैं।
+उन्हें एक और वैसी ही लड़की पकड़ी हुई दिखती है।
+दोनों एक जैसी दिख रही थीं।
+अब असली कौन है — यह समझ ही नहीं आ रहा था।
+पुलिस आंटी कहती हैं कि तुम लोग यहीं रुको।
+वह वापस आकर असली चोर को पकड़ेंगी।
+आपकी मम्मी कसम — सब्सक्राइब कर लेना!"
 
 This is the expected explanation style.
 
-3. TTS RULES:
+4. TTS RULES:
 - Sentences must be short.
 - Add proper full stops.
 - Should sound smooth in voice narration.
 - No timestamps, but maintain natural pacing.
 
-4. DURATION MATCHING RULE (CRITICAL):
+5. DURATION MATCHING RULE (CRITICAL):
 The script MUST match the video duration PERFECTLY.
 - I will provide the exact video duration in seconds.
 - Calculate the required word count based on natural Hindi speaking rate (approximately 2.5 words per second).
