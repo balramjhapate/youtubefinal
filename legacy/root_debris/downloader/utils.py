@@ -318,8 +318,7 @@ Return ONLY the translated text, nothing else."""
             result = _call_gemini_api(settings_obj.api_key, system_prompt, user_message)
         elif settings_obj.provider == 'openai':
             result = _call_openai_api(settings_obj.api_key, system_prompt, user_message)
-        elif settings_obj.provider == 'anthropic':
-            result = _call_anthropic_api(settings_obj.api_key, system_prompt, user_message)
+
         else:
             # Fallback to GoogleTranslator
             return GoogleTranslator(source=source, target=target).translate(text)
@@ -1090,8 +1089,7 @@ Please generate a Hindi summary and English tags for this video."""
                     result = _call_gemini_api(settings_obj.api_key, system_prompt, user_message)
                 elif settings_obj.provider == 'openai':
                     result = _call_openai_api(settings_obj.api_key, system_prompt, user_message)
-                elif settings_obj.provider == 'anthropic':
-                    result = _call_anthropic_api(settings_obj.api_key, system_prompt, user_message)
+
                 
                 if result and result['status'] == 'success':
                     ai_response = result['prompt']
@@ -2204,8 +2202,7 @@ Please create a detailed audio generation prompt and Hindi script based on the a
             result = _call_gemini_api(api_key, system_prompt, user_message)
         elif provider == 'openai':
             result = _call_openai_api(api_key, system_prompt, user_message)
-        elif provider == 'anthropic':
-            result = _call_anthropic_api(api_key, system_prompt, user_message)
+
         else:
             return {
                 'prompt': '',
@@ -2309,7 +2306,7 @@ def _call_openai_api(api_key, system_prompt, user_message):
         client = openai.OpenAI(api_key=api_key)
         
         response = client.chat.completions.create(
-            model="gpt-4",
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message}
@@ -2339,47 +2336,6 @@ def _call_openai_api(api_key, system_prompt, user_message):
             'prompt': '',
             'status': 'failed',
             'error': f'OpenAI API error: {str(e)}'
-        }
-
-def _call_anthropic_api(api_key, system_prompt, user_message):
-    """Call Anthropic Claude API"""
-    try:
-        import anthropic
-        
-        client = anthropic.Anthropic(api_key=api_key)
-        
-        response = client.messages.create(
-            model="claude-3-5-sonnet-20241022",
-            max_tokens=1024,
-            system=system_prompt,
-            messages=[
-                {"role": "user", "content": user_message}
-            ]
-        )
-        
-        if response and response.content:
-            return {
-                'prompt': response.content[0].text.strip(),
-                'status': 'success',
-                'error': None
-            }
-        else:
-            return {
-                'prompt': '',
-                'status': 'failed',
-                'error': 'Anthropic API returned empty response'
-            }
-    except ImportError:
-        return {
-            'prompt': '',
-            'status': 'failed',
-            'error': 'anthropic library not installed. Run: pip install anthropic'
-        }
-    except Exception as e:
-        return {
-            'prompt': '',
-            'status': 'failed',
-            'error': f'Anthropic API error: {str(e)}'
         }
 
 
@@ -3137,9 +3093,17 @@ def get_clean_script_for_tts(formatted_script):
                      continue
              else:
                  continue
-        
-        # Remove timestamps
+         
+        # Remove timestamps from beginning of line
         line = re.sub(r'^\d{1,2}:\d{2}(:\d{2})?\s+', '', line)
+        
+        # CRITICAL: Remove timestamps from ANYWHERE in the text (middle of sentences too)
+        # This fixes the issue where timestamps like "00:00:12" appear in Enhanced Hindi Translation
+        # Pattern matches: HH:MM:SS or MM:SS or H:MM:SS anywhere in the line
+        line = re.sub(r'\b\d{1,2}:\d{2}(?::\d{2})?\b', '', line)
+        
+        # Clean up extra spaces left by timestamp removal
+        line = re.sub(r'\s+', ' ', line).strip()
         
         # Check for intro patterns
         is_intro = False
@@ -3350,9 +3314,136 @@ def get_clean_script_for_tts(formatted_script):
     clean_script = filter_negative_words(clean_script)
     
     # Add natural pauses and expressions for better TTS (Gemini TTS markup tags)
-    clean_script = add_tts_markup_tags(clean_script)
+    # Only if not already present (e.g. from AI enhancement)
+    if '[' not in clean_script:
+        clean_script = add_tts_markup_tags(clean_script)
     
     return clean_script
+
+
+def enhance_script_with_tts_markup(clean_script):
+    """
+    Enhance clean Hindi script with Google TTS markup tags for more natural and engaging audio.
+    
+    Uses Gemini AI to analyze the script content and automatically insert appropriate markup tags:
+    - Non-speech sounds: [sigh], [laughing], [uhm]
+    - Style modifiers: [sarcasm], [robotic], [shouting], [whispering], [extremely fast]
+    - Pacing/pauses: [short pause], [medium pause], [long pause]
+    
+    Args:
+        clean_script (str): Clean Hindi script without timestamps or formatting
+        
+    Returns:
+        str: Enhanced script with TTS markup tags
+    """
+    if not clean_script or len(clean_script.strip()) < 20:
+        return clean_script
+    
+    try:
+        import google.generativeai as genai
+        from .models import AIProviderSettings
+        
+        # Get Gemini API key
+        settings_obj = AIProviderSettings.objects.first()
+        # Get API key using default_provider for general tasks
+        provider = settings_obj.default_provider
+        api_key = settings_obj.get_api_key(provider)
+        
+        if not api_key:
+            print(f"⚠️ No API key for {provider} - returning script without TTS markup")
+            return clean_script
+            
+        print(f"🎨 Analyzing script for TTS markup enhancement using {provider.upper()}...")
+        
+        enhanced_script = ""
+        
+        # Comprehensive prompt for TTS markup enhancement
+        prompt = f"""You are a professional audio script enhancer. Analyze the following Hindi script and add Google TTS markup tags to make the audio more natural and engaging.
+
+**Available Markup Tags:**
+
+**Non-speech sounds (Mode 1 - Insert sound, don't speak):**
+- [sigh] - For disappointment, relief, tiredness
+- [laughing] - For humor, amusement (pair with specific emotion in context)
+- [uhm] - For hesitation or thinking
+
+**Style modifiers (Mode 2 - Modify subsequent speech):**
+- [sarcasm] - For sarcastic delivery
+- [robotic] - For monotone/robotic delivery
+- [shouting] - For loud/emphatic delivery (needs matching context)
+- [whispering] - For quiet/secretive delivery
+- [extremely fast] - For disclaimers or rushed speech
+
+**Pacing (Mode 4 - Insert pauses):**
+- [short pause] - ~250ms, like a comma
+- [medium pause] - ~500ms, between sentences
+- [long pause] - ~1000ms+, for dramatic effect
+
+**CRITICAL RULES:**
+1. Use markup SPARINGLY - only where it genuinely enhances the narration
+2. Follow the three levers: Style + Text Content + Markup must align
+3. [short pause] after "देखो", "और", list items
+4. [medium pause] between distinct thoughts/sentences
+5. [long pause] ONLY for dramatic reveals (very rare)
+6. Add [laughing] only if context is genuinely funny/amusing
+7. Add [sigh] only for disappointment/relief moments
+8. Add [uhm] for natural hesitation in storytelling
+9. DO NOT add [scared], [curious], [bored] - these speak the word itself
+10. Keep exclamations (!), questions (?) as-is - they have natural intonation
+
+**Hindi Script to Enhance:**
+{clean_script}
+
+**Output Guidelines:**
+- Return ONLY the enhanced Hindi script with markup tags inserted
+- Do NOT add explanations or notes
+- Do NOT change the original text - only add markup tags
+- Preserve all punctuation and line breaks
+- Be conservative - better to under-tag than over-tag
+
+**Enhanced Script:**"""
+
+        if provider == 'openai':
+            # Use OpenAI for enhancement
+            result = _call_openai_api(api_key, prompt, "Enhance this Hindi script with TTS markup tags")
+            if result['status'] == 'success':
+                enhanced_script = result['prompt']
+            else:
+                print(f"⚠️ OpenAI enhancement failed: {result['error']}")
+                return clean_script
+        else:
+            # Default to Gemini
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel("gemini-2.0-flash-exp")
+            
+            response = model.generate_content(
+                prompt,
+                generation_config=genai.GenerationConfig(
+                    temperature=0.3,
+                    max_output_tokens=2048,
+                )
+            )
+            enhanced_script = response.text.strip()
+        
+        # Clean up any accidental markdown formatting
+        import re
+        enhanced_script = re.sub(r'^```.*?\n', '', enhanced_script)
+        enhanced_script = re.sub(r'\n```$', '', enhanced_script)
+        enhanced_script = enhanced_script.strip()
+        
+        # Validate that the enhanced script still contains Hindi text
+        if not re.search(r'[\u0900-\u097F]', enhanced_script):
+            print("⚠️ Enhanced script doesn't contain Hindi text - using original")
+            return clean_script
+        
+        print(f"✓ Script enhanced with TTS markup tags")
+        return enhanced_script
+        
+    except Exception as e:
+        print(f"⚠️ TTS markup enhancement failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return clean_script  # Return original if enhancement fails
 
 
 def add_tts_markup_tags(text):
@@ -3723,11 +3814,22 @@ def generate_hindi_script(video_download):
         
         # Check if AI provider is configured
         settings_obj = AIProviderSettings.objects.first()
-        if not settings_obj or not settings_obj.api_key:
+        if not settings_obj:
             return {
                 'script': '',
                 'status': 'failed',
-                'error': 'AI provider not configured. Please add API key in settings.'
+                'error': 'AI provider settings not found. Please configure in settings.'
+            }
+        
+        # Use script_generation_provider for script generation
+        provider = settings_obj.script_generation_provider
+        api_key = settings_obj.get_api_key(provider)
+        
+        if not api_key:
+            return {
+                'script': '',
+                'status': 'failed',
+                'error': f'API key for {provider} not configured. Please add API key in settings.'
             }
         
         # Get video content for script generation
@@ -3781,7 +3883,7 @@ def generate_hindi_script(video_download):
         
         # Check if original transcript/enhanced transcript already mentions subscribe
         original_text = enhanced_transcript.lower()
-        has_subscribe_mention = any(
+        has_subscribe_mention = (
             'subscribe' in original_text or 
             'सब्सक्राइब' in enhanced_transcript or 
             'सब्स्क्राइब' in enhanced_transcript
@@ -3877,7 +3979,8 @@ def generate_hindi_script(video_download):
                         # Add "Dekho" at the start if not already present
                         if not text.strip().startswith('देखो') and not text.strip().startswith('Dekho'):
                             text = f"देखो {text}"
-                        processed_lines.append(f"{timestamp} {text}")
+                        # CRITICAL: Return clean text WITHOUT timestamps as requested
+                        processed_lines.append(f"{text}")
                     else:
                         # No timestamp, just add "Dekho" at start
                         if not line.strip().startswith('देखो') and not line.strip().startswith('Dekho'):
@@ -3885,19 +3988,31 @@ def generate_hindi_script(video_download):
                         else:
                             processed_lines.append(line)
                 else:
-                    processed_lines.append(line)
+                    # CRITICAL: Remove timestamp if present in other lines too
+                    timestamp_match = re.match(r'^(\d{1,2}:\d{2}:\d{2})\s+(.+)$', line)
+                    if timestamp_match:
+                        processed_lines.append(timestamp_match.group(2))
+                    else:
+                        processed_lines.append(line)
             
             # Add timestamped content (ensuring all keypoints are covered)
             script_content = "\n".join(processed_lines)
             
-            # Add CTA at the end with mother father reference ONLY if video doesn't already mention subscribe
-            formatted_script = script_content
-            if not has_subscribe_mention:
-                cta_text = "आपकी मम्मी पापा कसम सब्सक्राइब जरूर करे"
+            # Add CTA at the end with mother father reference (ALWAYS add as requested by user)
+            cta_text = "आपकी मम्मी पापा कसम सब्सक्राइब जरूर करे"
+            
+            # Only add if not already present (to avoid duplication)
+            if cta_text not in script_content:
                 formatted_script = f"{script_content}\n\n{cta_text}"
-                print("✓ Added subscribe CTA at the end")
+                print("✓ Added subscribe CTA at the end (User Requested)")
             else:
-                print("✓ Skipped adding subscribe CTA (already mentioned in video)")
+                formatted_script = script_content
+                print("✓ CTA already present")
+            
+            # Enhance with AI TTS markup tags (Gemini)
+            # This ensures the markup is visible in the editor and editable
+            print("Enhancing script with AI TTS markup tags...")
+            formatted_script = enhance_script_with_tts_markup(formatted_script)
             
             return {
                 'script': formatted_script,
@@ -3932,62 +4047,69 @@ def generate_hindi_script(video_download):
         has_exciting_content = exciting_count >= 2  # At least 2 exciting keywords
         is_mostly_neutral = neutral_count > fear_count and neutral_count > exciting_count
         
-        # Create system prompt for Hindi script generation (explainer style)
-        # Adjust prompt based on content type
-        if has_fear_content:
-            system_prompt = """आप एक विशेषज्ञ explainer और स्क्रिप्ट राइटर हैं जो suspenseful और engaging children's content के लिए हिंदी में detailed, vivid, और dramatic explainer-style स्क्रिप्ट बनाते हैं।
+        # Create system prompt for Hindi script generation (User's Strict Rules - Video-Focused)
+        system_prompt = """You are an AI that creates Hindi narration scripts ONLY based on the real actions shown in the video information I provide.  
+You must NEVER invent scenes, NEVER guess, and NEVER create your own story.  
+Use only what is actually happening in the video.
 
-**CONTENT TYPE: Suspense/Fear-based Story (रोमांचक कहानी)**
-- यह content में fear, suspense, या scary elements हैं (जैसे राक्षस, अंधेरा, डर, पीछा)
-- Script को dramatic और engaging बनाएं लेकिन बच्चों के लिए appropriate
-- Suspenseful moments को vividly describe करें
-- Fear elements को exciting और engaging बनाएं, बहुत scary नहीं
-- Use appropriate tone: slightly tense for scary moments, energetic for action scenes
+YOUR GOAL:
+Create a smooth, natural Hindi narration that explains the video step-by-step, in my signature style:
+- Start with "देखो —"
+- Explain what the person/animal/object is doing
+- Describe events in the same order they happen
+- Use simple dramatic Hindi, not heavy Hindi
+- Use short, TTS-friendly sentences
+- End with: "आपकी मम्मी कसम — सब्सक्राइब कर लेना!"
 
-**CRITICAL REQUIREMENTS (MUST FOLLOW):**
-1. **पहली लाइन हमेशा "देखो" से शुरू होनी चाहिए** - यह MANDATORY है, बिना exception के
-2. **अंत में हमेशा CTA होना चाहिए: "आपकी मम्मी पापा कसम सब्सक्राइब जरूर करे"** - यह MANDATORY है, बिना exception के
-3. **IMPORTANT: Use "पापा" NOT "पुण्या" in CTA** - यह CRITICAL है, "पुण्या" बिल्कुल न लिखें
+STRICT RULES:
+
+1. STYLE RULES:
+- Start with "देखो —"
+- Use natural, simple Hindi.
+- Use small punchy sentences.
+- Tone: dramatic + explanatory + exciting.
+- Keep it clean, no abusive words.
+- No timestamps in output.
+- No long paragraphs. Break sentences for TTS airflow.
+- Final line MUST be: "आपकी मम्मी कसम — सब्सक्राइब कर लेना!"
+
+2. VIDEO EXPLANATION RULE (MOST IMPORTANT):
+Your script MUST directly explain the actual visuals.
+Describe ONLY what the camera shows.
+No imagination outside the given frames.
+No assumptions.
+Explain the real actions clearly and in correct order.
+
+Example style:
+"देखो — ये लड़का गाड़ी खींच रहा था।  
+फिर अचानक गाड़ी फँस गई।  
+फिर उसकी मम्मी आई और मदद की।  
+और आख़िर में सब ठीक हो गया।"
+
+This is the expected explanation style.
+
+3. TTS RULES:
+- Sentences must be short.
+- Add proper full stops.
+- Should sound smooth in voice narration.
+- No timestamps, but maintain natural pacing.
+
+4. DURATION MATCHING RULE (CRITICAL):
+The script MUST match the video duration PERFECTLY.
+- I will provide the exact video duration in seconds.
+- Calculate the required word count based on natural Hindi speaking rate (approximately 2.5 words per second).
+- Example: For a 15-second video, generate approximately 35-40 Hindi words total (15 × 2.5 = 37.5 words).
+- Example: For a 30-second video, generate approximately 70-80 Hindi words total.
+- DO NOT exceed or fall short of the target word count significantly.
+- Adjust sentence length and content density to fit the duration perfectly.
+- Include the mandatory hook ("देखो —") and CTA ("आपकी मम्मी कसम — सब्सक्राइब कर लेना!") within this word count.
+
+OUTPUT FORMAT:
+Return ONLY the final narration script.
+Do NOT add timestamps.
+Do NOT add explanations.
+Do NOT break character.
 """
-        else:
-            system_prompt = """आप एक विशेषज्ञ explainer और स्क्रिप्ट राइटर हैं जो वीडियो कंटेंट के लिए हिंदी में detailed, vivid, और engaging explainer-style स्क्रिप्ट बनाते हैं।
-
-**CRITICAL REQUIREMENTS (MUST FOLLOW):**
-1. **पहली लाइन हमेशा "देखो" से शुरू होनी चाहिए** - यह MANDATORY है, बिना exception के
-2. **अंत में हमेशा CTA होना चाहिए: "आपकी मम्मी पापा कसम सब्सक्राइब जरूर करे"** - यह MANDATORY है, बिना exception के
-3. **IMPORTANT: Use "पापा" NOT "पुण्या" in CTA** - यह CRITICAL है, "पुण्या" बिल्कुल न लिखें
-
-आपका कार्य (EXPLAINER STYLE):
-1. **मैं एक explainer हूं** - मैं वीडियो में हो रही हर scene, action, और movement को detail में explain करता हूं
-2. **Scene-by-scene explainer** - हर scene change, visual element, और action को vividly describe करें
-3. **Aggressive explainer style** - हर detail को explain करें, कुछ भी miss न करें
-4. वीडियो की सामग्री को समझकर एक detailed और vivid explainer-style हिंदी स्क्रिप्ट बनाएं
-5. स्क्रिप्ट को वीडियो की अवधि के अनुसार समायोजित करें (video length और audio length match करना है)
-6. स्क्रिप्ट को बोलने योग्य, प्राकृतिक, engaging और detailed explainer style में बनाएं
-7. **किसी भी header या title section न बनाएं - सीधे "देखो" से शुरू करें**
-
-[स्क्रिप्ट फॉर्मेट:
-देखो [मुख्य कंटेंट - वीडियो की सामग्री के आधार पर, बच्चों के लिए मजेदार और आकर्षक, scene-by-scene detailed explanation]
-
-आपकी मम्मी पापा कसम सब्सक्राइब जरूर करे]
-
-**MANDATORY FORMAT (NO EXCEPTIONS):**
-- **पहली लाइन हमेशा "देखो" से शुरू होनी चाहिए** - यह CRITICAL है, बिना fail के
-- **अंत में हमेशा CTA होना चाहिए: "आपकी मम्मी पापा कसम सब्सक्राइब जरूर करे"** - यह CRITICAL है, बिना fail के
-
-महत्वपूर्ण निर्देश (बच्चों के लिए):
-- स्क्रिप्ट पूरी तरह से हिंदी (देवनागरी) में होनी चाहिए
-- **बच्चों की बोलचाल की हिंदी इस्तेमाल करें - simple, fun, और engaging**
-- **मजेदार और रोचक भाषा का उपयोग करें - बच्चों को attract करने के लिए**
-- स्क्रिप्ट प्राकृतिक और बोलने योग्य होनी चाहिए
-- वीडियो की अवधि को ध्यान में रखते हुए स्क्रिप्ट की लंबाई निर्धारित करें
-- **सीधे "देखो" से शुरू करें - कोई ग्रीटिंग, नमस्कार, या परिचयात्मक वाक्य नहीं**
-- **धन्यवाद या समापन वाक्य नहीं - सीधे "देखो" से कंटेंट शुरू करें, अंत में सिर्फ CTA**
-- **स्क्रिप्ट सीधे वीडियो में हो रही एक्शन/घटना का वर्णन करे - सवाल बिल्कुल नहीं**
-- **कोई भी सवाल नहीं - सिर्फ वर्णन और एक्शन**
-- **किसी भी header (शीर्षक, आवाज़) section न बनाएं - सीधे "देखो" से शुरू करें**
-- **बिल्कुल बचें:** "क्या आपने...", "क्या आपको...", "क्या ये...", "नमस्कार दोस्तों", "दिल थाम के बैठिए", "आज हम देखेंगे", "चलिए शुरू करते हैं", "**शीर्षक:**", "**आवाज़:**" जैसे वाक्यों/headers से
-- **सिर्फ मुख्य कंटेंट - "देखो" से शुरू, वीडियो में जो हो रहा है उसका सीधा वर्णन, कोई सवाल नहीं, कोई header नहीं, बच्चों को attract करने वाली मजेदार भाषा, अंत में CTA**"""
         
         # Create user message with video details including visual analysis for scene-based explainer
         duration_text = f"{int(duration)} सेकंड" if duration > 0 else "अज्ञात अवधि"
@@ -4005,70 +4127,42 @@ def generate_hindi_script(video_download):
         elif not has_visual:
             visual_context = "\n\n**दृश्य विश्लेषण (Visual Analysis):** Not available (optional) - continue without it, use enhanced transcript only.\n"
         
-        user_message = f"""वीडियो शीर्षक: {title}
-विवरण: {description}
-अवधि: {duration_text}
+        # Calculate target word count based on duration
+        target_word_count = int(duration * 2.5) if duration > 0 else 40
+        word_count_range = f"{target_word_count - 5} to {target_word_count + 5}"
+        
+        user_message = f"""VIDEO INFORMATION:
+Title: {title}
+Description: {description}
+Duration: {duration_text} ({duration} seconds)
 
-**मूल ट्रांसक्रिप्ट (Original Transcript):**
+⚠️ CRITICAL: Generate a script with approximately {target_word_count} Hindi words (range: {word_count_range} words).
+This ensures the narration perfectly matches the video duration when spoken at natural pace (2.5 words/second).
+
+ORIGINAL TRANSCRIPT:
 {content_for_script[:4000]}
 
 {visual_context}
 
-**AI-Enhanced Transcript (Best Quality - Combined from Available Sources):**
+AI-ENHANCED TRANSCRIPT (Reference):
 {enhanced_transcript[:3000] if enhanced_transcript else 'Not available'}
 
-**महत्वपूर्ण निर्देश (EXPLAINER STYLE - Scene-by-Scene Detailed Explanation):**
-1. **मैं एक EXPLAINER हूं** - मैं वीडियो में हो रही हर चीज़ को detail में explain करता हूं
-2. **दृश्य विश्लेषण (Visual Analysis) का उपयोग करें - अगर available है तो हर scene को detail में explain करें (OPTIONAL - अगर नहीं है तो continue without it)**
-3. **Aggressive explainer style - हर action, movement, और scene change को vividly describe करें**
-4. **मूल ट्रांसक्रिप्ट + Enhanced Transcript को combine करें - Visual Analysis अगर available है तो include करें, नहीं तो Enhanced Transcript से ही काम चलाएं**
-5. **अगर ट्रांसक्रिप्ट में टाइमस्टैम्प हैं (जैसे 00:00:00), तो उन्हें बनाए रखें**
-6. **Visual segments के timestamps को match करें - scene-by-scene sync करें**
-7. **Video length ({duration_text}) और script length match करना है** - TTS speed और temperature automatically adjust होगा video duration के अनुसार
-8. **अगर ट्रांसक्रिप्ट हिंदी में नहीं है, तो हिंदी में अनुवाद करें लेकिन टाइमस्टैम्प बनाए रखें**
-9. **अगर ट्रांसक्रिप्ट में टाइमस्टैम्प नहीं हैं, तो Visual Analysis के timestamps का उपयोग करें (अगर available है)**
-10. **सीधे बिंदु पर आएं - कोई ग्रीटिंग या परिचय नहीं, कोई header नहीं**
-11. **स्क्रिप्ट सीधे वीडियो में हो रही एक्शन/घटना का VIVID और DETAILED वर्णन करे - visual scenes को aggressively explain करें**
-12. **बच्चों की बोलचाल की simple और fun हिंदी इस्तेमाल करें - engaging और attractive**
-13. **किसी भी header (शीर्षक, आवाज़) section न बनाएं - सीधे कंटेंट से शुरू करें**
-14. **हर scene change, action, और visual element को describe करें - aggressive और detailed explainer style**
-15. **Script length को video duration के अनुसार optimize करें - TTS speed/temperature automatically adjust होगा**
-
-**CRITICAL FORMAT REQUIREMENTS (MUST FOLLOW - NO EXCEPTIONS):**
-1. **पहली लाइन हमेशा "देखो" से शुरू होनी चाहिए** - यह MANDATORY है
-2. **अंत में हमेशा CTA होना चाहिए: "आपकी मम्मी पापा कसम सब्सक्राइब जरूर करे"** - यह MANDATORY है
-
-**उदाहरण (मूल ट्रांसक्रिप्ट के आधार पर):**
-अगर मूल ट्रांसक्रिप्ट है:
-00:00:00 घर पर मम्मी ना होने के कारण इस
-00:00:01 बच्चे ने घर पर अंडे से खेलना शुरू कर दिया
-
-तो आउटपुट होना चाहिए (टाइमस्टैम्प बनाए रखें, पहली लाइन "देखो" से शुरू, अंत में CTA):
-00:00:00 देखो घर पर मम्मी ना होने के कारण इस
-00:00:01 बच्चे ने घर पर अंडे से खेलना शुरू कर दिया
-
-आपकी मम्मी पापा कसम सब्सक्राइब जरूर करे
-
-**गलत (इससे बिल्कुल बचें):**
-- "देखो" के बिना शुरू करना
-- CTA के बिना समाप्त करना
-- नई सामग्री बनाना (जो मूल ट्रांसक्रिप्ट में नहीं है)
-- टाइमस्टैम्प हटाना
-- सवाल जोड़ना (जैसे "क्या आपने...")
-- ग्रीटिंग जोड़ना (जैसे "नमस्कार दोस्तों")
-
-**याद रखें: 
-- मूल ट्रांसक्रिप्ट का उपयोग करें
-- टाइमस्टैम्प बनाए रखें
-- सिर्फ हिंदी में कन्वर्ट करें
-- हमेशा "देखो" से शुरू करें
-- हमेशा "आपकी मम्मी पापा कसम सब्सक्राइब जरूर करे" से समाप्त करें**"""
+YOUR TASK:
+Generate the Hindi script following the STRICT RULES defined in the system prompt.
+1. Start with "देखो —"
+2. End with "आपकी मम्मी कसम — सब्सक्राइब कर लेना!"
+3. Match actions perfectly.
+4. Use short sentences with voice markup (e.g. [short pause], [sigh]).
+5. MATCH DURATION: Generate exactly {target_word_count} words (±5 words) to fit {duration} seconds perfectly.
+6. OUTPUT PLAIN TEXT ONLY (No timestamps in final output).
+"""
         
-        # Call AI API
-        provider = settings_obj.provider
-        api_key = settings_obj.api_key
+        # Call AI API using script_generation_provider
+        provider = settings_obj.script_generation_provider
+        api_key = settings_obj.get_api_key(provider)
         
         print(f"🤖 Generating Hindi script using {provider.upper()} AI...")
+        print(f"   - Provider: {provider} (script_generation_provider)")
         print(f"   - Video duration: {duration}s")
         print(f"   - Enhanced transcript length: {len(enhanced_transcript)} chars")
         print(f"   - Visual segments: {len(visual_segments) if visual_segments else 0}")
@@ -4078,8 +4172,6 @@ def generate_hindi_script(video_download):
             result = _call_gemini_api(api_key, system_prompt, user_message)
         elif provider == 'openai':
             result = _call_openai_api(api_key, system_prompt, user_message)
-        elif provider == 'anthropic':
-            result = _call_anthropic_api(api_key, system_prompt, user_message)
         else:
             return {
                 'script': '',
@@ -4091,91 +4183,47 @@ def generate_hindi_script(video_download):
             print("✓ AI script generation completed successfully")
             script = result['prompt'].strip()
             
-            # Remove questions from the script before formatting
-            print("📝 Removing questions and formatting script...")
-            script = remove_questions_from_script(script)
+            # Use script as-is (Plain Text format requested)
+            formatted_script = script
             
-            # Format the script with proper structure
-            formatted_script = format_hindi_script(script, title)
-            
-            # Filter negative/abusive words from formatted script (done once at the end)
+            # Filter negative/abusive words
             from .word_filter import filter_negative_words
             # Word filtering is disabled (all replacements commented out)
-            # Function will return text as-is without any replacements
             print("Word filtering is disabled - script will be used as-is...")
             formatted_script = filter_negative_words(formatted_script)
             
-            # ALWAYS ensure "देखो" is at the start (MANDATORY)
+            # MANDATORY: Ensure "देखो" is at the start
             if formatted_script and not formatted_script.strip().startswith('देखो') and not formatted_script.strip().startswith('Dekho'):
-                # Find first line and add "देखो"
-                lines = formatted_script.split('\n')
-                if lines:
-                    first_line = lines[0].strip()
-                    # Check if first line has timestamp
-                    timestamp_match = re.match(r'^(\d{1,2}:\d{2}:\d{2})\s+(.+)$', first_line)
-                    if timestamp_match:
-                        timestamp = timestamp_match.group(1)
-                        text = timestamp_match.group(2)
-                        if not text.strip().startswith('देखो') and not text.strip().startswith('Dekho'):
-                            lines[0] = f"{timestamp} देखो {text}"
-                    else:
-                        if not first_line.startswith('देखो') and not first_line.startswith('Dekho'):
-                            lines[0] = f"देखो {first_line}"
-                    formatted_script = '\n'.join(lines)
+                formatted_script = f"देखो — {formatted_script}"
             
-            # Check if script already mentions subscribe - if so, don't add CTA
-            script_lower = formatted_script.lower()
-            script_has_subscribe = (
-                'subscribe' in script_lower or 
-                'सब्सक्राइब' in formatted_script or 
-                'सब्स्क्राइब' in formatted_script
-            )
+            # MANDATORY: Ensure specific CTA at the end
+            cta_text = "आपकी मम्मी कसम — सब्सक्राइब कर लेना!"
             
-            # IMPORTANT: Use "पापा" NOT "पुण्या"
-            # Remove any existing CTA at the end first
-            cta_text = "आपकी मम्मी पापा कसम सब्सक्राइब जरूर करे"
-            incorrect_cta = "आपकी मम्मी पुण्या कसम सब्सक्राइब जरूर करे"
-            cta_text_old = "अगर आपको ये वीडियो पसंद आया तो like और subscribe जरूर करें! धन्यवाद!"  # New version to remove
-            cta_text_old2 = "आपकी मम्मी कसम सब्सक्राइब जरूर करे"  # Older version
-            cta_text_old3 = "आपकी मम्मी कसम सब्सक्राइब"  # Oldest version
-            # Remove incorrect CTA with "पुण्या"
-            incorrect_cta_variants = [
+            # Remove any existing CTA variants first to avoid duplicates/wrong versions
+            incorrect_ctas = [
+                "आपकी मम्मी पापा कसम सब्सक्राइब जरूर करे",
                 "आपकी मम्मी पुण्या कसम सब्सक्राइब जरूर करे",
-                "आपकी मम्मी पुण्या कसम सब्सक्राइब",
-                "पुण्या कसम"
+                "आपकी मम्मी कसम सब्सक्राइब जरूर करे",
+                "सब्सक्राइब जरूर करे",
+                "सब्सक्राइब कर लेना"
             ]
             
-            # Remove trailing CTA if it exists (to avoid duplicates)
+            # Clean up end of script
             formatted_script = formatted_script.rstrip()
             
-            # Remove any "पुण्या" and replace with "पापा" first
-            formatted_script = re.sub(r'पुण्या', 'पापा', formatted_script)
-            
-            # Check for new CTA format
-            if formatted_script.endswith(cta_text):
-                formatted_script = formatted_script[:-len(cta_text)].rstrip()
-            elif formatted_script.endswith(cta_text + "\n"):
-                formatted_script = formatted_script[:-len(cta_text + "\n")].rstrip()
-            elif formatted_script.endswith("\n\n" + cta_text):
-                formatted_script = formatted_script[:-len("\n\n" + cta_text)].rstrip()
-            # Remove all old CTA formats
-            old_ctas = [cta_text_old, cta_text_old2, cta_text_old3] + incorrect_cta_variants
-            for old_cta in old_ctas:
-                if formatted_script.endswith(old_cta):
-                    formatted_script = formatted_script[:-len(old_cta)].rstrip()
-                elif formatted_script.endswith(old_cta + "\n"):
-                    formatted_script = formatted_script[:-len(old_cta + "\n")].rstrip()
-                elif formatted_script.endswith("\n\n" + old_cta):
-                    formatted_script = formatted_script[:-len("\n\n" + old_cta)].rstrip()
-                # Also check if CTA appears anywhere in the script
-                formatted_script = formatted_script.replace(old_cta, "").strip()
-            
-            # Only add CTA at the end if video doesn't already mention subscribe
-            if not script_has_subscribe and not has_subscribe_mention:
+            # Check if correct CTA is already there
+            if not formatted_script.endswith(cta_text):
+                # Remove incorrect CTAs if present at the end
+                for bad_cta in incorrect_ctas:
+                    if formatted_script.endswith(bad_cta):
+                        formatted_script = formatted_script[:-len(bad_cta)].rstrip()
+                
+                # Add mandatory CTA
                 formatted_script += f"\n\n{cta_text}"
-                print("✓ Added subscribe CTA at the end (AI-generated script)")
-            else:
-                print("✓ Skipped adding subscribe CTA (already mentioned in video/script)")
+                print("✓ Added mandatory CTA: आपकी मम्मी कसम — सब्सक्राइब कर लेना!")
+            
+            # NOTE: We skip enhance_script_with_tts_markup because the system prompt 
+            # now instructs the AI to include voice markup directly in the script.
             
             return {
                 'script': formatted_script,
@@ -4197,4 +4245,3 @@ def generate_hindi_script(video_download):
             'status': 'failed',
             'error': error_msg
         }
-

@@ -12,6 +12,7 @@ import {
 	ExternalLink,
 	RefreshCw,
 	ArrowLeft,
+	FileEdit,
 } from "lucide-react";
 import {
 	Button,
@@ -43,6 +44,10 @@ export function VideoDetail() {
 	} = useStore();
 
 	const [activeTab, setActiveTab] = useState("info");
+	// Script editor state
+	const [isEditingScript, setIsEditingScript] = useState(false);
+	const [editedScript, setEditedScript] = useState("");
+	const [scriptEditorDismissed, setScriptEditorDismissed] = useState(false); // Track if user dismissed editor
 	// const [progress, setProgress] = useState(0); // Removed simulated progress
 
 	// Get processing state early so it can be used in refetchInterval
@@ -74,8 +79,14 @@ export function VideoDetail() {
 				video.ai_processing_status === "processing" ||
 				video.script_status === "generating" ||
 				video.synthesis_status === "synthesizing" ||
+				// Check for final video assembly (new status tracking)
+				video.final_video_status === "removing_audio" ||
+				video.final_video_status === "combining_audio" ||
+				// Legacy check for videos without final_video_status field
 				(video.synthesis_status === "synthesized" &&
-					!video.final_processed_video_url) ||
+					!video.final_processed_video_url &&
+					(!video.final_video_status ||
+						video.final_video_status === "not_started")) ||
 				(currentProcessingState && currentProcessingState.type) ||
 				// Poll if Cloudinary/Sheets are pending (after final video is ready)
 				(video.final_processed_video_url && !video.cloudinary_url) ||
@@ -238,11 +249,19 @@ export function VideoDetail() {
 		onSuccess: () => {
 			queryClient.invalidateQueries(["video", id]);
 			queryClient.invalidateQueries(["videos"]);
-			showSuccess("Download Started", "Video download has been started.", { timer: 3000 });
+			showSuccess(
+				"Download Started",
+				"Video download has been started.",
+				{ timer: 3000 }
+			);
 		},
 		onError: (error) => {
 			completeProcessing(id);
-			showError("Download Failed", error?.response?.data?.error || "Download failed. Please try again.");
+			showError(
+				"Download Failed",
+				error?.response?.data?.error ||
+					"Download failed. Please try again."
+			);
 		},
 	});
 
@@ -275,7 +294,11 @@ export function VideoDetail() {
 					{ confirmButtonText: "OK", width: "600px" }
 				);
 			} else {
-				showSuccess("Processing Started", "Video processing has been started.", { timer: 3000 });
+				showSuccess(
+					"Processing Started",
+					"Video processing has been started.",
+					{ timer: 3000 }
+				);
 			}
 
 			let pollCount = 0;
@@ -479,11 +502,19 @@ export function VideoDetail() {
 		},
 		onSuccess: () => {
 			queryClient.invalidateQueries(["video", id]);
-			showSuccess("AI Processing Started", "AI processing has been started.", { timer: 3000 });
+			showSuccess(
+				"AI Processing Started",
+				"AI processing has been started.",
+				{ timer: 3000 }
+			);
 		},
 		onError: (error) => {
 			completeProcessing(id);
-			showError("AI Processing Failed", error?.response?.data?.error || "AI processing failed. Please try again.");
+			showError(
+				"AI Processing Failed",
+				error?.response?.data?.error ||
+					"AI processing failed. Please try again."
+			);
 		},
 	});
 
@@ -503,9 +534,19 @@ export function VideoDetail() {
 		if (video.synthesis_status === "synthesizing") {
 			return "Synthesizing Audio...";
 		}
+		// Check for final video assembly with dedicated status tracking
+		if (video.final_video_status === "removing_audio") {
+			return "Removing Original Audio...";
+		}
+		if (video.final_video_status === "combining_audio") {
+			return "Combining with TTS Audio...";
+		}
+		// Legacy check for videos without final_video_status field
 		if (
 			video.synthesis_status === "synthesized" &&
-			!video.final_processed_video_url
+			!video.final_processed_video_url &&
+			(!video.final_video_status ||
+				video.final_video_status === "not_started")
 		) {
 			return "Creating Final Video...";
 		}
@@ -595,7 +636,11 @@ export function VideoDetail() {
 				!currentVideo.is_downloaded &&
 				currentVideo.status === "success"
 			) {
-				toast("Step 1/8: Downloading video...", { icon: "📥" });
+				showInfo("Step 1/8: Downloading video...", "", {
+					timer: 2000,
+					toast: true,
+					position: "top-end",
+				});
 				await videosApi.download(id);
 				// Wait for download to complete
 				let downloadComplete = false;
@@ -614,16 +659,19 @@ export function VideoDetail() {
 			}
 
 			// Step 2-6: Transcribe (which does transcription → AI → script → TTS → final video)
-			toast("Step 2/8: Starting transcription and processing...", {
-				icon: "🎬",
+			showInfo("Step 2/8: Starting transcription and processing...", "", {
+				timer: 2000,
+				toast: true,
+				position: "top-end",
 			});
 			const transcribeResult = await videosApi.transcribe(id);
 
 			// If transcription was skipped (no audio), continue with other steps if transcript exists
 			if (transcribeResult.status === "skipped") {
-				toast(
+				showWarning(
 					"Transcription skipped (no audio stream). Continuing with other steps...",
-					{ icon: "⚠️" }
+					"",
+					{ timer: 3000, toast: true, position: "top-end" }
 				);
 			}
 
@@ -672,7 +720,11 @@ export function VideoDetail() {
 				currentVideo.final_processed_video_url &&
 				!currentVideo.cloudinary_url
 			) {
-				toast("Step 7/8: Uploading to Cloudinary...", { icon: "☁️" });
+				showInfo("Step 7/8: Uploading to Cloudinary...", "", {
+					timer: 2000,
+					toast: true,
+					position: "top-end",
+				});
 				try {
 					await videosApi.uploadAndSync(id);
 					// Wait for upload to complete
@@ -702,7 +754,11 @@ export function VideoDetail() {
 				currentVideo.cloudinary_url &&
 				!currentVideo.google_sheets_synced
 			) {
-				toast("Step 8/8: Syncing to Google Sheets...", { icon: "📊" });
+				showInfo("Step 8/8: Syncing to Google Sheets...", "", {
+					timer: 2000,
+					toast: true,
+					position: "top-end",
+				});
 				try {
 					await videosApi.uploadAndSync(id);
 					// Wait for sync to complete
@@ -730,7 +786,11 @@ export function VideoDetail() {
 			queryClient.invalidateQueries(["video", id]);
 			queryClient.invalidateQueries(["videos"]);
 			completeProcessing(id);
-			showSuccess("Processing Completed", "Video processing completed successfully! 🎉", { timer: 5000 });
+			showSuccess(
+				"Processing Completed",
+				"Video processing completed successfully! 🎉",
+				{ timer: 5000 }
+			);
 		},
 		onError: (error) => {
 			completeProcessing(id);
@@ -748,7 +808,11 @@ export function VideoDetail() {
 			return videosApi.reprocess(id);
 		},
 		onSuccess: () => {
-			showSuccess("Reprocessing Started", "Video reprocessing has been started in the background.", { timer: 3000 });
+			showSuccess(
+				"Reprocessing Started",
+				"Video reprocessing has been started in the background.",
+				{ timer: 3000 }
+			);
 			queryClient.invalidateQueries(["video", id]);
 			queryClient.invalidateQueries(["videos"]);
 			// Start immediate refetch to get updated status
@@ -774,7 +838,11 @@ export function VideoDetail() {
 							clearInterval(pollInterval);
 							completeProcessing(id);
 							if (data.final_processed_video_url) {
-								showSuccess("Reprocessing Completed", "Video reprocessing completed successfully!", { timer: 5000 });
+								showSuccess(
+									"Reprocessing Completed",
+									"Video reprocessing completed successfully!",
+									{ timer: 5000 }
+								);
 							} else if (data.synthesis_status === "failed") {
 								showError(
 									"Reprocessing Incomplete",
@@ -794,23 +862,132 @@ export function VideoDetail() {
 		},
 		onError: (error) => {
 			completeProcessing(id);
-			showError("Reprocessing Failed", error?.response?.data?.error || "Reprocessing failed. Please try again.");
+			showError(
+				"Reprocessing Failed",
+				error?.response?.data?.error ||
+					"Reprocessing failed. Please try again."
+			);
 		},
 	});
+
+	// Script editor mutations
+	const updateScriptMutation = useMutation({
+		mutationFn: (scriptData) => videosApi.updateScript(id, scriptData),
+		onSuccess: () => {
+			setIsEditingScript(false);
+			queryClient.invalidateQueries(["video", id]);
+			showSuccess("Script Updated", "Script saved successfully!", {
+				timer: 3000,
+			});
+
+			// Automatically trigger TTS synthesis after saving script
+			synthesizeTTSMutation.mutate();
+		},
+		onError: (error) => {
+			showError(
+				"Update Failed",
+				error?.response?.data?.error || "Failed to update script"
+			);
+		},
+	});
+
+	const synthesizeTTSMutation = useMutation({
+		mutationFn: () => videosApi.synthesizeTTS(id),
+		onSuccess: (response) => {
+			showSuccess(
+				"TTS Synthesis Started",
+				`TTS synthesis started with speed ${response.tts_speed}x to match video duration`,
+				{ timer: 5000 }
+			);
+			queryClient.invalidateQueries(["video", id]);
+			// Start polling for synthesis completion
+			refetch();
+		},
+		onError: (error) => {
+			showError(
+				"TTS Failed",
+				error?.response?.data?.error || "TTS synthesis failed"
+			);
+		},
+	});
+
+	// Helper function to estimate speech duration
+	const estimateSpeechDuration = (script) => {
+		if (!script) return 0;
+		const wordCount = script
+			.split(/\s+/)
+			.filter((word) => word.length > 0).length;
+		// Average Hindi speaking rate: ~150 words/minute = 2.5 words/second
+		return Math.ceil(wordCount / 2.5);
+	};
+
+	// Handler for saving script
+	const handleSaveScript = () => {
+		if (!editedScript || !editedScript.trim()) {
+			showError("Empty Script", "Script cannot be empty");
+			return;
+		}
+
+		updateScriptMutation.mutate({
+			hindi_script: editedScript,
+		});
+	};
+
+	// Check if script needs editing
+	const needsScriptReview =
+		video?.script_status === "generated" &&
+		!video?.script_edited &&
+		video?.hindi_script &&
+		!scriptEditorDismissed; // Only auto-show if not previously dismissed
+
+	// Helper to clean script for editor (remove timestamps)
+	const getCleanScript = (script) => {
+		if (!script) return "";
+		// Remove timestamps like 00:00:00 or 00:00
+		let clean = script.replace(/\b\d{1,2}:\d{2}(?::\d{2})?\b/g, "");
+		// Remove extra spaces
+		clean = clean.replace(/\s+/g, " ").trim();
+		return clean;
+	};
+
+	// Show script editor when script is generated but not edited (and not dismissed)
+	useEffect(() => {
+		if (needsScriptReview) {
+			setIsEditingScript(true);
+			setEditedScript(getCleanScript(video.hindi_script));
+		}
+	}, [needsScriptReview, video?.hindi_script]);
+
+	// Reset dismissal when script changes (new script generation)
+	useEffect(() => {
+		if (video?.script_status === 'generated' && video?.hindi_script) {
+			setScriptEditorDismissed(false);
+		}
+	}, [video?.hindi_script]);
+
+
 
 	const resetTranscriptionMutation = useMutation({
 		mutationFn: () => {
 			return videosApi.resetTranscription(id);
 		},
 		onSuccess: (data) => {
-			showSuccess("Transcription Reset", data.message || "Transcription reset successfully.", { timer: 3000 });
+			showSuccess(
+				"Transcription Reset",
+				data.message || "Transcription reset successfully.",
+				{ timer: 3000 }
+			);
 			queryClient.invalidateQueries(["video", id]);
 			queryClient.invalidateQueries(["videos"]);
 			refetch();
 			completeProcessing(id);
 		},
 		onError: (error) => {
-			showError("Reset Failed", error?.response?.data?.error || "Failed to reset transcription. Please try again.");
+			showError(
+				"Reset Failed",
+				error?.response?.data?.error ||
+					"Failed to reset transcription. Please try again."
+			);
 		},
 	});
 
@@ -845,15 +1022,25 @@ export function VideoDetail() {
 					startProcessing(id, "synthesis");
 					// Call synthesize without voice profile - backend will use Google TTS
 					await videosApi.synthesize(id, null);
-					showSuccess("Synthesis Retried", "Synthesis has been retried.", { timer: 3000 });
+					showSuccess(
+						"Synthesis Retried",
+						"Synthesis has been retried.",
+						{ timer: 3000 }
+					);
 					refetch();
 				} catch (error) {
-					showError("Retry Failed", "Failed to retry synthesis. Please try again.");
+					showError(
+						"Retry Failed",
+						"Failed to retry synthesis. Please try again."
+					);
 					completeProcessing(id);
 				}
 				break;
 			default:
-				showError("Unknown Step", "Unknown step to retry. Please select a valid step.");
+				showError(
+					"Unknown Step",
+					"Unknown step to retry. Please select a valid step."
+				);
 		}
 	};
 
@@ -1066,10 +1253,25 @@ export function VideoDetail() {
 											resetTranscriptionMutation.isPending
 										}
 										disabled={
-											resetTranscriptionMutation.isPending
+					resetTranscriptionMutation.isPending
 										}>
 										Reset Transcription (
 										{transcriptionElapsedMinutes}m)
+									</Button>
+								)}
+
+								{/* Edit Script button */}
+								{video.hindi_script && (
+									<Button
+										size="sm"
+										variant="secondary"
+										icon={FileEdit}
+										onClick={() => {
+											setIsEditingScript(true);
+											setEditedScript(getCleanScript(video.hindi_script));
+											setScriptEditorDismissed(false); // Reset dismissal when manually opened
+										}}>
+										Edit Script
 									</Button>
 								)}
 
@@ -3348,6 +3550,188 @@ export function VideoDetail() {
 					)}
 				</div>
 			</div>
+
+			{/* Script Editor Modal */}
+			{isEditingScript && (
+				<div className="script-editor-overlay">
+					<div className="script-editor-modal">
+						<div className="script-editor-header">
+							<h2>📝 Review & Edit Hindi Script</h2>
+							<p className="script-editor-subtitle">
+								Review the generated script and make any changes
+								to improve the narration tone before TTS
+								synthesis.
+							</p>
+						</div>
+
+						<div className="script-editor-body">
+							<div className="mb-4">
+								<details className="group bg-white/5 border border-white/10 rounded-lg overflow-hidden">
+									<summary className="flex items-center justify-between p-3 cursor-pointer hover:bg-white/10 transition-colors">
+										<span className="font-medium flex items-center gap-2 text-sm">
+											<Brain size={16} className="text-yellow-400" />
+											Google TTS Prompting Tips & Markup Guide
+										</span>
+										<span className="text-xs text-white/50 group-open:rotate-180 transition-transform">▼</span>
+									</summary>
+									<div className="p-4 text-sm text-gray-300 space-y-4 bg-black/20 max-h-60 overflow-y-auto custom-scrollbar">
+										<div>
+											<h4 className="font-semibold text-white mb-1">The Three Levers of Speech Control</h4>
+											<p className="text-xs opacity-80">Ensure Style Prompt, Text Content, and Markup Tags are consistent for best results.</p>
+										</div>
+										
+										<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+											<div>
+												<h4 className="font-semibold text-white mb-2">Mode 1: Non-speech sounds</h4>
+												<ul className="list-disc pl-4 space-y-1 text-xs">
+													<li><code className="bg-white/10 px-1 rounded">[sigh]</code> - Disappointment, relief</li>
+													<li><code className="bg-white/10 px-1 rounded">[laughing]</code> - Humor, amusement</li>
+													<li><code className="bg-white/10 px-1 rounded">[uhm]</code> - Hesitation</li>
+												</ul>
+											</div>
+											<div>
+												<h4 className="font-semibold text-white mb-2">Mode 2: Style modifiers</h4>
+												<ul className="list-disc pl-4 space-y-1 text-xs">
+													<li><code className="bg-white/10 px-1 rounded">[sarcasm]</code> - Sarcastic tone</li>
+													<li><code className="bg-white/10 px-1 rounded">[whispering]</code> - Quiet delivery</li>
+													<li><code className="bg-white/10 px-1 rounded">[shouting]</code> - Loud delivery</li>
+													<li><code className="bg-white/10 px-1 rounded">[extremely fast]</code> - Rushed speech</li>
+												</ul>
+											</div>
+										</div>
+
+										<div>
+											<h4 className="font-semibold text-white mb-2">Mode 4: Pacing and pauses</h4>
+											<div className="grid grid-cols-3 gap-2 text-xs text-center">
+												<div className="bg-white/5 p-2 rounded"><code className="block mb-1">[short pause]</code>~250ms (comma)</div>
+												<div className="bg-white/5 p-2 rounded"><code className="block mb-1">[medium pause]</code>~500ms (sentence)</div>
+												<div className="bg-white/5 p-2 rounded"><code className="block mb-1">[long pause]</code>~1000ms+ (drama)</div>
+											</div>
+										</div>
+										
+										<div className="bg-yellow-500/10 border border-yellow-500/20 p-3 rounded text-xs">
+											<strong>Key Strategy:</strong> Use emotionally rich text. Don't rely on tags alone. "I think someone is in the house" works better for [scared] than neutral text.
+										</div>
+									</div>
+								</details>
+							</div>
+
+							<textarea
+								className="script-editor-textarea"
+								value={editedScript}
+								onChange={(e) =>
+									setEditedScript(e.target.value)
+								}
+								placeholder="Enter Hindi script here..."
+								rows={15}
+							/>
+
+							<div className="script-editor-stats">
+								<div className="stat-item">
+									<span className="stat-label">Words:</span>
+									<span className="stat-value">
+										{editedScript
+											? editedScript
+													.split(/\s+/)
+													.filter((w) => w.length > 0)
+													.length
+											: 0}
+									</span>
+								</div>
+								<div className="stat-item">
+									<span className="stat-label">
+										Estimated Speech:
+									</span>
+									<span className="stat-value">
+										{estimateSpeechDuration(editedScript)}s
+									</span>
+								</div>
+								<div className="stat-item">
+									<span className="stat-label">
+										Video Duration:
+									</span>
+									<span className="stat-value">
+										{video?.duration || 0}s
+									</span>
+								</div>
+								<div className="stat-item">
+									<span className="stat-label">
+										TTS Speed:
+									</span>
+									<span
+										className={`stat-value ${
+											estimateSpeechDuration(
+												editedScript
+											) > (video?.duration || 0)
+												? "stat-warning"
+												: "stat-success"
+										}`}>
+										{estimateSpeechDuration(editedScript) >
+										(video?.duration || 0)
+											? `~${Math.min(
+													1.5,
+													estimateSpeechDuration(
+														editedScript
+													) /
+														((video?.duration ||
+															1) *
+															0.95)
+											  ).toFixed(2)}x`
+											: "1.0x"}
+									</span>
+								</div>
+							</div>
+
+							{estimateSpeechDuration(editedScript) >
+								(video?.duration || 0) * 1.3 && (
+								<div className="script-editor-warning">
+									⚠️ <strong>Warning:</strong> Script is
+									significantly longer than video duration.
+									Consider shortening it for better audio
+									quality (max recommended speed is 1.5x).
+								</div>
+							)}
+						</div>
+
+						<div className="script-editor-footer">
+							<button
+								className="script-editor-btn script-editor-btn-secondary"
+								onClick={() => {
+									setEditedScript(video?.hindi_script || "");
+									showInfo(
+										"Script Reset",
+										"Script reset to original generated version"
+									);
+								}}
+								disabled={updateScriptMutation.isPending}>
+								Reset to Original
+							</button>
+							<div className="script-editor-actions">
+								<button
+									className="script-editor-btn script-editor-btn-cancel"
+									onClick={() => {
+										setIsEditingScript(false);
+										setScriptEditorDismissed(true); // Mark as dismissed so it won't auto-show again
+									}}
+									disabled={updateScriptMutation.isPending}>
+									Cancel
+								</button>
+								<button
+									className="script-editor-btn script-editor-btn-primary"
+									onClick={handleSaveScript}
+									disabled={
+										updateScriptMutation.isPending ||
+										!editedScript?.trim()
+									}>
+									{updateScriptMutation.isPending
+										? "💾 Saving..."
+										: "💾 Save & Continue to TTS"}
+								</button>
+							</div>
+						</div>
+					</div>
+				</div>
+			)}
 		</div>
 	);
 }

@@ -7,18 +7,31 @@ class AIProviderSettingsSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = AIProviderSettings
-        fields = ['id', 'provider', 'api_key']
+        fields = [
+            'id',
+            'gemini_api_key',
+            'openai_api_key',
+            'anthropic_api_key',
+            'script_generation_provider',
+            'default_provider',
+            # Legacy fields (deprecated)
+            'provider',
+            'api_key'
+        ]
 
     def to_representation(self, instance):
-        """Mask API key in responses"""
+        """Mask API keys in responses"""
         data = super().to_representation(instance)
-        if data.get('api_key'):
-            # Show only last 4 characters
-            api_key = data['api_key']
-            if len(api_key) > 4:
-                data['api_key_masked'] = '*' * (len(api_key) - 4) + api_key[-4:]
-            else:
-                data['api_key_masked'] = '*' * len(api_key)
+
+        # Mask all API keys (show only last 4 characters)
+        for key_field in ['gemini_api_key', 'openai_api_key', 'anthropic_api_key', 'api_key']:
+            if data.get(key_field):
+                api_key = data[key_field]
+                if len(api_key) > 4:
+                    data[f'{key_field}_masked'] = '*' * (len(api_key) - 4) + api_key[-4:]
+                else:
+                    data[f'{key_field}_masked'] = '*' * len(api_key)
+
         return data
 
 
@@ -107,6 +120,8 @@ class VideoDownloadSerializer(serializers.ModelSerializer):
     clean_script_for_tts = serializers.SerializerMethodField()
     script_error_message = serializers.SerializerMethodField()
     script_generated_at = serializers.SerializerMethodField()
+    script_edited = serializers.SerializerMethodField()
+    script_edited_at = serializers.SerializerMethodField()
     tts_speed = serializers.SerializerMethodField()
     tts_temperature = serializers.SerializerMethodField()
     tts_repetition_penalty = serializers.SerializerMethodField()
@@ -134,6 +149,10 @@ class VideoDownloadSerializer(serializers.ModelSerializer):
     enhanced_transcript = serializers.SerializerMethodField()
     enhanced_transcript_without_timestamps = serializers.SerializerMethodField()
     enhanced_transcript_hindi = serializers.SerializerMethodField()
+    # Final video assembly fields
+    final_video_status = serializers.SerializerMethodField()
+    final_video_error = serializers.SerializerMethodField()
+    synthesized_at = serializers.SerializerMethodField()
 
     class Meta:
         model = VideoDownload
@@ -164,10 +183,13 @@ class VideoDownloadSerializer(serializers.ModelSerializer):
             'enhanced_transcript', 'enhanced_transcript_without_timestamps', 'enhanced_transcript_hindi',
             # Script Generation
             'script_status', 'hindi_script', 'clean_script_for_tts', 'script_error_message', 'script_generated_at',
+            'script_edited', 'script_edited_at',
             # TTS Parameters
             'tts_speed', 'tts_temperature', 'tts_repetition_penalty',
             # Synthesis
-            'synthesis_status', 'synthesis_error', 'synthesized_audio', 'synthesized_audio_url', 'voice_profile',
+            'synthesis_status', 'synthesis_error', 'synthesized_audio', 'synthesized_audio_url', 'synthesized_at', 'voice_profile',
+            # Final Video Assembly
+            'final_video_status', 'final_video_error',
             # Review
             'review_status', 'review_notes', 'reviewed_at',
             # Cloudinary
@@ -252,6 +274,20 @@ class VideoDownloadSerializer(serializers.ModelSerializer):
         """Safely get script_generated_at field"""
         try:
             return getattr(obj, 'script_generated_at', None)
+        except (AttributeError, ValueError):
+            return None
+    
+    def get_script_edited(self, obj):
+        """Safely get script_edited field"""
+        try:
+            return getattr(obj, 'script_edited', False)
+        except (AttributeError, ValueError):
+            return False
+    
+    def get_script_edited_at(self, obj):
+        """Safely get script_edited_at field"""
+        try:
+            return getattr(obj, 'script_edited_at', None)
         except (AttributeError, ValueError):
             return None
     
@@ -427,6 +463,27 @@ class VideoDownloadSerializer(serializers.ModelSerializer):
             return getattr(obj, 'enhanced_transcript_hindi', '')
         except (AttributeError, ValueError):
             return ''
+    
+    def get_final_video_status(self, obj):
+        """Safely get final_video_status field"""
+        try:
+            return getattr(obj, 'final_video_status', 'not_started')
+        except (AttributeError, ValueError):
+            return 'not_started'
+    
+    def get_final_video_error(self, obj):
+        """Safely get final_video_error field"""
+        try:
+            return getattr(obj, 'final_video_error', '')
+        except (AttributeError, ValueError):
+            return ''
+    
+    def get_synthesized_at(self, obj):
+        """Safely get synthesized_at field"""
+        try:
+            return getattr(obj, 'synthesized_at', None)
+        except (AttributeError, ValueError):
+            return None
 
 
 class VideoDownloadListSerializer(serializers.ModelSerializer):

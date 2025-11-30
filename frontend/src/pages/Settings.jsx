@@ -7,9 +7,16 @@ import { settingsApi } from '../api';
 import { AI_PROVIDERS } from '../utils/constants';
 
 export function Settings() {
+  // Multi-provider AI settings state (Gemini + OpenAI only)
+  const [geminiApiKey, setGeminiApiKey] = useState('');
+  const [openaiApiKey, setOpenaiApiKey] = useState('');
+  const [scriptGenerationProvider, setScriptGenerationProvider] = useState('gemini');
+  const [defaultProvider, setDefaultProvider] = useState('gemini');
+  const [showApiKey, setShowApiKey] = useState(false);
+  
+  // Legacy fields for backward compatibility
   const [provider, setProvider] = useState('gemini');
   const [apiKey, setApiKey] = useState('');
-  const [showApiKey, setShowApiKey] = useState(false);
   
   // Cloudinary state
   const [cloudName, setCloudName] = useState('');
@@ -61,6 +68,13 @@ export function Settings() {
   // Update state when settings load
   useEffect(() => {
     if (settings) {
+      // New multi-provider fields (Gemini + OpenAI only)
+      setGeminiApiKey(settings.gemini_api_key || '');
+      setOpenaiApiKey(settings.openai_api_key || '');
+      setScriptGenerationProvider(settings.script_generation_provider || 'gemini');
+      setDefaultProvider(settings.default_provider || 'gemini');
+      
+      // Legacy fields for backward compatibility
       setProvider(settings.provider || 'gemini');
       setApiKey(settings.api_key || '');
     }
@@ -156,7 +170,12 @@ export function Settings() {
 
   // Save mutations
   const saveAIMutation = useMutation({
-    mutationFn: () => settingsApi.saveAISettings(provider, apiKey),
+    mutationFn: () => settingsApi.saveAISettings({
+      gemini_api_key: geminiApiKey,
+      openai_api_key: openaiApiKey,
+      script_generation_provider: scriptGenerationProvider,
+      default_provider: defaultProvider,
+    }),
     onSuccess: () => {
       showSuccess('Settings Saved', 'AI settings saved successfully.', { timer: 3000 });
       queryClient.invalidateQueries(['ai-settings']);
@@ -349,30 +368,22 @@ export function Settings() {
         {/* AI Settings Card */}
         <div className="glass-card p-6">
         <h2 className="text-lg font-semibold text-white mb-6">AI Provider Settings</h2>
+        <p className="text-sm text-gray-400 mb-4">
+          Configure API keys for multiple AI providers and TTS. You can set different providers for script generation and general tasks.
+        </p>
 
         <form onSubmit={handleAISubmit} className="space-y-6">
-          <div>
-            <Select
-              label="AI Provider"
-              value={provider}
-              onChange={(e) => setProvider(e.target.value)}
-              options={AI_PROVIDERS}
-            />
-            <p className="mt-1 text-xs text-gray-500">
-              Select the AI provider for generating audio prompts
-            </p>
-          </div>
-
+          {/* Google Gemini API Key */}
           <div>
             <label className="block text-sm font-medium text-gray-300 mb-1.5">
-              API Key
+              Google Gemini API Key
             </label>
             <div className="relative">
               <input
                 type={showApiKey ? 'text' : 'password'}
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder="Enter your API key"
+                value={geminiApiKey}
+                onChange={(e) => setGeminiApiKey(e.target.value)}
+                placeholder="Enter your Gemini API key"
                 className="w-full px-4 py-2.5 pr-12 rounded-lg input-dark"
               />
               <button
@@ -387,6 +398,73 @@ export function Settings() {
                 )}
               </button>
             </div>
+            <p className="mt-1 text-xs text-gray-500">
+              Used for TTS generation (Google TTS), script enhancement
+            </p>
+          </div>
+
+          {/* OpenAI API Key */}
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-1.5">
+              OpenAI API Key (GPT-4o-mini)
+            </label>
+            <div className="relative">
+              <input
+                type={showApiKey ? 'text' : 'password'}
+                value={openaiApiKey}
+                onChange={(e) => setOpenaiApiKey(e.target.value)}
+                placeholder="Enter your OpenAI API key"
+                className="w-full px-4 py-2.5 pr-12 rounded-lg input-dark"
+              />
+              <button
+                type="button"
+                onClick={() => setShowApiKey(!showApiKey)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 p-1 hover:bg-white/10 rounded"
+              >
+                {showApiKey ? (
+                  <EyeOff className="w-4 h-4 text-gray-400" />
+                ) : (
+                  <Eye className="w-4 h-4 text-gray-400" />
+                )}
+              </button>
+            </div>
+            <p className="mt-1 text-xs text-gray-500">
+              Used for script generation with GPT-4o-mini
+            </p>
+          </div>
+
+
+
+          {/* Provider Selection - Script Generation */}
+          <div>
+            <Select
+              label="Script Generation Provider"
+              value={scriptGenerationProvider}
+              onChange={(e) => setScriptGenerationProvider(e.target.value)}
+              options={[
+                { value: 'gemini', label: 'Google Gemini' },
+                { value: 'openai', label: 'OpenAI (GPT-4o-mini)' },
+              ]}
+            />
+            <p className="mt-1 text-xs text-gray-500">
+              AI provider used for generating Hindi scripts
+            </p>
+          </div>
+
+          {/* Provider Selection - General Tasks */}
+          <div>
+            <Select
+              label="General Tasks Provider"
+              value={defaultProvider}
+              onChange={(e) => setDefaultProvider(e.target.value)}
+              options={[
+                { value: 'gemini', label: 'Google Gemini' },
+                { value: 'openai', label: 'OpenAI' },
+              ]}
+            />
+            <p className="mt-1 text-xs text-gray-500">
+              AI provider for transcription enhancement, TTS markup, etc.
+            </p>
           </div>
 
           <Button

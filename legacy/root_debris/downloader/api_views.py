@@ -40,6 +40,51 @@ except ImportError:
     logger.warning("Google Sheets service not available (google packages not installed)")
 
 
+def calculate_optimal_tts_speed(video):
+    """
+    Calculate optimal TTS speed to match video duration
+    
+    Args:
+        video: VideoDownload instance
+    
+    Returns:
+        float: TTS speed multiplier (e.g., 1.2 means 20% faster)
+    """
+    if not video.duration or not video.hindi_script:
+        return 1.0  # Default speed
+    
+    # Estimate script reading time at normal speed
+    # Average Hindi reading speed: ~150 words/minute = 2.5 words/second
+    from .utils import get_clean_script_for_tts
+    clean_script = get_clean_script_for_tts(video.hindi_script)
+    word_count = len(clean_script.split())
+    
+    # Estimated duration at normal speed (in seconds)
+    estimated_duration = word_count / 2.5
+    
+    # Calculate speed adjustment
+    target_duration = video.duration * 0.95  # Leave 5% buffer
+    
+    if estimated_duration <= target_duration:
+        return 1.0  # No speed adjustment needed
+    
+    # Calculate required speed
+    required_speed = estimated_duration / target_duration
+    
+    # Clamp between 0.8x (slower) and 1.5x (faster)
+    # Don't go too fast or it sounds unnatural
+    optimal_speed = max(0.8, min(1.5, required_speed))
+    
+    print(f"📊 Speed Calculation:")
+    print(f"   Video duration: {video.duration}s")
+    print(f"   Word count: {word_count}")
+    print(f"   Estimated speech: {estimated_duration:.1f}s")
+    print(f"   Optimal speed: {optimal_speed:.2f}x")
+    
+    return optimal_speed
+
+
+
 class VideoDownloadViewSet(viewsets.ModelViewSet):
     parser_classes = [MultiPartParser, FormParser, JSONParser]
     """
@@ -912,10 +957,12 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                                 # Get Gemini API key from AIProviderSettings
                                 from .models import AIProviderSettings
                                 settings_obj = AIProviderSettings.objects.first()
-                                if not settings_obj or not settings_obj.api_key:
+                                api_key = settings_obj.get_api_key('gemini') if settings_obj else None
+                                
+                                if not api_key:
                                     raise Exception("Gemini API key not configured. Please set it in AI Provider Settings.")
                                 
-                                service = GeminiTTSService(api_key=settings_obj.api_key)
+                                service = GeminiTTSService(api_key=api_key)
                                 
                                 # Create temp audio file (Gemini TTS generates MP3)
                                 temp_audio = tempfile.NamedTemporaryFile(delete=False, suffix='.mp3')
@@ -1446,7 +1493,9 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
             # Get Gemini API key from AIProviderSettings
             from .models import AIProviderSettings
             settings_obj = AIProviderSettings.objects.first()
-            if not settings_obj or not settings_obj.api_key:
+            api_key = settings_obj.get_api_key('gemini') if settings_obj else None
+            
+            if not api_key:
                 error_msg = "Gemini API key not configured. Please set it in AI Provider Settings."
                 video.synthesis_status = 'failed'
                 video.synthesis_error = error_msg
@@ -1456,7 +1505,7 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                     "error": error_msg
                 }, status=status.HTTP_400_BAD_REQUEST)
             
-            service = GeminiTTSService(api_key=settings_obj.api_key)
+            service = GeminiTTSService(api_key=api_key)
             
             # Create temp audio file (Gemini TTS generates MP3)
             temp_audio = tempfile.NamedTemporaryFile(delete=False, suffix='.mp3')
@@ -1825,6 +1874,8 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                 video.hindi_script = ''
                 video.script_error_message = ''
                 video.script_generated_at = None
+                video.script_edited = False
+                video.script_edited_at = None
                 
                 video.synthesis_status = 'not_synthesized'
                 video.synthesis_error = ''
@@ -1865,6 +1916,8 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                 video.hindi_script = ''
                 video.script_error_message = ''
                 video.script_generated_at = None
+                video.script_edited = False
+                video.script_edited_at = None
                 
                 video.synthesis_status = 'not_synthesized'
                 video.synthesis_error = ''
@@ -1899,6 +1952,8 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                 video.hindi_script = ''
                 video.script_error_message = ''
                 video.script_generated_at = None
+                video.script_edited = False
+                video.script_edited_at = None
                 
                 video.synthesis_status = 'not_synthesized'
                 video.synthesis_error = ''
@@ -2193,7 +2248,8 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                             video.script_error_message = str(e)
                             video.save()
                         
-                        # Step 4: TTS Generation (automatically after script generation)
+                        # Step 4: Script Generation Complete - PAUSE for User Review
+                        # NEW WORKFLOW: After script generation, pause and wait for user to edit/approve
                         # Fix: If script exists but status is still 'generating', update status to 'generated'
                         if video.hindi_script and video.script_status == 'generating':
                             print(f"⚠ Script exists but status is 'generating' - fixing status to 'generated'")
@@ -2202,7 +2258,23 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                                 video.script_generated_at = timezone.now()
                             video.save()
                         
-                        if video.script_status == 'generated' and video.hindi_script:
+                        # CRITICAL: Check if script needs user review (not yet edited)
+                        if video.script_status == 'generated' and video.hindi_script and not video.script_edited:
+                            # Ensure script_edited is explicitly False
+                            video.script_edited = False
+                            video.save()
+                            print(f"✓ Script generated - PAUSED for user review/editing")
+                            print(f"   Script status: {video.script_status}")
+                            print(f"   Script edited: {video.script_edited}")
+                            print(f"   User must save script (via /update_script/) to continue to TTS")
+                            # EXIT THREAD - don't automatically proceed to TTS
+                            # Frontend will poll and detect script_status='generated' + script_edited=False
+                            # and show the script editor modal
+                            return  # Exit the thread gracefully
+                        
+                        
+                        # If script was already edited (reprocessing after editing), continue with TTS
+                        if video.script_status == 'generated' and video.hindi_script and video.script_edited:
                             try:
                                 video.synthesis_status = 'synthesizing'
                                 video.save()
@@ -2225,10 +2297,12 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                                         # Get Gemini API key from AIProviderSettings
                                         from .models import AIProviderSettings
                                         settings_obj = AIProviderSettings.objects.first()
-                                        if not settings_obj or not settings_obj.api_key:
+                                        api_key = settings_obj.get_api_key('gemini') if settings_obj else None
+                                        
+                                        if not api_key:
                                             raise Exception("Gemini API key not configured. Please set it in AI Provider Settings.")
                                         
-                                        service = GeminiTTSService(api_key=settings_obj.api_key)
+                                        service = GeminiTTSService(api_key=api_key)
                                         
                                         # Create temp audio file (Gemini TTS generates MP3)
                                         temp_audio = tempfile.NamedTemporaryFile(delete=False, suffix='.mp3')
@@ -2270,6 +2344,8 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                                         video.synthesis_error = ''
                                         video.synthesized_at = timezone.now()
                                         video.save()
+                                        
+                                        print(f"✓ Gemini TTS audio generated successfully for video {video.pk} (voice: {voice_name})")
                                         
                                         # Clean up temp file
                                         if os.path.exists(temp_audio_path):
@@ -2324,6 +2400,12 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                                         else:
                                             # Step 5a: Remove audio using ffmpeg
                                             print(f"Step 5a (ffmpeg): Removing audio from video {video.pk}...")
+                                            
+                                            # Update status to removing_audio
+                                            video.final_video_status = 'removing_audio'
+                                            video.final_video_error = ''
+                                            video.save(update_fields=['final_video_status', 'final_video_error'])
+                                            
                                             temp_no_audio = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
                                             temp_no_audio_path = temp_no_audio.name
                                             temp_no_audio.close()
@@ -2354,6 +2436,10 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                                                 
                                                 # Use the saved file for next step
                                                 voice_removed_file_path = video.voice_removed_video.path
+                                                
+                                                # Update status to combining_audio
+                                                video.final_video_status = 'combining_audio'
+                                                video.save(update_fields=['final_video_status'])
                                                 
                                                 # Step 5b: Combine TTS audio with video
                                                 if video.synthesized_audio and os.path.exists(video.synthesized_audio.path):
@@ -2413,6 +2499,9 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                                                             except Exception as e:
                                                                 print(f"Google Sheets sync failed: {e}")
                                                         
+                                                        # Update final_video_status to completed
+                                                        video.final_video_status = 'completed'
+                                                        video.final_video_error = ''
                                                         video.save()
                                                         print(f"✓ Step 5b (ffmpeg) completed: Final video saved")
                                                         
@@ -2420,12 +2509,16 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                                                         os.unlink(temp_final_path)
                                                     else:
                                                         print(f"✗ ffmpeg merge failed: {ffmpeg_result.stderr}")
+                                                        video.final_video_status = 'failed'
+                                                        video.final_video_error = f"ffmpeg merge failed: {ffmpeg_result.stderr}"
                                                         video.synthesis_error = f"ffmpeg merge failed: {ffmpeg_result.stderr}"
                                                         video.save()
                                                 else:
                                                     print("✗ TTS audio file missing for merge")
                                             else:
                                                 print(f"✗ ffmpeg audio removal failed: {ffmpeg_result.stderr}")
+                                                video.final_video_status = 'failed'
+                                                video.final_video_error = f"ffmpeg audio removal failed: {ffmpeg_result.stderr}"
                                                 video.synthesis_error = f"ffmpeg audio removal failed: {ffmpeg_result.stderr}"
                                                 video.save()
                                 except Exception as e:
@@ -2433,6 +2526,8 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                                     print(f"✗ {error_msg}")
                                     import traceback
                                     traceback.print_exc()
+                                    video.final_video_status = 'failed'
+                                    video.final_video_error = error_msg
                                     video.synthesis_error = error_msg
                                     video.save()
                         else:
@@ -2506,6 +2601,177 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                 "status": "failed",
                 "error": str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+    @action(detail=True, methods=['post'])
+    def update_script(self, request, pk=None):
+        """
+        Update Hindi script after user editing
+        
+        This endpoint allows users to edit the generated script before TTS synthesis.
+        The workflow pauses after script generation to allow manual editing.
+        """
+        video = self.get_object()
+        
+        # Get edited script from request
+        edited_script = request.data.get('hindi_script', '')
+        
+        if not edited_script or not edited_script.strip():
+            return Response({
+                'error': 'Script cannot be empty'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Save edited script
+        video.hindi_script = edited_script.strip()
+        video.script_status = 'generated'  # Mark as ready for TTS
+        video.script_edited = True  # Track that it was manually edited
+        video.script_edited_at = timezone.now()
+        video.save()
+        
+        logger.info(f"Script updated for video {video.pk} by user")
+        
+        return Response({
+            'message': 'Script updated successfully',
+            'hindi_script': edited_script.strip(),
+            'script_edited': True,
+            'script_edited_at': video.script_edited_at
+        })
+
+
+    @action(detail=True, methods=['post'])
+    def synthesize_tts(self, request, pk=None):
+        """
+        Trigger TTS synthesis after script editing
+        
+        Automatically adjusts TTS speed to match video duration.
+        This endpoint is called after the user edits and saves the script.
+        """
+        video = self.get_object()
+        
+        # Validate prerequisites
+        if not video.hindi_script or not video.hindi_script.strip():
+            return Response({
+                'error': 'No script available for synthesis'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        if video.script_status != 'generated':
+            return Response({
+                'error': f'Script is not ready for synthesis (status: {video.script_status})'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Calculate optimal TTS speed based on video duration
+        optimal_speed = calculate_optimal_tts_speed(video)
+        
+        # Update TTS speed
+        video.tts_speed = optimal_speed
+        video.synthesis_status = 'synthesizing'
+        video.save()
+        
+        logger.info(f"Starting TTS synthesis for video {video.pk} with speed {optimal_speed}x")
+        
+        # Start TTS synthesis in background thread
+        import threading
+        import queue
+        
+        synthesis_queue = queue.Queue()
+        exception_queue = queue.Queue()
+        
+        def run_tts_synthesis():
+            try:
+                from .utils import get_clean_script_for_tts, enhance_script_with_tts_markup
+                clean_script = get_clean_script_for_tts(video.hindi_script)
+                
+                # Check if script is already enhanced (contains markup tags)
+                import re
+                has_markup = bool(re.search(r'\[.*?\]', clean_script))
+                
+                if has_markup:
+                    print(f"✓ Script already contains TTS markup tags (skipping re-enhancement)")
+                    enhanced_script = clean_script
+                else:
+                    # CRITICAL: Enhance script with TTS markup tags for better audio quality
+                    # This adds sound filters like [sigh], [laughing], [short pause], etc.
+                    print(f"🎨 Enhancing script with AI-powered TTS markup tags...")
+                    enhanced_script = enhance_script_with_tts_markup(clean_script)
+                
+                # Use Gemini TTS service for TTS generation
+                from .gemini_tts_service import GeminiTTSService, GEMINI_TTS_AVAILABLE
+                import tempfile
+                import os
+                
+                if not GEMINI_TTS_AVAILABLE:
+                    raise Exception("Gemini TTS service not available")
+                
+                # Get Gemini API key from AIProviderSettings
+                from .models import AIProviderSettings
+                settings_obj = AIProviderSettings.objects.first()
+                api_key = settings_obj.get_api_key('gemini') if settings_obj else None
+                
+                if not api_key:
+                    raise Exception("Gemini API key not configured. Please set it in AI Provider Settings.")
+                
+                service = GeminiTTSService(api_key=api_key)
+                
+                # Create temp audio file (Gemini TTS generates MP3)
+                temp_audio = tempfile.NamedTemporaryFile(delete=False, suffix='.mp3')
+                temp_audio_path = temp_audio.name
+                temp_audio.close()
+                
+                # Get TTS settings from video model
+                tts_temperature = video.tts_temperature if video.tts_temperature else 0.75
+                
+                # Use Enceladus voice for Hindi (as specified in n8n workflow)
+                voice_name = 'Enceladus'
+                language_code = 'hi-IN'  # Hindi (India)
+                
+                # Let GeminiTTSService generate comprehensive style prompt automatically
+                style_prompt = None  # Let service generate comprehensive prompt
+                
+                print(f"Generating TTS with Gemini TTS (voice: {voice_name}, language: {language_code}, speed: {optimal_speed}x, temp: {tts_temperature})...")
+                
+                # Generate speech with calculated speed using ENHANCED script with markup tags
+                service.generate_speech(
+                    text=enhanced_script,  # Use enhanced script with TTS markup tags!
+                    language_code=language_code,
+                    voice_name=voice_name,
+                    output_path=temp_audio_path,
+                    temperature=tts_temperature,
+                    style_prompt=style_prompt,
+                    speed_factor=optimal_speed  # Apply speed adjustment
+                )
+                
+                # Save to video model
+                from django.core.files import File
+                with open(temp_audio_path, 'rb') as f:
+                    video.synthesized_audio.save(f"synthesized_{video.pk}.mp3", File(f), save=False)
+                
+                video.synthesis_status = 'synthesized'
+                video.synthesis_error = ''
+                video.synthesized_at = timezone.now()
+                video.save()
+                
+                # Clean up temp file
+                if os.path.exists(temp_audio_path):
+                    os.unlink(temp_audio_path)
+                
+                synthesis_queue.put({'status': 'success'})
+                print(f"✓ TTS audio generated successfully for video {video.pk} at {optimal_speed}x speed")
+                
+            except Exception as e:
+                exception_queue.put(e)
+        
+        # Start background thread
+        synthesis_thread = threading.Thread(target=run_tts_synthesis, daemon=True)
+        synthesis_thread.start()
+        
+        # Don't wait for completion - return immediately
+        # Frontend will poll for status updates
+        
+        return Response({
+            'message': 'TTS synthesis started',
+            'tts_speed': optimal_speed,
+            'synthesis_status': 'synthesizing'
+        })
 
 
     @action(detail=True, methods=['delete', 'post'])
@@ -2646,20 +2912,42 @@ class AISettingsViewSet(viewsets.ViewSet):
 
     def create(self, request):
         """Update AI settings"""
-        provider = request.data.get('provider', 'gemini')
+        # New fields
+        gemini_api_key = request.data.get('gemini_api_key', '')
+        openai_api_key = request.data.get('openai_api_key', '')
+        script_generation_provider = request.data.get('script_generation_provider', 'gemini')
+        default_provider = request.data.get('default_provider', 'gemini')
+        
+        # Legacy fields (optional, but good to keep populated for backward compatibility)
+        provider = request.data.get('provider', default_provider)
         api_key = request.data.get('api_key', '')
+        
+        # If api_key is not provided but provider is, try to set it from the specific key
+        if not api_key:
+            if provider == 'gemini':
+                api_key = gemini_api_key
+            elif provider == 'openai':
+                api_key = openai_api_key
 
-        settings, created = AIProviderSettings.objects.get_or_create(
-            id=1,
-            defaults={"provider": provider, "api_key": api_key}
-        )
+        settings, created = AIProviderSettings.objects.get_or_create(id=1)
 
-        if not created:
-            settings.provider = provider
-            settings.api_key = api_key
-            settings.save()
+        settings.gemini_api_key = gemini_api_key
+        settings.openai_api_key = openai_api_key
+        settings.script_generation_provider = script_generation_provider
+        settings.default_provider = default_provider
+        
+        # Update legacy fields
+        settings.provider = provider
+        settings.api_key = api_key
+        
+        settings.save()
 
-        return Response({"status": "saved", "provider": provider})
+        return Response({
+            "status": "saved", 
+            "provider": provider,
+            "script_generation_provider": script_generation_provider,
+            "default_provider": default_provider
+        })
 
 
 class CloudinarySettingsViewSet(viewsets.ViewSet):

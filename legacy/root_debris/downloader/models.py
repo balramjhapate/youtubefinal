@@ -2,21 +2,71 @@ from django.db import models
 from django.utils import timezone
 
 class AIProviderSettings(models.Model):
-    """Store AI provider configuration for the application."""
+    """Store AI provider API keys for all supported providers."""
+    
+    # Separate API key for each provider
+    gemini_api_key = models.CharField(
+        max_length=255, 
+        blank=True, 
+        help_text="Google Gemini API Key (for TTS, enhancement, etc.)"
+    )
+    openai_api_key = models.CharField(
+        max_length=255, 
+        blank=True, 
+        help_text="OpenAI API Key (GPT models)"
+    )
+    anthropic_api_key = models.CharField(
+        max_length=255, 
+        blank=True, 
+        help_text="Anthropic API Key (Claude models)"
+    )
+    
+    # Provider selection
     PROVIDER_CHOICES = [
-        ('gemini', 'Gemini'),
+        ('gemini', 'Google Gemini'),
         ('openai', 'OpenAI'),
-        ('anthropic', 'Anthropic'),
+        ('anthropic', 'Anthropic (Claude)'),
     ]
-    provider = models.CharField(max_length=50, choices=PROVIDER_CHOICES, default='gemini')
-    api_key = models.CharField(max_length=255, blank=True)
+    
+    # Dual default providers for different tasks
+    script_generation_provider = models.CharField(
+        max_length=50, 
+        choices=PROVIDER_CHOICES, 
+        default='gemini',
+        help_text="AI provider for Hindi script generation"
+    )
+    default_provider = models.CharField(
+        max_length=50, 
+        choices=PROVIDER_CHOICES, 
+        default='gemini',
+        help_text="Default AI provider for general tasks (enhancement, TTS markup, etc.)"
+    )
+    
+    # Legacy fields for backward compatibility (deprecated)
+    provider = models.CharField(
+        max_length=50, 
+        choices=PROVIDER_CHOICES, 
+        default='gemini',
+        help_text="[DEPRECATED] Use script_generation_provider or default_provider instead"
+    )
+    api_key = models.CharField(
+        max_length=255, 
+        blank=True,
+        help_text="[DEPRECATED] Use provider-specific API keys instead"
+    )
 
     class Meta:
         verbose_name = "AI Provider Setting"
         verbose_name_plural = "AI Provider Settings"
 
     def __str__(self):
-        return f"{self.provider} settings"
+        return f"AI Provider Settings (Script: {self.script_generation_provider}, General: {self.default_provider})"
+    
+    def get_api_key(self, provider=None):
+        """Get API key for specified provider, or use default provider."""
+        if provider is None:
+            provider = self.default_provider
+        return getattr(self, f'{provider}_api_key', '') or self.api_key  # Fallback to legacy
 
 
 class CloudinarySettings(models.Model):
@@ -265,7 +315,25 @@ class VideoDownload(models.Model):
     )
     synthesis_error = models.TextField(blank=True, help_text="Synthesis error message if failed")
     synthesized_audio = models.FileField(upload_to='synthesized_audio/', blank=True, null=True, help_text="Synthesized audio file")
+    synthesized_at = models.DateTimeField(blank=True, null=True, help_text="When audio synthesis completed")
     voice_profile = models.ForeignKey('ClonedVoice', on_delete=models.SET_NULL, null=True, blank=True, help_text="Voice profile used for synthesis")
+    
+    # Final Video Assembly (audio removal + combining with TTS)
+    FINAL_VIDEO_STATUS_CHOICES = [
+        ('not_started', 'Not Started'),
+        ('removing_audio', 'Removing Audio'),
+        ('combining_audio', 'Combining Audio'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+    ]
+    
+    final_video_status = models.CharField(
+        max_length=20,
+        choices=FINAL_VIDEO_STATUS_CHOICES,
+        default='not_started',
+        help_text="Final video assembly status"
+    )
+    final_video_error = models.TextField(blank=True, help_text="Final video assembly error message if failed")
     
     # Hindi Script Generation
     SCRIPT_STATUS_CHOICES = [
@@ -284,6 +352,8 @@ class VideoDownload(models.Model):
     hindi_script = models.TextField(blank=True, help_text="AI-generated Hindi script for TTS")
     script_error_message = models.TextField(blank=True, help_text="Script generation error message if failed")
     script_generated_at = models.DateTimeField(blank=True, null=True, help_text="When script was generated")
+    script_edited = models.BooleanField(default=False, help_text="Whether script was manually edited by user")
+    script_edited_at = models.DateTimeField(blank=True, null=True, help_text="When script was last edited")
     
     # TTS Parameters (calculated based on duration)
     tts_speed = models.FloatField(default=1.0, help_text="TTS speed multiplier (calculated from duration)")

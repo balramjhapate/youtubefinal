@@ -9,7 +9,7 @@ from django.utils import timezone
 from django.conf import settings
 from . import whisper_transcribe
 from .nca_toolkit_client import get_nca_client
-from .utils import extract_audio_from_video, translate_text, _call_gemini_api, _call_openai_api, _call_anthropic_api
+from .utils import extract_audio_from_video, translate_text, _call_gemini_api, _call_openai_api
 from .models import AIProviderSettings
 import os
 import json
@@ -103,8 +103,7 @@ Return ONLY the enhanced Hindi transcript in this format (NO explanations, NO no
             result = _call_gemini_api(api_key, system_prompt, user_message)
         elif provider == 'openai':
             result = _call_openai_api(api_key, system_prompt, user_message)
-        elif provider == 'anthropic':
-            result = _call_anthropic_api(api_key, system_prompt, user_message)
+
         else:
             return {
                 'status': 'failed',
@@ -258,6 +257,10 @@ Return ONLY the enhanced Hindi transcript in this format (NO explanations, NO no
                 text = re.sub(r'\b[A-Za-z]{2,}\b', '', text)  # Remove English words
                 # Clean up multiple spaces
                 text = re.sub(r'\s+', ' ', text)
+                
+                # CRITICAL: Remove any remaining timestamps that might have been captured
+                # e.g. if AI output "00:00:00 00:00:05 text"
+                text = re.sub(r'\d{1,2}:\d{2}:\d{2}', '', text)
                 text = text.strip()
                 
                 # Skip if text is empty, too short, or is clearly explanatory

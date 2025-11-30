@@ -166,6 +166,17 @@ export const videosApi = {
     return response.data;
   },
 
+  // Script editing workflow
+  updateScript: async (id, scriptData) => {
+    const response = await apiClient.post(`/videos/${id}/update_script/`, scriptData);
+    return response.data;
+  },
+
+  synthesizeTTS: async (id) => {
+    const response = await apiClient.post(`/videos/${id}/synthesize_tts/`);
+    return response.data;
+  },
+
   retryGoogleSheetsSync: async (id) => {
     const response = await apiClient.post(`/videos/${id}/retry/google-sheets-sync/`);
     return response.data;

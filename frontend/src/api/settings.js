@@ -8,11 +8,8 @@ export const settingsApi = {
   },
 
   // Save AI settings
-  saveAISettings: async (provider, apiKey) => {
-    const response = await apiClient.post('/ai-settings/', {
-      provider,
-      api_key: apiKey,
-    });
+  saveAISettings: async (settings) => {
+    const response = await apiClient.post('/ai-settings/', settings);
     return response.data;
   },
 

@@ -5,7 +5,7 @@ from rest_framework import status
 from rest_framework.permissions import AllowAny
 from django.conf import settings
 from .models import VideoDownload, AIProviderSettings
-from .utils import _call_gemini_api, _call_openai_api, _call_anthropic_api
+from .utils import _call_gemini_api, _call_openai_api
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
@@ -91,8 +91,7 @@ Please generate the script now."""
             result = _call_gemini_api(api_key, system_prompt, final_message)
         elif provider == 'openai':
             result = _call_openai_api(api_key, system_prompt, final_message)
-        elif provider == 'anthropic':
-            result = _call_anthropic_api(api_key, system_prompt, final_message)
+
         else:
             return Response({'error': f'Unsupported provider: {provider}'}, status=status.HTTP_400_BAD_REQUEST)
 
