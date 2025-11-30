@@ -47,8 +47,27 @@ export function VideoDetail() {
 	// Script editor state
 	const [isEditingScript, setIsEditingScript] = useState(false);
 	const [editedScript, setEditedScript] = useState("");
-	const [scriptEditorDismissed, setScriptEditorDismissed] = useState(false); // Track if user dismissed editor
-	// const [progress, setProgress] = useState(0); // Removed simulated progress
+	// Timer state
+	const [elapsedTime, setElapsedTime] = useState(0);
+	const [isTimerRunning, setIsTimerRunning] = useState(false);
+	
+	useEffect(() => {
+		let interval;
+		if (isTimerRunning) {
+			interval = setInterval(() => {
+				setElapsedTime((prev) => prev + 1);
+			}, 1000);
+		} else {
+			clearInterval(interval);
+		}
+		return () => clearInterval(interval);
+	}, [isTimerRunning]);
+
+	const formatElapsedTime = (seconds) => {
+		const mins = Math.floor(seconds / 60);
+		const secs = seconds % 60;
+		return `${mins}m ${secs}s`;
+	};
 
 	// Get processing state early so it can be used in refetchInterval
 	const processingState = id ? getProcessingState(id) : null;
@@ -139,7 +158,8 @@ export function VideoDetail() {
 			}
 		} else if (type === "processAI") {
 			// Clear if AI processing is not actually processing
-			if (video.ai_processing_status !== "processing") {
+			// BUT allow it if transcription is done (predictive state)
+			if (video.ai_processing_status !== "processing" && video.transcription_status !== "transcribed") {
 				shouldClear = true;
 			}
 		} else if (type === "download") {
@@ -623,10 +643,15 @@ export function VideoDetail() {
 		);
 	};
 
-	// Unified Process Video mutation - handles all steps sequentially
-	const processVideoMutation = useMutation({
+	// Unified Process All Mutation
+	const processAllMutation = useMutation({
 		mutationFn: async () => {
-			startProcessing(id, "process");
+			// Reset timer
+			setElapsedTime(0);
+			setIsTimerRunning(true);
+			
+			// Start with Download
+			startProcessing(id, "download");
 
 			// Get current video state
 			let currentVideo = await videosApi.getById(id);
@@ -641,13 +666,19 @@ export function VideoDetail() {
 					toast: true,
 					position: "top-end",
 				});
+				
 				await videosApi.download(id);
+				
 				// Wait for download to complete
 				let downloadComplete = false;
 				let attempts = 0;
-				while (!downloadComplete && attempts < 30) {
+				while (!downloadComplete && attempts < 60) { // 2 minutes max for download start
 					await new Promise((resolve) => setTimeout(resolve, 2000));
 					currentVideo = await videosApi.getById(id);
+					
+					// Update cache to reflect download status immediately
+					queryClient.setQueryData(["video", id], currentVideo);
+					
 					if (currentVideo.is_downloaded) {
 						downloadComplete = true;
 					}
@@ -658,12 +689,15 @@ export function VideoDetail() {
 				}
 			}
 
-			// Step 2-6: Transcribe (which does transcription → AI → script → TTS → final video)
+			// Step 2: Start Transcription (triggers the rest of the pipeline)
+			startProcessing(id, "transcribe"); // Switch status to transcribe
+			
 			showInfo("Step 2/8: Starting transcription and processing...", "", {
 				timer: 2000,
 				toast: true,
 				position: "top-end",
 			});
+			
 			const transcribeResult = await videosApi.transcribe(id);
 
 			// If transcription was skipped (no audio), continue with other steps if transcript exists
@@ -676,14 +710,51 @@ export function VideoDetail() {
 			}
 
 			// Wait for all processing steps to complete
+			// Poll for completion
 			let processingComplete = false;
 			let attempts = 0;
-			while (!processingComplete && attempts < 150) {
-				// 5 minutes max
-				await new Promise((resolve) => setTimeout(resolve, 5000)); // Increased from 2s to 5s
+			while (!processingComplete && attempts < 300) { // 25 minutes max
+				await new Promise((resolve) => setTimeout(resolve, 5000));
 				currentVideo = await videosApi.getById(id);
+				
+				// Update cache to reflect live status
+				queryClient.setQueryData(["video", id], currentVideo);
+				
+				// Update local processing state based on backend status AND predictive logic
+				// This ensures the UI shows "Processing" immediately when one step finishes, even if backend status lags slightly
+				
+				let activeStep = null;
 
-				// Check if transcription, AI, script, TTS, and final video are complete
+				if (currentVideo.transcription_status === 'transcribing') {
+					activeStep = 'transcribe';
+				} else if (currentVideo.transcription_status === 'transcribed' || currentVideo.transcription_status === 'skipped') {
+					// Transcription done. Check AI.
+					if (currentVideo.ai_processing_status !== 'processed' && currentVideo.ai_processing_status !== 'failed') {
+						// If AI not done/failed, assume it's processing (or about to be)
+						activeStep = 'processAI';
+					} else {
+						// AI done. Check Script.
+						if (currentVideo.script_status !== 'generated' && currentVideo.script_status !== 'failed') {
+							activeStep = 'script';
+						} else {
+							// Script done. Check TTS.
+							if (currentVideo.synthesis_status !== 'synthesized' && currentVideo.synthesis_status !== 'failed') {
+								activeStep = 'synthesis';
+							} else {
+								// TTS done. Check Final Video.
+								if (!currentVideo.final_processed_video_url && currentVideo.synthesis_status !== 'failed') {
+									activeStep = 'final_video';
+								}
+							}
+						}
+					}
+				}
+
+				if (activeStep) {
+					startProcessing(id, activeStep);
+				}
+
+				// Check completion
 				const transcriptionDone =
 					currentVideo.transcription_status === "transcribed" ||
 					currentVideo.transcription_status === "skipped";
@@ -712,87 +783,81 @@ export function VideoDetail() {
 				attempts++;
 			}
 
-			// Refresh video state
-			currentVideo = await videosApi.getById(id);
-
-			// Step 7: Cloudinary Upload (if enabled and not already uploaded)
-			if (
-				currentVideo.final_processed_video_url &&
-				!currentVideo.cloudinary_url
-			) {
-				showInfo("Step 7/8: Uploading to Cloudinary...", "", {
-					timer: 2000,
-					toast: true,
-					position: "top-end",
-				});
-				try {
-					await videosApi.uploadAndSync(id);
-					// Wait for upload to complete
-					let uploadComplete = false;
-					attempts = 0;
-					while (!uploadComplete && attempts < 30) {
-						await new Promise((resolve) =>
-							setTimeout(resolve, 2000)
-						);
-						currentVideo = await videosApi.getById(id);
-						if (currentVideo.cloudinary_url) {
-							uploadComplete = true;
+			// Step 7 & 8: Upload and Sync (if needed)
+			if (processingComplete && currentVideo.final_processed_video_url) {
+				if (!currentVideo.cloudinary_url) {
+					startProcessing(id, "cloudinary");
+					showInfo("Step 7/8: Uploading to Cloudinary...", "", {
+						timer: 2000,
+						toast: true,
+						position: "top-end",
+					});
+					try {
+						await videosApi.uploadAndSync(id);
+						// Wait for upload to complete
+						let uploadComplete = false;
+						let attempts = 0;
+						while (!uploadComplete && attempts < 30) {
+							await new Promise((resolve) =>
+								setTimeout(resolve, 2000)
+							);
+							currentVideo = await videosApi.getById(id);
+							queryClient.setQueryData(["video", id], currentVideo);
+							if (currentVideo.cloudinary_url) {
+								uploadComplete = true;
+							}
+							attempts++;
 						}
-						attempts++;
+					} catch (error) {
+						console.warn("Cloudinary upload failed:", error);
+						// Continue even if upload fails
 					}
-				} catch (error) {
-					console.warn("Cloudinary upload failed:", error);
-					// Continue even if upload fails
 				}
-			}
 
-			// Refresh video state again
-			currentVideo = await videosApi.getById(id);
-
-			// Step 8: Google Sheets Sync (if enabled and not already synced)
-			if (
-				currentVideo.cloudinary_url &&
-				!currentVideo.google_sheets_synced
-			) {
-				showInfo("Step 8/8: Syncing to Google Sheets...", "", {
-					timer: 2000,
-					toast: true,
-					position: "top-end",
-				});
-				try {
-					await videosApi.uploadAndSync(id);
-					// Wait for sync to complete
-					let syncComplete = false;
-					attempts = 0;
-					while (!syncComplete && attempts < 30) {
-						await new Promise((resolve) =>
-							setTimeout(resolve, 2000)
-						);
-						currentVideo = await videosApi.getById(id);
-						if (currentVideo.google_sheets_synced) {
-							syncComplete = true;
+				if (!currentVideo.google_sheets_synced) {
+					startProcessing(id, "sheets");
+					showInfo("Step 8/8: Syncing to Google Sheets...", "", {
+						timer: 2000,
+						toast: true,
+						position: "top-end",
+					});
+					try {
+						await videosApi.uploadAndSync(id);
+						// Wait for sync to complete
+						let syncComplete = false;
+						let attempts = 0;
+						while (!syncComplete && attempts < 30) {
+							await new Promise((resolve) =>
+								setTimeout(resolve, 2000)
+							);
+							currentVideo = await videosApi.getById(id);
+							queryClient.setQueryData(["video", id], currentVideo);
+							if (currentVideo.google_sheets_synced) {
+								syncComplete = true;
+							}
+							attempts++;
 						}
-						attempts++;
+					} catch (error) {
+						console.warn("Google Sheets sync failed:", error);
+						// Continue even if sync fails
 					}
-				} catch (error) {
-					console.warn("Google Sheets sync failed:", error);
-					// Continue even if sync fails
 				}
 			}
 
 			return { success: true };
 		},
 		onSuccess: () => {
+			setIsTimerRunning(false);
 			queryClient.invalidateQueries(["video", id]);
-			queryClient.invalidateQueries(["videos"]);
 			completeProcessing(id);
 			showSuccess(
 				"Processing Completed",
-				"Video processing completed successfully! 🎉",
+				`Video processing completed in ${formatElapsedTime(elapsedTime)}! 🎉`,
 				{ timer: 5000 }
 			);
 		},
 		onError: (error) => {
+			setIsTimerRunning(false);
 			completeProcessing(id);
 			const errorMsg =
 				error?.response?.data?.error ||
@@ -934,12 +999,6 @@ export function VideoDetail() {
 	};
 
 	// Check if script needs editing
-	const needsScriptReview =
-		video?.script_status === "generated" &&
-		!video?.script_edited &&
-		video?.hindi_script &&
-		!scriptEditorDismissed; // Only auto-show if not previously dismissed
-
 	// Helper to clean script for editor (remove timestamps)
 	const getCleanScript = (script) => {
 		if (!script) return "";
@@ -949,21 +1008,6 @@ export function VideoDetail() {
 		clean = clean.replace(/\s+/g, " ").trim();
 		return clean;
 	};
-
-	// Show script editor when script is generated but not edited (and not dismissed)
-	useEffect(() => {
-		if (needsScriptReview) {
-			setIsEditingScript(true);
-			setEditedScript(getCleanScript(video.hindi_script));
-		}
-	}, [needsScriptReview, video?.hindi_script]);
-
-	// Reset dismissal when script changes (new script generation)
-	useEffect(() => {
-		if (video?.script_status === 'generated' && video?.hindi_script) {
-			setScriptEditorDismissed(false);
-		}
-	}, [video?.hindi_script]);
 
 
 
@@ -1152,6 +1196,23 @@ export function VideoDetail() {
 								Actions
 							</h4>
 							<div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+								{/* Process All Button - The Master Button */}
+								<Button
+									size="sm"
+									variant="primary" // Make it stand out
+									icon={Play}
+									onClick={() => processAllMutation.mutate()}
+									loading={processAllMutation.isPending}
+									disabled={
+										processAllMutation.isPending ||
+										(!!processingState && processingState.type === "process")
+									}
+									className="col-span-2 md:col-span-1 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 border-none"
+								>
+									{processAllMutation.isPending || isTimerRunning
+										? `Processing... (${formatElapsedTime(elapsedTime)})`
+										: "Process All"}
+								</Button>
 								{!video.is_downloaded &&
 									video.status === "success" && (
 										<Button
@@ -1269,7 +1330,6 @@ export function VideoDetail() {
 										onClick={() => {
 											setIsEditingScript(true);
 											setEditedScript(getCleanScript(video.hindi_script));
-											setScriptEditorDismissed(false); // Reset dismissal when manually opened
 										}}>
 										Edit Script
 									</Button>

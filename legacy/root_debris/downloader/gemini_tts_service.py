@@ -345,74 +345,30 @@ class GeminiTTSService:
 - Maintain engagement throughout - keep listeners interested"""
         
         # Comprehensive style prompt incorporating all three levers
-        comprehensive_prompt = f"""You are {emotional_context} in Hindi. Your role is to create engaging and natural-sounding audio that captures the emotional essence of the content.
+        comprehensive_prompt = f"""You are {emotional_context} in Hindi. Create engaging, natural-sounding audio.
 
-**PRIMARY STYLE (The Three Levers):**
+**PRIMARY STYLE:**
+1. **Tone:** {tone_description}. Natural, human-like, emotionally consistent.
+2. **Content:** Match emotional delivery to the meaning (fear=tense, excitement=energetic).
+3. **Markup:** Follow ALL tags ([sigh], [laughing], [short pause]) precisely.
 
-1. **Style Prompt (Overall Tone):**
-   - You are speaking in a {tone_description} manner
-   - Your delivery should be natural, human-like, and emotionally consistent
-   - Align your tone with the semantic meaning of the text content
-   - Use emotionally rich delivery that matches the words being spoken
+**MARKUP TAGS:**
+- [sigh], [laughing], [uhm]: Insert actual sounds.
+- [sarcasm], [robotic], [shouting], [whispering], [extremely fast]: Modify delivery style.
+- [short pause] (~250ms), [medium pause] (~500ms), [long pause] (~1000ms+): Insert silence.
 
-2. **Text Content Alignment:**
-   - The text you are reading contains emotionally rich content
-   - Match your emotional delivery to the meaning of the words
-   - If the text describes fear, use a tense, dramatic tone
-   - If the text describes excitement, use an enthusiastic, energetic tone
-   - Let the words guide your emotional expression
-
-3. **Markup Tags (Precise Control):**
-   - Follow ALL markup tags exactly as written in the text
-   - Markup tags work in concert with your style and the text content
-   - Each tag has a specific behavior - respect it precisely
-
-**MARKUP TAG GUIDANCE:**
-
-**Mode 1: Non-speech Sounds (Replaced by audible vocalizations):**
-- [sigh] - Insert a genuine sigh sound. The emotional quality (relief, tension, exhaustion) should match the context and your style prompt
-- [laughing] - Insert a natural laugh. React with genuine amusement - the laugh should sound authentic and match the emotional context (amused, surprised, delighted)
-- [uhm] - Insert a natural hesitation sound. Use this to create a more conversational, human-like feel
-
-**Mode 2: Style Modifiers (Modify delivery of subsequent speech):**
-- [sarcasm] - Deliver the subsequent phrase with a sarcastic tone. This is a powerful modifier - let the sarcasm be clear but not overdone
-- [robotic] - Make the subsequent speech sound robotic. The effect extends across the phrase. Use sparingly and precisely
-- [shouting] - Increase volume and intensity. Pair with text that implies yelling or excitement. Make it sound genuinely loud and energetic
-- [whispering] - Decrease volume significantly. Speak as quietly as you can while remaining audible. Use for dramatic effect, secrets, or fear elements
-- [extremely fast] - Increase speed significantly. Ideal for disclaimers or fast-paced dialogue. Maintain clarity even at high speed
-
-**Mode 3: Pacing and Pauses (Insert silence for rhythm control):**
-- [short pause] - Insert a brief pause (~250ms), similar to a comma. Use to separate clauses or list items for better clarity
-- [medium pause] - Insert a standard pause (~500ms), similar to a sentence break. Effective for separating distinct sentences or thoughts
-- [long pause] - Insert a significant pause (~1000ms+) for dramatic effect. Use for dramatic timing, like "The answer is... [long pause] ...no." Avoid overuse
-
-**KEY STRATEGIES FOR RELIABLE RESULTS:**
-
-1. **Align All Three Levers:** Ensure your Style Prompt, Text Content interpretation, and Markup Tags are all semantically consistent and working toward the same goal
-
-2. **Use Emotionally Rich Delivery:** Don't just read the words - feel the emotions. If the text describes fear, genuinely sound tense. If it describes joy, genuinely sound happy
-
-3. **Be Specific and Detailed:** Your delivery should be nuanced. A scared tone works best when you genuinely sound scared, not just "spooky"
-
-4. **Respect Markup Tags Precisely:**
-   - When you see [sigh], actually sigh - don't just pause
-   - When you see [laughing], actually laugh - make it sound real
-   - When you see [whispering], actually whisper - speak quietly and mysteriously
-   - When you see [short pause], pause briefly (~250ms)
-   - When you see [medium pause], pause longer (~500ms)
-   - When you see [long pause], pause dramatically (~1000ms+)
-
-5. **Natural Flow:** While following tags precisely, maintain natural speech flow. Don't sound robotic - sound human, just with precise control
+**STRATEGY:**
+- Align Tone, Content, and Tags.
+- Be genuine: If text is scary, sound scared.
+- **Respect Tags Precisely**: Actually sigh/laugh/whisper when tagged.
+- Maintain natural flow.
 
 {specific_guidance}
 
 **FINAL INSTRUCTIONS:**
-- Read the text exactly as written, following all markup tags precisely
-- Match your emotional delivery to the content - be genuine and authentic
-- Use pauses naturally - they control rhythm and pacing
-- React naturally to emotional content - if something is scary, sound scared; if something is exciting, sound excited
-- {speed_instruction if speed_instruction else "Speak at a natural, moderate pace"}
-- Create engaging, natural-sounding audio that captures the essence of the content"""
+- Read text exactly as written, following tags precisely.
+- Match emotional delivery to content.
+- {speed_instruction if speed_instruction else "Speak at a natural, moderate pace"}"""
         
         return comprehensive_prompt
     

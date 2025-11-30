@@ -18,6 +18,10 @@ export function ProcessingStatusCard({ video, processingState, onRetry }) {
     if (stepId === 'ai_processing' && type === 'processAI') return true;
     if (stepId === 'synthesis' && type === 'synthesis') return true; 
     if (stepId === 'download' && type === 'download') return true;
+    if (stepId === 'cloudinary' && type === 'cloudinary') return true;
+    if (stepId === 'sheets' && type === 'sheets') return true;
+    if (stepId === 'script' && type === 'script') return true;
+    if (stepId === 'final_video' && type === 'final_video') return true;
     return false;
   };
 
@@ -49,6 +53,15 @@ export function ProcessingStatusCard({ video, processingState, onRetry }) {
 
   const steps = [
     {
+      id: 'download',
+      label: 'Video Download',
+      status: video.is_downloaded ? 'downloaded' : 'pending',
+      isProcessing: isLocallyProcessing('download') || (video.status === 'downloading'),
+      isCompleted: video.is_downloaded,
+      isFailed: false,
+      error: null,
+    },
+    {
       id: 'transcription',
       label: 'Transcription',
       status: video.transcription_status,
@@ -70,7 +83,7 @@ export function ProcessingStatusCard({ video, processingState, onRetry }) {
       id: 'script',
       label: 'Hindi Script Generation',
       status: video.script_status,
-      isProcessing: video.script_status === 'generating',
+      isProcessing: video.script_status === 'generating' || isLocallyProcessing('script'),
       isCompleted: video.script_status === 'generated',
       isFailed: video.script_status === 'failed',
       error: null,
@@ -88,8 +101,29 @@ export function ProcessingStatusCard({ video, processingState, onRetry }) {
       id: 'final_video',
       label: 'Final Video Assembly',
       status: video.final_processed_video_url ? 'completed' : 'pending',
-      isProcessing: video.synthesis_status === 'synthesized' && !video.final_processed_video_url,
+      isProcessing: (video.synthesis_status === 'synthesized' && !video.final_processed_video_url) || 
+                    video.final_video_status === 'removing_audio' || 
+                    video.final_video_status === 'combining_audio' || 
+                    isLocallyProcessing('final_video'),
       isCompleted: !!video.final_processed_video_url,
+      isFailed: false,
+      error: null,
+    },
+    {
+      id: 'cloudinary',
+      label: 'Cloudinary Upload',
+      status: video.cloudinary_url ? 'uploaded' : 'pending',
+      isProcessing: isLocallyProcessing('cloudinary'),
+      isCompleted: !!video.cloudinary_url,
+      isFailed: false,
+      error: null,
+    },
+    {
+      id: 'sheets',
+      label: 'Google Sheets Sync',
+      status: video.google_sheets_synced ? 'synced' : 'pending',
+      isProcessing: isLocallyProcessing('sheets'),
+      isCompleted: video.google_sheets_synced,
       isFailed: false,
       error: null,
     }

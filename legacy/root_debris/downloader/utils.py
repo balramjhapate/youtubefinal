@@ -2224,7 +2224,9 @@ Please create a detailed audio generation prompt and Hindi script based on the a
 def _call_gemini_api(api_key, system_prompt, user_message):
     """Call Google Gemini API using REST instead of SDK"""
     # Try multiple model names - use full path format as required by API
-    model_names = ['models/gemini-2.0-flash', 'models/gemini-2.5-flash', 'models/gemini-pro']
+    # Try multiple model names - use full path format as required by API
+    # Prioritize 1.5-flash for speed, then 2.0-flash (preview), then pro
+    model_names = ['models/gemini-1.5-flash', 'models/gemini-2.0-flash', 'models/gemini-2.5-flash', 'models/gemini-pro']
     
     for model_name in model_names:
         try:
@@ -4139,8 +4141,8 @@ Do NOT break character.
         visual_context = ""
         if has_visual and visual_segments and len(visual_segments) > 0:
             visual_context = "\n\n**दृश्य विश्लेषण (Visual Analysis - Scene-by-Scene) - OPTIONAL, USE IF AVAILABLE:**\n"
-            # Limit to first 30 segments for performance (reduced from 50)
-            for seg in visual_segments[:30]:
+            # Limit to first 15 segments for performance (reduced from 30)
+            for seg in visual_segments[:15]:
                 timestamp = seg.get('timestamp_str', '')
                 description = seg.get('text') or seg.get('description', '')
                 if description:

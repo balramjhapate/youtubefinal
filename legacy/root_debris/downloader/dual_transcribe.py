@@ -580,18 +580,18 @@ def transcribe_video_dual(video_download):
                 print(f"Provider: {settings_obj.provider}, API Key configured: {bool(settings_obj.api_key)}")
                 
                 # Calculate reasonable frame extraction parameters based on video duration
-                # Use 1 frame per second for reasonable processing time (max 200 frames)
+                # Use 1 frame per second for reasonable processing time (max 60 frames for speed)
                 if video_download.duration:
                     # Calculate interval to get approximately 1 frame per second
-                    # But cap at 200 frames total for performance
-                    max_frames = min(int(video_download.duration), 200)
+                    # But cap at 60 frames total for performance (reduced from 200)
+                    max_frames = min(int(video_download.duration), 60)
                     # Calculate interval: if we want max_frames frames in duration seconds
                     # interval = duration / max_frames
                     interval = video_download.duration / max_frames if max_frames > 0 else 1.0
                     print(f"Video duration: {video_download.duration}s, extracting {max_frames} frames at {interval:.3f}s intervals")
                 else:
-                    # Default: 1 frame per second, max 200 frames
-                    max_frames = 200
+                    # Default: 1 frame per second, max 60 frames
+                    max_frames = 60
                     interval = 1.0  # 1 frame per second
                     print(f"Video duration unknown, using default: {max_frames} frames at {interval}s intervals")
                 
