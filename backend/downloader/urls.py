@@ -14,9 +14,11 @@ urlpatterns = [
     path('api/videos/<int:video_id>/generate_audio_prompt/', views.generate_audio_prompt_view, name='generate_audio_prompt'),
     path('api/videos/<int:video_id>/synthesize/', views.synthesize_audio_view, name='synthesize_audio'),
     path('api/videos/<int:video_id>/update_voice_profile/', views.update_voice_profile_view, name='update_voice_profile'),
-    path('api/videos/<int:video_id>/', views.get_video, name='get_video'),  # GET for detail  
+    path('api/videos/<int:video_id>/update_status/', views.update_video_status, name='update_video_status'),  # POST for frontend status updates (must come before generic pattern)
+    path('api/videos/<int:video_id>/upload_audio/', views.upload_synthesized_audio_view, name='upload_synthesized_audio'),  # POST for frontend TTS audio upload (must come before generic pattern)
     path('api/videos/<int:video_id>/delete/', views.delete_video, name='delete_video'),  # DELETE moved to /delete/
     path('api/videos/<int:video_id>/reprocess/', views.reprocess_video, name='reprocess_video'),  # POST for reprocessing
+    path('api/videos/<int:video_id>/', views.get_video, name='get_video'),  # GET for detail (must be last - catch-all)
     path('api/ai-settings/', views.ai_settings, name='ai_settings'),
     
     # Bulk operations

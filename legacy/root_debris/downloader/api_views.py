@@ -833,10 +833,10 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                         video.ai_error_message = str(e)
                         video.save(update_fields=['ai_processing_status', 'ai_error_message'])
 
-                # Step 3: Script Generation (automatically after AI processing)
+                # Step 3: Hindi Script Generation (explainer style)
                 # Generate script if we have transcript (NCA/Whisper) and enhanced transcript
                 # Visual Analysis is OPTIONAL - if available, it will be included; if not, continue without it
-                has_transcript = video.transcript or video.whisper_transcript
+                has_transcript = video.transcript or video.transcript_without_timestamps
                 has_enhanced = video.enhanced_transcript
                 has_visual = video.visual_transcript  # Optional
                 
@@ -923,6 +923,7 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                         video.script_status = 'failed'
                         video.script_error_message = str(e)
                         video.save()
+
 
                 # Step 4: TTS Generation (automatically after script generation)
                 # Fix: If script exists but status is still 'generating', update status to 'generated'

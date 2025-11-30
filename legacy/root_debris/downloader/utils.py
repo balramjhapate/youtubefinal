@@ -3695,7 +3695,7 @@ Generate engaging Hindi title, description, and English tags for this video."""
                 from openai import OpenAI
                 client = OpenAI(api_key=api_key)
                 response = client.chat.completions.create(
-                    model="gpt-4",
+                    model="gpt-4o-mini",
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_message}
@@ -3708,7 +3708,7 @@ Generate engaging Hindi title, description, and English tags for this video."""
                 import openai
                 openai.api_key = api_key
                 response = openai.ChatCompletion.create(
-                    model="gpt-4",
+                    model="gpt-4o-mini",
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_message}

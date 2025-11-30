@@ -96,8 +96,10 @@ def extract_video(request):
             def auto_process():
                 try:
                     from .utils import download_file
-                    from .utils import transcribe_video, translate_text, process_video_with_ai
-                    from legacy.root_debris.downloader.utils import generate_hindi_script, get_clean_script_for_tts, find_ffmpeg, get_audio_duration, adjust_audio_duration
+                    from .utils import transcribe_video
+                    # ❌ REMOVED: translate_text, process_video_with_ai - Now handled by frontend
+                    from legacy.root_debris.downloader.utils import get_clean_script_for_tts, find_ffmpeg, get_audio_duration, adjust_audio_duration
+                    # ❌ REMOVED: generate_hindi_script - Now handled by frontend
                     from legacy.root_debris.downloader.gemini_tts_service import GeminiTTSService
                     from legacy.root_debris.downloader.watermark_service import apply_moving_watermark
                     from legacy.root_debris.downloader.models import WatermarkSettings, AIProviderSettings
@@ -124,6 +126,8 @@ def extract_video(request):
                             return
                     
                     # Step 2: Transcribe
+                    # NOTE: Translation, AI Processing, and Script Generation are now handled by frontend
+                    # See: frontend/src/pages/VideoDetail.jsx for auto-processing logic
                     if not download.transcript or download.transcription_status != 'transcribed':
                         print(f"🔄 Auto-processing: Transcribing video {download.id}...")
                         download.transcription_status = 'transcribing'
@@ -138,14 +142,13 @@ def extract_video(request):
                             download.transcription_status = 'transcribed'
                             download.transcript_processed_at = timezone.now()
                             
-                            if download.transcript:
-                                try:
-                                    download.transcript_hindi = translate_text(download.transcript, target='hi')
-                                except Exception as e:
-                                    print(f"Hindi translation failed: {e}")
+                            # ❌ REMOVED: Translation is now handled by frontend
+                            # Frontend will automatically translate transcript after transcription completes
+                            # See: frontend/src/pages/VideoDetail.jsx - Auto-translate useEffect
                             
                             download.save()
                             print(f"✓ Transcription completed")
+                            print(f"ℹ️  Translation, AI processing, and script generation will be handled by frontend")
                         else:
                             download.transcription_status = 'failed'
                             download.transcript_error_message = result.get('error', 'Unknown error')
@@ -153,208 +156,23 @@ def extract_video(request):
                             print(f"✗ Transcription failed")
                             return
                     
-                    # Step 3: AI Processing
-                    print(f"🔄 Auto-processing: AI processing video {download.id}...")
-                    download.refresh_from_db()
-                    download.ai_processing_status = 'processing'
-                    download.save()
+                    # ❌ REMOVED: Step 3 - AI Processing
+                    # AI Processing is now handled by frontend for faster processing
+                    # See: frontend/src/pages/VideoDetail.jsx - Auto AI processing useEffect
+                    # See: frontend/src/services/aiProcessing.js
+                    print(f"ℹ️  AI processing will be handled by frontend (faster, parallel processing)")
                     
-                    ai_result = process_video_with_ai(download)
+                    # ❌ REMOVED: Step 4 - Script Generation
+                    # Script Generation is now handled by frontend for faster processing
+                    # See: frontend/src/pages/VideoDetail.jsx - Auto script generation useEffect
+                    # See: frontend/src/services/scriptGenerator.js
+                    print(f"ℹ️  Script generation will be handled by frontend (faster, parallel processing)")
                     
-                    if ai_result['status'] == 'success':
-                        download.ai_processing_status = 'processed'
-                        download.ai_summary = ai_result.get('summary', '')
-                        download.ai_tags = ','.join(ai_result.get('tags', []))
-                        download.ai_processed_at = timezone.now()
-                        download.save()
-                        print(f"✓ AI processing completed")
-                    else:
-                        download.ai_processing_status = 'failed'
-                        download.ai_error_message = ai_result.get('error', 'Unknown error')
-                        download.save()
-                        print(f"✗ AI processing failed")
-                    
-                    # Step 4: Script Generation (for legacy model)
-                    try:
-                        from legacy.root_debris.downloader.models import VideoDownload as LegacyVideoDownload
-                        video = LegacyVideoDownload.objects.get(id=download.id)
-                        
-                        if hasattr(video, 'script_status'):
-                            print(f"🔄 Auto-processing: Generating script for video {download.id}...")
-                            video.refresh_from_db()
-                            
-                            # Ensure enhanced_transcript exists
-                            if not hasattr(video, 'enhanced_transcript') or not video.enhanced_transcript:
-                                if hasattr(video, 'transcript') and video.transcript:
-                                    if hasattr(video, 'enhanced_transcript'):
-                                        video.enhanced_transcript = video.transcript
-                                    if hasattr(video, 'enhanced_transcript_without_timestamps'):
-                                        if hasattr(video, 'transcript_without_timestamps') and video.transcript_without_timestamps:
-                                            video.enhanced_transcript_without_timestamps = video.transcript_without_timestamps
-                                        else:
-                                            import re
-                                            plain_text = re.sub(r'^\d{2}:\d{2}:\d{2}\s+', '', video.transcript, flags=re.MULTILINE)
-                                            plain_text = '\n'.join([line.strip() for line in plain_text.split('\n') if line.strip()])
-                                            video.enhanced_transcript_without_timestamps = plain_text
-                                    video.save()
-                            
-                            video.script_status = 'generating'
-                            video.save()
-                            
-                            script_result = generate_hindi_script(video)
-                            
-                            if script_result['status'] == 'success':
-                                video.hindi_script = script_result['script']
-                                video.script_status = 'generated'
-                                video.script_generated_at = timezone.now()
-                                video.save()
-                                print(f"✓ Script generation completed")
-                            else:
-                                video.script_status = 'failed'
-                                video.script_error_message = script_result.get('error', 'Unknown error')
-                                video.save()
-                                print(f"✗ Script generation failed")
-                            
-                            # Step 5: TTS Synthesis
-                            if video.script_status == 'generated' and video.hindi_script:
-                                print(f"🔄 Auto-processing: Synthesizing audio for video {download.id}...")
-                                video.refresh_from_db()
-                                video.synthesis_status = 'synthesizing'
-                                video.save()
-                                
-                                clean_script = get_clean_script_for_tts(video.hindi_script)
-                                
-                                settings_obj = AIProviderSettings.objects.first()
-                                if settings_obj and settings_obj.api_key:
-                                    service = GeminiTTSService(api_key=settings_obj.api_key)
-                                    
-                                    temp_audio = tempfile.NamedTemporaryFile(delete=False, suffix='.mp3')
-                                    temp_audio_path = temp_audio.name
-                                    temp_audio.close()
-                                    
-                                    service.generate_speech(
-                                        text=clean_script,
-                                        language_code='hi-IN',
-                                        voice_name='Enceladus',
-                                        output_path=temp_audio_path,
-                                        video_duration=video.duration or 0
-                                    )
-                                    
-                                    # Adjust audio duration to match video
-                                    if video.duration and os.path.exists(temp_audio_path):
-                                        audio_duration = get_audio_duration(temp_audio_path)
-                                        if audio_duration:
-                                            duration_diff = abs(audio_duration - video.duration)
-                                            if duration_diff > 1.0:  # More than 1 second difference
-                                                print(f"Adjusting TTS audio duration: {audio_duration:.2f}s -> {video.duration:.2f}s")
-                                                adjusted_path = adjust_audio_duration(temp_audio_path, video.duration)
-                                                if adjusted_path and os.path.exists(adjusted_path):
-                                                    os.unlink(temp_audio_path)
-                                                    temp_audio_path = adjusted_path
-                                                    print(f"✓ Audio duration adjusted")
-                                    
-                                    with open(temp_audio_path, 'rb') as f:
-                                        video.synthesized_audio.save(f"synthesized_{video.pk}.mp3", File(f), save=False)
-                                    
-                                    video.synthesis_status = 'synthesized'
-                                    video.synthesized_at = timezone.now()
-                                    video.save()
-                                    
-                                    if os.path.exists(temp_audio_path):
-                                        os.unlink(temp_audio_path)
-                                    
-                                    print(f"✓ TTS synthesis completed")
-                                    
-                                    # Step 6: Final Video with Watermark
-                                    if video.synthesis_status == 'synthesized' and video.synthesized_audio and video.local_file:
-                                        print(f"🔄 Auto-processing: Creating final video for {download.id}...")
-                                        video.refresh_from_db()
-                                        
-                                        ffmpeg_path = find_ffmpeg()
-                                        if ffmpeg_path and os.path.exists(video.local_file.path):
-                                            # Remove audio
-                                            temp_no_audio = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
-                                            temp_no_audio_path = temp_no_audio.name
-                                            temp_no_audio.close()
-                                            
-                                            cmd = [
-                                                ffmpeg_path,
-                                                '-i', video.local_file.path,
-                                                '-c:v', 'copy',
-                                                '-an',
-                                                '-y',
-                                                temp_no_audio_path
-                                            ]
-                                            
-                                            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-                                            
-                                            if result.returncode == 0 and os.path.exists(temp_no_audio_path):
-                                                # Combine with TTS audio
-                                                temp_final = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
-                                                temp_final_path = temp_final.name
-                                                temp_final.close()
-                                                
-                                                cmd = [
-                                                    ffmpeg_path,
-                                                    '-i', temp_no_audio_path,
-                                                    '-i', video.synthesized_audio.path,
-                                                    '-c:v', 'copy',
-                                                    '-c:a', 'aac',
-                                                    '-map', '0:v:0',
-                                                    '-map', '1:a:0',
-                                                    '-shortest',
-                                                    '-y',
-                                                    temp_final_path
-                                                ]
-                                                
-                                                result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-                                                
-                                                if result.returncode == 0 and os.path.exists(temp_final_path):
-                                                    # Apply watermark if enabled
-                                                    watermark_applied = False
-                                                    try:
-                                                        watermark_settings = WatermarkSettings.objects.first()
-                                                        if watermark_settings and watermark_settings.enabled and watermark_settings.watermark_text:
-                                                            temp_watermarked = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
-                                                            temp_watermarked_path = temp_watermarked.name
-                                                            temp_watermarked.close()
-                                                            
-                                                            if apply_moving_watermark(
-                                                                video_path=temp_final_path,
-                                                                watermark_text=watermark_settings.watermark_text,
-                                                                output_path=temp_watermarked_path,
-                                                                position_change_interval=watermark_settings.position_change_interval,
-                                                                opacity=watermark_settings.opacity,
-                                                                font_size=watermark_settings.font_size,
-                                                                font_color=watermark_settings.font_color
-                                                            ):
-                                                                os.unlink(temp_final_path)
-                                                                temp_final_path = temp_watermarked_path
-                                                                watermark_applied = True
-                                                                print(f"✓ Watermark applied: '{watermark_settings.watermark_text}'")
-                                                            else:
-                                                                if os.path.exists(temp_watermarked_path):
-                                                                    os.unlink(temp_watermarked_path)
-                                                    except Exception as e:
-                                                        print(f"⚠ Watermark error: {e}")
-                                                    
-                                                    # Save final video
-                                                    with open(temp_final_path, 'rb') as f:
-                                                        video.final_processed_video.save(f"final_{video.pk}.mp4", File(f), save=False)
-                                                    
-                                                    if hasattr(video, 'review_status'):
-                                                        video.review_status = 'pending_review'
-                                                    video.save()
-                                                    
-                                                    if os.path.exists(temp_final_path):
-                                                        os.unlink(temp_final_path)
-                                                    
-                                                    print(f"✓ Final video created (watermark: {'yes' if watermark_applied else 'no'})")
-                                                
-                                                if os.path.exists(temp_no_audio_path):
-                                                    os.unlink(temp_no_audio_path)
-                    except Exception as e:
-                        print(f"⚠ Legacy model processing skipped: {e}")
+                    # ❌ REMOVED: Step 5 - TTS Synthesis and Step 6 - Final Video Processing
+                    # TTS Synthesis and Video Processing will happen after frontend generates script
+                    # Use synthesize_audio_view() endpoint for TTS synthesis
+                    # Use reprocess_video() endpoint for final video processing
+                    print(f"ℹ️  TTS synthesis and video processing can be triggered manually after script generation")
                 
                 except Exception as e:
                     import traceback
@@ -515,7 +333,8 @@ def download_video(request, video_id):
 def transcribe_video_view(request, video_id):
     """Start transcription with Hindi translation"""
     try:
-        from .utils import transcribe_video, translate_text
+        from .utils import transcribe_video
+        # ❌ REMOVED: translate_text - Translation is now handled by frontend
         
         video = VideoDownload.objects.get(id=video_id)
         
@@ -533,20 +352,17 @@ def transcribe_video_view(request, video_id):
             video.transcription_status = 'transcribed'
             video.transcript_processed_at = timezone.now()
             
-            # Translate to Hindi using Gemini AI
-            if video.transcript:
-                try:
-                    video.transcript_hindi = translate_text(video.transcript, target='hi')
-                except Exception as e:
-                    print(f"Hindi translation failed: {e}")
-                    video.transcript_hindi = ""
+            # ❌ REMOVED: Translation is now handled by frontend
+            # Frontend will automatically translate transcript after transcription completes
+            # See: frontend/src/pages/VideoDetail.jsx - Auto-translate useEffect
+            # See: frontend/src/services/translation.js
             
             video.save()
             return JsonResponse({
                 "status": "success",
-                "message": "Transcription completed",
+                "message": "Transcription completed. Translation will be handled by frontend.",
                 "transcript": video.transcript,
-                "transcript_hindi": video.transcript_hindi,
+                "transcript_hindi": video.transcript_hindi or "",  # May be empty if frontend hasn't translated yet
                 "language": video.transcript_language
             })
         else:
@@ -591,46 +407,21 @@ def get_transcription_status(request, video_id):
 @csrf_exempt
 @require_http_methods(["POST"])
 def process_ai_view(request, video_id):
-    """Start AI processing to generate summary and tags"""
-    try:
-        from .utils import process_video_with_ai
-        
-        video = VideoDownload.objects.get(id=video_id)
-        
-        # Update status to processing
-        video.ai_processing_status = 'processing'
-        video.save()
-        
-        # Perform AI processing
-        result = process_video_with_ai(video)
-        
-        if result['status'] == 'success':
-            video.ai_summary = result['summary']
-            video.ai_tags = ','.join(result['tags'])
-            video.ai_processing_status = 'processed'
-            video.ai_processed_at = timezone.now()
-            video.save()
-            
-            return JsonResponse({
-                "status": "success",
-                "message": "AI processing completed",
-                "summary": video.ai_summary,
-                "tags": video.ai_tags
-            })
-        else:
-            video.ai_processing_status = 'failed'
-            video.ai_error_message = result.get('error', 'Unknown error')
-            video.save()
-            return JsonResponse({"error": result.get('error', 'AI processing failed')}, status=500)
-            
-    except VideoDownload.DoesNotExist:
-        return JsonResponse({"error": "Video not found"}, status=404)
-    except Exception as e:
-        if 'video' in locals():
-            video.ai_processing_status = 'failed'
-            video.ai_error_message = str(e)
-            video.save()
-        return JsonResponse({"error": str(e)}, status=500)
+    """
+    ⚠️ DEPRECATED: AI processing is now handled by frontend for faster processing.
+    
+    This endpoint is kept for backward compatibility but will return a deprecation notice.
+    Frontend automatically processes videos with AI after transcription completes.
+    
+    See: frontend/src/pages/VideoDetail.jsx - Auto AI processing useEffect
+    See: frontend/src/services/aiProcessing.js
+    """
+    return JsonResponse({
+        "status": "deprecated",
+        "message": "AI processing is now handled by frontend. The frontend will automatically process videos with AI after transcription completes.",
+        "frontend_location": "frontend/src/pages/VideoDetail.jsx",
+        "service_location": "frontend/src/services/aiProcessing.js"
+    }, status=410)  # 410 Gone - indicates resource is no longer available
 
 @csrf_exempt
 @require_http_methods(["POST"])
@@ -739,6 +530,73 @@ def synthesize_audio_view(request, video_id):
         return JsonResponse({"error": str(e)}, status=500)
 
 @csrf_exempt
+@require_http_methods(["POST"])
+def upload_synthesized_audio_view(request, video_id):
+    """
+    Upload synthesized audio file from frontend TTS
+    Frontend generates audio using Google Gemini TTS API and uploads it here
+    """
+    try:
+        video = VideoDownload.objects.get(id=video_id)
+        
+        if 'audio' not in request.FILES:
+            return JsonResponse({"error": "Audio file is required"}, status=400)
+        
+        audio_file = request.FILES['audio']
+        
+        # Save audio file
+        import os
+        from django.conf import settings
+        from django.core.files import File
+        
+        filename = f"synthesized_{video_id}_{int(timezone.now().timestamp())}.wav"
+        
+        # Try legacy model first
+        use_legacy = False
+        try:
+            from legacy.root_debris.downloader.models import VideoDownload as LegacyVideoDownload
+            legacy_video = LegacyVideoDownload.objects.get(id=video_id)
+            use_legacy = True
+            video = legacy_video
+        except:
+            pass
+        
+        # Save file
+        if use_legacy and hasattr(video, 'synthesized_audio'):
+            video.synthesized_audio.save(filename, File(audio_file), save=False)
+            video.synthesis_status = 'synthesized'
+            video.synthesized_at = timezone.now()
+            video.save()
+        else:
+            # For non-legacy model, save to media directory
+            relative_path = f"synthesized_audio/{filename}"
+            absolute_path = os.path.join(settings.MEDIA_ROOT, 'synthesized_audio', filename)
+            os.makedirs(os.path.dirname(absolute_path), exist_ok=True)
+            
+            with open(absolute_path, 'wb+') as destination:
+                for chunk in audio_file.chunks():
+                    destination.write(chunk)
+            
+            # Store path in a custom field or return URL
+            # Note: Non-legacy model may not have synthesized_audio field
+            # Return the URL for frontend to use
+            audio_url = f"{settings.MEDIA_URL}{relative_path}"
+        
+        return JsonResponse({
+            "status": "success",
+            "message": "Audio uploaded successfully",
+            "audio_url": video.synthesized_audio.url if use_legacy and hasattr(video, 'synthesized_audio') else audio_url
+        })
+        
+    except VideoDownload.DoesNotExist:
+        return JsonResponse({"error": "Video not found"}, status=404)
+    except Exception as e:
+        import traceback
+        print(f"Audio upload error: {str(e)}")
+        print(traceback.format_exc())
+        return JsonResponse({"error": str(e)}, status=500)
+
+@csrf_exempt
 @require_http_methods(["PATCH"])
 def update_voice_profile_view(request, video_id):
     """Update voice profile"""
@@ -788,6 +646,61 @@ def get_video(request, video_id):
         })
     except VideoDownload.DoesNotExist:
         return JsonResponse({"error": "Video not found"}, status=404)
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def update_video_status(request, video_id):
+    """Minimal endpoint to update video processing status from frontend"""
+    try:
+        data = json.loads(request.body.decode('utf-8'))
+        video = VideoDownload.objects.get(id=video_id)
+        
+        # Prepare update fields list for optimized save
+        update_fields = []
+        
+        # Only update fields sent from frontend
+        if 'transcript_hindi' in data:
+            video.transcript_hindi = data['transcript_hindi']
+            update_fields.append('transcript_hindi')
+            # Mark transcription as complete if transcript_hindi is provided
+            if video.transcription_status != 'transcribed':
+                video.transcription_status = 'transcribed'
+                update_fields.append('transcription_status')
+        
+        if 'ai_summary' in data:
+            video.ai_summary = data['ai_summary']
+            update_fields.append('ai_summary')
+            if video.ai_processing_status != 'processed':
+                video.ai_processing_status = 'processed'
+                update_fields.append('ai_processing_status')
+        
+        if 'ai_tags' in data:
+            video.ai_tags = ','.join(data['ai_tags']) if isinstance(data['ai_tags'], list) else data['ai_tags']
+            update_fields.append('ai_tags')
+        
+        if 'hindi_script' in data:
+            video.hindi_script = data['hindi_script']
+            update_fields.append('hindi_script')
+            # Update script_status if the model has it
+            if hasattr(video, 'script_status'):
+                video.script_status = 'generated'
+                update_fields.append('script_status')
+        
+        # Note: Audio file uploads should use a separate endpoint
+        # See: upload_synthesized_audio_view() for file uploads
+        
+        # Single optimized database write
+        if update_fields:
+            video.save(update_fields=update_fields)
+        
+        return JsonResponse({"status": "updated"}, status=200)
+    except VideoDownload.DoesNotExist:
+        return JsonResponse({"error": "Video not found"}, status=404)
+    except Exception as e:
+        import traceback
+        print(f"Error updating video status: {str(e)}")
+        print(traceback.format_exc())
+        return JsonResponse({"error": str(e)}, status=500)
 
 @csrf_exempt
 @require_http_methods(["POST"])
@@ -892,8 +805,10 @@ def reprocess_video(request, video_id):
         # Run full pipeline in background thread
         def run_full_pipeline():
             try:
-                from .utils import transcribe_video, translate_text, process_video_with_ai
-                from legacy.root_debris.downloader.utils import generate_hindi_script, get_clean_script_for_tts
+                from .utils import transcribe_video
+                # ❌ REMOVED: translate_text, process_video_with_ai - Now handled by frontend
+                from legacy.root_debris.downloader.utils import get_clean_script_for_tts
+                # ❌ REMOVED: generate_hindi_script - Now handled by frontend
                 from legacy.root_debris.downloader.gemini_tts_service import GeminiTTSService
                 import subprocess
                 import tempfile
@@ -917,100 +832,25 @@ def reprocess_video(request, video_id):
                     video.transcription_status = 'transcribed'
                     video.transcript_processed_at = timezone.now()
                     
-                    # Translate to Hindi
-                    if video.transcript:
-                        try:
-                            video.transcript_hindi = translate_text(video.transcript, target='hi')
-                        except Exception as e:
-                            print(f"Hindi translation failed: {e}")
-                            video.transcript_hindi = ""
+                    # ❌ REMOVED: Translation is now handled by frontend
+                    # Frontend will automatically translate transcript after transcription completes
+                    # See: frontend/src/pages/VideoDetail.jsx - Auto-translate useEffect
                     
                     video.save()
                     print(f"✓ Step 1: Transcription completed")
+                    print(f"ℹ️  Translation, AI processing, and script generation will be handled by frontend")
                     
-                    # Step 2: AI Processing (always run)
-                    video.refresh_from_db()
-                    try:
-                        if hasattr(video, 'ai_processing_status'):
-                            video.ai_processing_status = 'processing'
-                        video.save()
-                        
-                        ai_result = process_video_with_ai(video)
-                        
-                        if ai_result['status'] == 'success':
-                            if hasattr(video, 'ai_processing_status'):
-                                video.ai_processing_status = 'processed'
-                            video.ai_summary = ai_result.get('summary', '')
-                            video.ai_tags = ','.join(ai_result.get('tags', []))
-                            if hasattr(video, 'ai_processed_at'):
-                                video.ai_processed_at = timezone.now()
-                            video.save()
-                            print(f"✓ Step 2: AI processing completed")
-                        else:
-                            if hasattr(video, 'ai_processing_status'):
-                                video.ai_processing_status = 'failed'
-                            if hasattr(video, 'ai_error_message'):
-                                video.ai_error_message = ai_result.get('error', 'Unknown error')
-                            video.save()
-                            print(f"✗ Step 2: AI processing failed: {ai_result.get('error', 'Unknown error')}")
-                    except Exception as e:
-                        import traceback
-                        error_msg = f"AI processing exception: {str(e)}"
-                        print(f"✗ Step 2: {error_msg}")
-                        traceback.print_exc()
-                        if hasattr(video, 'ai_processing_status'):
-                            video.ai_processing_status = 'failed'
-                        if hasattr(video, 'ai_error_message'):
-                            video.ai_error_message = error_msg
-                        video.save()
+                    # ❌ REMOVED: Step 2 - AI Processing
+                    # AI Processing is now handled by frontend for faster processing
+                    # See: frontend/src/pages/VideoDetail.jsx - Auto AI processing useEffect
+                    # See: frontend/src/services/aiProcessing.js
+                    print(f"ℹ️  AI processing will be handled by frontend (faster, parallel processing)")
                     
-                    # Step 3: Script Generation (only for legacy model)
-                    if use_legacy and hasattr(video, 'script_status'):
-                        video.refresh_from_db()
-                        
-                        # Ensure enhanced_transcript exists - if not, use transcript as fallback
-                        if not hasattr(video, 'enhanced_transcript') or not video.enhanced_transcript:
-                            # Use transcript as enhanced_transcript if not available
-                            if hasattr(video, 'transcript') and video.transcript:
-                                if hasattr(video, 'enhanced_transcript'):
-                                    video.enhanced_transcript = video.transcript
-                                if hasattr(video, 'enhanced_transcript_without_timestamps'):
-                                    if hasattr(video, 'transcript_without_timestamps') and video.transcript_without_timestamps:
-                                        video.enhanced_transcript_without_timestamps = video.transcript_without_timestamps
-                                    else:
-                                        # Extract without timestamps
-                                        import re
-                                        plain_text = re.sub(r'^\d{2}:\d{2}:\d{2}\s+', '', video.transcript, flags=re.MULTILINE)
-                                        plain_text = '\n'.join([line.strip() for line in plain_text.split('\n') if line.strip()])
-                                        video.enhanced_transcript_without_timestamps = plain_text
-                                video.save()
-                                print(f"✓ Created enhanced_transcript from transcript")
-                        
-                        video.script_status = 'generating'
-                        video.save()
-                        
-                        try:
-                            script_result = generate_hindi_script(video)
-                            
-                            if script_result['status'] == 'success':
-                                video.hindi_script = script_result['script']
-                                video.script_status = 'generated'
-                                video.script_generated_at = timezone.now()
-                                video.save()
-                                print(f"✓ Step 3: Script generation completed")
-                            else:
-                                video.script_status = 'failed'
-                                video.script_error_message = script_result.get('error', 'Unknown error')
-                                video.save()
-                                print(f"✗ Step 3: Script generation failed: {script_result.get('error', 'Unknown error')}")
-                        except Exception as e:
-                            import traceback
-                            error_msg = f"Script generation exception: {str(e)}"
-                            print(f"✗ Step 3: {error_msg}")
-                            traceback.print_exc()
-                            video.script_status = 'failed'
-                            video.script_error_message = error_msg
-                            video.save()
+                    # ❌ REMOVED: Step 3 - Script Generation
+                    # Script Generation is now handled by frontend for faster processing
+                    # See: frontend/src/pages/VideoDetail.jsx - Auto script generation useEffect
+                    # See: frontend/src/services/scriptGenerator.js
+                    print(f"ℹ️  Script generation will be handled by frontend (faster, parallel processing)")
                     
                     # Step 4: TTS Synthesis (only for legacy model)
                     if use_legacy and hasattr(video, 'synthesis_status') and hasattr(video, 'hindi_script') and video.hindi_script:

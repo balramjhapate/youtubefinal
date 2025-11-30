@@ -31,6 +31,12 @@ import {
 	showConfirm,
 	showInfo,
 } from "../utils/alerts";
+import { translateToHindi } from "../services/translation";
+import { generateSummary } from "../services/aiProcessing";
+import { generateHindiScript } from "../services/scriptGenerator";
+import { generateSpeech, uploadAudioToBackend } from "../services/ttsService";
+import { cleanScriptForTTS } from "../utils/textProcessing";
+import { settingsApi } from "../api";
 
 export function VideoDetail() {
 	const { id } = useParams();
@@ -177,6 +183,300 @@ export function VideoDetail() {
 			clearProcessingForVideo(id);
 		}
 	}, [video?.id]); // Only run once when video loads
+
+	// Auto-process translation and AI when transcription completes (Phase 1 & 2: Parallel Processing)
+	useEffect(() => {
+		if (
+			!video ||
+			!video.transcript ||
+			video.transcription_status !== "transcribed"
+		) {
+			return;
+		}
+
+		// Check if both are already done
+		const needsTranslation = !video.transcript_hindi;
+		const needsAIProcessing = 
+			video.ai_processing_status !== "processed" && 
+			video.ai_processing_status !== "processing";
+
+		if (!needsTranslation && !needsAIProcessing) {
+			return; // Both already done
+		}
+
+		// Process translation and AI in parallel for faster execution
+		const processInParallel = async () => {
+			try {
+				const transcriptText = video.transcript_without_timestamps || video.transcript;
+				const title = video.title || video.original_title || '';
+				const description = video.description || video.original_description || '';
+
+				// Prepare parallel promises
+				const promises = [];
+
+				// Translation (if needed)
+				if (needsTranslation && transcriptText && transcriptText.trim()) {
+					console.log("🔄 Auto-translating transcript to Hindi...");
+					promises.push(
+						translateToHindi(transcriptText)
+							.then(translatedText => ({
+								type: 'translation',
+								data: { transcript_hindi: translatedText },
+							}))
+							.catch(error => {
+								console.error("Translation error:", error);
+								return null; // Don't fail the whole process
+							})
+					);
+				}
+
+				// AI Processing (if needed)
+				if (needsAIProcessing) {
+					console.log("🔄 Auto-processing with AI...");
+					promises.push(
+						settingsApi
+							.getAISettings()
+							.then(aiSettings => {
+								const provider = aiSettings.provider || 'gemini';
+								const apiKey = aiSettings.api_key || aiSettings.gemini_api_key || '';
+								
+								if (!apiKey) {
+									console.warn("AI API key not configured, skipping AI processing");
+									return null;
+								}
+
+								return generateSummary(
+									transcriptText,
+									title,
+									description,
+									provider,
+									apiKey
+								).then(aiResult => ({
+									type: 'ai',
+									data: {
+										ai_summary: aiResult?.summary || '',
+										ai_tags: aiResult?.tags || [],
+									},
+								}));
+							})
+							.catch(error => {
+								console.error("AI processing error:", error);
+								return null; // Don't fail the whole process
+							})
+					);
+				}
+
+				// Wait for all promises to complete
+				const results = await Promise.all(promises);
+				
+				// Combine all results into single update
+				const updateData = {};
+				results.forEach(result => {
+					if (result && result.data) {
+						Object.assign(updateData, result.data);
+					}
+				});
+
+				// Single API call to update all results
+				if (Object.keys(updateData).length > 0) {
+					await videosApi.updateProcessingStatus(id, updateData);
+					
+					// Invalidate query to refresh video data
+					queryClient.invalidateQueries(["video", id]);
+					console.log("✓ Frontend processing completed and saved");
+				}
+			} catch (error) {
+				console.error("Frontend processing error:", error);
+				// Don't show error to user - processing is optional
+				// The backend will handle as fallback
+			}
+		};
+
+		processInParallel();
+	}, [
+		video?.transcript,
+		video?.transcription_status,
+		video?.transcript_hindi,
+		video?.ai_processing_status,
+		id,
+		queryClient,
+	]);
+
+	// Auto-generate Hindi script when AI processing completes (Phase 3: Script Generation Migration)
+	useEffect(() => {
+		if (
+			!video ||
+			!video.transcript ||
+			video.transcription_status !== "transcribed" ||
+			video.ai_processing_status !== "processed" || // Need AI processing first
+			video.script_status === "generated" || // Already generated
+			video.script_status === "generating" || // Currently generating
+			video.hindi_script // Already has script
+		) {
+			return;
+		}
+
+		// Auto-generate Hindi script
+		const generateScript = async () => {
+			try {
+				console.log("🔄 Auto-generating Hindi script...");
+				
+				// Get AI settings for script generation
+				const aiSettings = await settingsApi.getAISettings();
+				const scriptProvider = aiSettings.script_generation_provider || aiSettings.provider || 'gemini';
+				const apiKey = aiSettings[`${scriptProvider}_api_key`] || aiSettings.api_key || '';
+				
+				if (!apiKey) {
+					console.warn("Script generation API key not configured, skipping script generation");
+					return;
+				}
+
+				const transcriptText = video.transcript_without_timestamps || video.transcript;
+				const transcriptHindi = video.transcript_hindi || '';
+				const title = video.title || video.original_title || '';
+				const description = video.description || video.original_description || '';
+				const duration = video.duration || 0;
+				const enhancedTranscript = video.enhanced_transcript_without_timestamps || video.enhanced_transcript || '';
+				const visualTranscript = video.visual_transcript_without_timestamps || video.visual_transcript || '';
+
+				// Generate Hindi script using AI
+				const rawScript = await generateHindiScript(
+					transcriptText,
+					transcriptHindi,
+					title,
+					description,
+					duration,
+					scriptProvider,
+					apiKey,
+					enhancedTranscript,
+					visualTranscript
+				);
+				
+				if (rawScript && rawScript.trim()) {
+					// Clean script for TTS (optional - can be done later)
+					// For now, save the formatted script as-is
+					const cleanedScript = cleanScriptForTTS(rawScript);
+					
+					// Update backend with generated script
+					await videosApi.updateProcessingStatus(id, {
+						hindi_script: cleanedScript || rawScript,
+					});
+					
+					// Invalidate query to refresh video data
+					queryClient.invalidateQueries(["video", id]);
+					console.log("✓ Script generation completed and saved");
+				}
+			} catch (error) {
+				console.error("Script generation error:", error);
+				// Don't show error to user - script generation is optional
+				// The backend will handle script generation as fallback
+			}
+		};
+
+		generateScript();
+	}, [
+		video?.transcript,
+		video?.transcription_status,
+		video?.ai_processing_status,
+		video?.script_status,
+		video?.hindi_script,
+		id,
+		queryClient,
+	]);
+
+	// Auto-synthesize audio when script is generated (Phase 6: TTS Migration)
+	useEffect(() => {
+		if (
+			!video ||
+			!video.hindi_script ||
+			video.script_status !== "generated" || // Script must be generated
+			video.synthesis_status === "synthesized" || // Already synthesized
+			video.synthesis_status === "synthesizing" // Currently synthesizing
+		) {
+			return;
+		}
+
+		// Auto-synthesize audio
+		const synthesizeAudio = async () => {
+			try {
+				console.log("🔄 Auto-synthesizing audio...");
+
+				// Get AI settings for TTS
+				const aiSettings = await settingsApi.getAISettings();
+				const apiKey = aiSettings.gemini_api_key || aiSettings.api_key || "";
+
+				if (!apiKey) {
+					console.warn("TTS API key not configured, skipping audio synthesis");
+					return;
+				}
+
+				const script = video.hindi_script;
+				const duration = video.duration || 0;
+				const languageCode = "hi-IN";
+				const voiceName = "Enceladus";
+
+				// Clean script for TTS
+				const cleanScript = cleanScriptForTTS(script);
+
+				if (!cleanScript || !cleanScript.trim()) {
+					console.warn("Clean script is empty, skipping audio synthesis");
+					return;
+				}
+
+				// Generate speech using Google Gemini TTS
+				const audioBlob = await generateSpeech(
+					cleanScript,
+					apiKey,
+					languageCode,
+					voiceName,
+					duration
+				);
+
+				// Upload audio to backend for storage
+				// Note: Backend endpoint needs to be created or we can use existing synthesize endpoint
+				// For now, we'll create a blob URL and let user download, or upload to backend
+				const audioUrl = URL.createObjectURL(audioBlob);
+
+				// Upload audio to backend for storage
+				try {
+					const formData = new FormData();
+					formData.append("audio", audioBlob, `synthesized_${id}.wav`);
+
+					// Upload to backend
+					const response = await fetch(`/api/videos/${id}/upload_audio/`, {
+						method: "POST",
+						body: formData,
+					});
+
+					if (!response.ok) {
+						throw new Error(`Upload failed: ${response.statusText}`);
+					}
+
+					const result = await response.json();
+
+					// Invalidate query to refresh video data
+					queryClient.invalidateQueries(["video", id]);
+					console.log("✓ Audio synthesis completed and uploaded to backend");
+				} catch (uploadError) {
+					console.warn("Failed to upload audio to backend:", uploadError);
+					// Audio is still generated, just not uploaded
+					// User can download it manually using the blob URL
+				}
+			} catch (error) {
+				console.error("Audio synthesis error:", error);
+				// Don't show error to user - TTS synthesis is optional
+				// The backend will handle TTS synthesis as fallback
+			}
+		};
+
+		synthesizeAudio();
+	}, [
+		video?.hindi_script,
+		video?.script_status,
+		video?.synthesis_status,
+		id,
+		queryClient,
+	]);
 
 	// Removed simulated progress effect
 

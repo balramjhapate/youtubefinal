@@ -181,6 +181,12 @@ export const videosApi = {
     const response = await apiClient.post(`/videos/${id}/retry/google-sheets-sync/`);
     return response.data;
   },
+
+  // Update video processing status (for frontend-processed data)
+  updateProcessingStatus: async (id, data) => {
+    const response = await apiClient.post(`/videos/${id}/update_script/`, data);
+    return response.data;
+  },
 };
 
 export default videosApi;
