@@ -7,7 +7,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('downloader', '0022_add_cloudinary_google_sheets'),  # Latest migration
+        ('downloader', '0028_add_multi_provider_support'),
     ]
 
     operations = [

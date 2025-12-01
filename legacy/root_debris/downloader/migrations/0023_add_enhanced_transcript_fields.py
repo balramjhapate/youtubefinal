@@ -6,7 +6,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('downloader', '0003_add_visual_transcript_fields'),
+        ('downloader', '0022_add_cloudinary_google_sheets'),
     ]
 
     operations = [
