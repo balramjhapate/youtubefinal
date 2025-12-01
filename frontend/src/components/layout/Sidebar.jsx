@@ -4,7 +4,6 @@ import {
   Video,
   Settings,
   X,
-  Mic,
   FileText,
 } from 'lucide-react';
 import { useStore } from '../../store';
@@ -12,7 +11,6 @@ import { useStore } from '../../store';
 const navItems = [
   { path: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { path: '/videos', icon: Video, label: 'Videos' },
-  { path: '/voice-cloning', icon: Mic, label: 'Voice Cloning' },
   { path: '/settings', icon: Settings, label: 'Settings' },
 ];
 

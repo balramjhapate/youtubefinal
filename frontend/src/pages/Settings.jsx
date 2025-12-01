@@ -399,7 +399,7 @@ export function Settings() {
               </button>
             </div>
             <p className="mt-1 text-xs text-gray-500">
-              Used for TTS generation (Google TTS), script enhancement
+              Used for TTS generation (Gemini TTS), script enhancement
             </p>
           </div>
 

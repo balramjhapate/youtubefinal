@@ -1061,11 +1061,11 @@ export function VideoDetail() {
 				processAIMutation.mutate();
 				break;
 			case "synthesis":
-				// Use Google TTS (no voice profile required)
+				// Use Gemini TTS (no voice profile required)
 				try {
 					startProcessing(id, "synthesis");
-					// Call synthesize without voice profile - backend will use Google TTS
-					await videosApi.synthesize(id, null);
+					// Call synthesize - backend will use Gemini TTS
+					await videosApi.synthesize(id);
 					showSuccess(
 						"Synthesis Retried",
 						"Synthesis has been retried.",
@@ -2055,25 +2055,6 @@ export function VideoDetail() {
 									</span>
 									<span className="text-xs text-gray-500">
 										Default (5.0)
-									</span>
-								</div>
-							)}
-							{video.voice_profile ? (
-								<div className="flex items-center justify-between">
-									<span className="text-xs text-gray-400">
-										Voice Profile
-									</span>
-									<span className="text-xs text-green-300">
-										✓ Assigned
-									</span>
-								</div>
-							) : (
-								<div className="flex items-center justify-between">
-									<span className="text-xs text-gray-400">
-										Voice Profile
-									</span>
-									<span className="text-xs text-gray-500">
-										Default
 									</span>
 								</div>
 							)}
@@ -3630,7 +3611,7 @@ export function VideoDetail() {
 									<summary className="flex items-center justify-between p-3 cursor-pointer hover:bg-white/10 transition-colors">
 										<span className="font-medium flex items-center gap-2 text-sm">
 											<Brain size={16} className="text-yellow-400" />
-											Google TTS Prompting Tips & Markup Guide
+											Gemini TTS Prompting Tips & Markup Guide
 										</span>
 										<span className="text-xs text-white/50 group-open:rotate-180 transition-transform">▼</span>
 									</summary>

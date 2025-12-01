@@ -31,12 +31,6 @@ export const useStore = create(persist((set, get) => ({
   openSettingsModal: () => set({ settingsModalOpen: true }),
   closeSettingsModal: () => set({ settingsModalOpen: false }),
 
-  // Video detail modal
-  videoDetailModalOpen: false,
-  selectedVideoId: null,
-  openVideoDetail: (id) => set({ videoDetailModalOpen: true, selectedVideoId: id }),
-  closeVideoDetail: () => set({ videoDetailModalOpen: false, selectedVideoId: null }),
-
   // Processing states tracking
   processingVideos: {}, // { videoId: { type: 'download'|'transcribe'|'processAI', progress } }
   startProcessing: (videoId, type) => set((state) => ({

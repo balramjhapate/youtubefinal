@@ -5,7 +5,6 @@ import {
 	Dashboard,
 	Videos,
 	Settings,
-	VoiceCloning,
 	VideoDetail,
 } from "./pages";
 
@@ -30,10 +29,6 @@ function App() {
 						<Route path="/videos" element={<Videos />} />
 						<Route path="/videos/:id" element={<VideoDetail />} />
 						<Route path="/settings" element={<Settings />} />
-						<Route
-							path="/voice-cloning"
-							element={<VoiceCloning />}
-						/>
 					</Routes>
 				</Layout>
 			</BrowserRouter>

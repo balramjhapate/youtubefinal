@@ -59,22 +59,12 @@ export const videosApi = {
     return response.data;
   },
 
-  // Synthesize audio (uses Google TTS, profileId is optional)
-  synthesize: async (id, profileId = null, text = null) => {
-    const payload = {};
-    if (profileId) payload.profile_id = profileId;
-    if (text) payload.text = text;
-    const response = await apiClient.post(`/videos/${id}/synthesize/`, payload);
+  // Synthesize audio (uses Gemini TTS)
+  synthesize: async (id) => {
+    const response = await apiClient.post(`/videos/${id}/synthesize/`);
     return response.data;
   },
 
-  // Update voice profile for video
-  updateVoiceProfile: async (id, profileId) => {
-    const response = await apiClient.patch(`/videos/${id}/`, {
-      voice_profile: profileId,
-    });
-    return response.data;
-  },
 
   // Manually trigger Cloudinary upload and Google Sheets sync
   uploadAndSync: async (id) => {
