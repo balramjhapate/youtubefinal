@@ -23,6 +23,7 @@ class ExtractVideoRequest extends FormRequest
     {
         return [
             'url' => 'required|url|max:500',
+            'source' => 'nullable|string|in:xiaohongshu,youtube,facebook,instagram,vimeo,local',
         ];
     }
 }

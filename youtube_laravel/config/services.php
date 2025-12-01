@@ -50,4 +50,12 @@ return [
         'credentials_path' => env('GOOGLE_TTS_CREDENTIALS_PATH'),
     ],
 
+    'openai' => [
+        'api_key' => env('OPENAI_API_KEY'),
+        'organization' => env('OPENAI_ORGANIZATION'),
+        'whisper' => [
+            'model' => env('OPENAI_WHISPER_MODEL', 'whisper-1'),
+        ],
+    ],
+
 ];

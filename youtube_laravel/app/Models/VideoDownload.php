@@ -3,7 +3,6 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Casts\Attribute;
 
 class VideoDownload extends Model
 {
@@ -26,6 +25,7 @@ class VideoDownload extends Model
         'step_upload_sync_status', 'transcript_optimized',
         'transcript_clean_script', 'visual_analysis',
         'synthesized_audio_path', 'synthesized_at', 'synthesis_error',
+        'final_video_path',
     ];
 
     protected function casts(): array

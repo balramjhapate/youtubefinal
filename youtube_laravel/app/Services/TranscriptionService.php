@@ -15,11 +15,17 @@ class TranscriptionService
 
     private bool $ncaEnabled;
 
+    private ?string $openaiApiKey;
+
+    private bool $openaiEnabled;
+
     public function __construct()
     {
         $this->ncaApiUrl = config('services.nca.api_url');
         $this->ncaApiKey = config('services.nca.api_key');
         $this->ncaEnabled = config('services.nca.enabled', false);
+        $this->openaiApiKey = config('services.openai.api_key');
+        $this->openaiEnabled = ! empty($this->openaiApiKey);
     }
 
     /**
@@ -43,7 +49,12 @@ class TranscriptionService
             $transcriptResult = $this->transcribeViaNCA($video);
         }
 
-        // Step 2: Fallback to local Whisper if NCA fails
+        // Step 2: Try OpenAI Whisper API if NCA fails
+        if ((! $transcriptResult || $transcriptResult['status'] !== 'success') && $this->openaiEnabled) {
+            $transcriptResult = $this->transcribeViaOpenAIWhisper($video);
+        }
+
+        // Step 3: Fallback to local Whisper if APIs fail
         if (! $transcriptResult || $transcriptResult['status'] !== 'success') {
             $transcriptResult = $this->transcribeViaWhisper($video);
         }
@@ -113,9 +124,6 @@ class TranscriptionService
                 }
             }
 
-            // Option 2: Use Whisper API (if available)
-            // return $this->transcribeViaWhisperAPI($video);
-
         } catch (\Exception $e) {
             Log::error('Whisper transcription error: '.$e->getMessage());
         }
@@ -124,6 +132,35 @@ class TranscriptionService
             'status' => 'error',
             'error' => 'Whisper transcription failed',
         ];
+    }
+
+    private function transcribeViaOpenAIWhisper(VideoDownload $video): array
+    {
+        try {
+            $filePath = Storage::disk('public')->path($video->local_file);
+            $model = config('services.openai.whisper.model', 'whisper-1');
+
+            // Use OpenAI PHP SDK
+            $client = \OpenAI::client($this->openaiApiKey);
+            $response = $client->audio()->transcriptions()->create([
+                'model' => $model,
+                'file' => fopen($filePath, 'r'),
+                'response_format' => 'text',
+            ]);
+
+            return [
+                'status' => 'success',
+                'text' => $response,
+                'language' => 'auto', // OpenAI Whisper detects automatically
+            ];
+        } catch (\Exception $e) {
+            Log::error('OpenAI Whisper transcription error: '.$e->getMessage());
+
+            return [
+                'status' => 'error',
+                'error' => 'OpenAI Whisper API failed: '.$e->getMessage(),
+            ];
+        }
     }
 
     /**
