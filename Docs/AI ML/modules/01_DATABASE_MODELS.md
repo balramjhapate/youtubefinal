@@ -472,6 +472,7 @@ class VideoThumbnail(models.Model):
 
 ```bash
 cd backend
+source venv/bin/activate
 python manage.py makemigrations downloader
 python manage.py migrate
 ```

@@ -47,7 +47,7 @@ echo "========================================="
 echo ""
 
 # Navigate to Django project
-cd /Volumes/Data/WebSites/youtubefinal/legacy/root_debris
+cd /Volumes/Data/WebSites/youtubefinal/backend
 
 # Verify TTS is available
 python3 manage.py shell -c "from downloader.xtts_service import TTS_AVAILABLE; print(f'TTS Available: {TTS_AVAILABLE}')"

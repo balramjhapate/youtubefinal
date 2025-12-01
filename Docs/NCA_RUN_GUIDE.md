@@ -64,7 +64,7 @@ export NCA_API_ENABLED="true"
 
 **Option B: Edit settings.py**
 ```python
-# rednote_project/settings.py
+# settings.py (in backend/)
 NCA_API_URL = 'http://localhost:8080'
 NCA_API_KEY = 'your_api_key_here'
 NCA_API_ENABLED = True

@@ -21,7 +21,7 @@ If you have Python 3.12+, you need to install Python 3.11 or 3.10.
 
 ```bash
 # Navigate to your project
-cd /Volumes/Data/WebSites/youtubefinal/legacy/root_debris
+cd /Volumes/Data/WebSites/youtubefinal/backend
 
 # Install Coqui TTS
 pip3 install TTS
@@ -51,7 +51,7 @@ sudo apt install python3.11 python3.11-venv
 
 ```bash
 # Navigate to project root
-cd /Volumes/Data/WebSites/youtubefinal/legacy/root_debris
+cd /Volumes/Data/WebSites/youtubefinal/backend
 
 # Create virtual environment with Python 3.11
 python3.11 -m venv venv_tts
@@ -72,7 +72,7 @@ pip install -r requirements.txt
 #### Step 3: Always Activate Virtual Environment Before Running
 
 ```bash
-cd /Volumes/Data/WebSites/youtubefinal/legacy/root_debris
+cd /Volumes/Data/WebSites/youtubefinal/backend
 source venv_tts/bin/activate
 python manage.py runserver
 ```
@@ -84,7 +84,7 @@ python manage.py runserver
 After installing, verify TTS is working:
 
 ```bash
-cd /Volumes/Data/WebSites/youtubefinal/legacy/root_debris
+cd /Volumes/Data/WebSites/youtubefinal/backend
 
 python3 manage.py shell -c "from downloader.xtts_service import TTS_AVAILABLE; print(f'TTS Available: {TTS_AVAILABLE}')"
 ```
@@ -143,7 +143,7 @@ pip3 install torch torchvision torchaudio --index-url https://download.pytorch.o
 Once installed, test TTS generation:
 
 ```bash
-cd /Volumes/Data/WebSites/youtubefinal/legacy/root_debris
+cd /Volumes/Data/WebSites/youtubefinal/backend
 
 python3 manage.py shell
 ```
@@ -230,7 +230,7 @@ pip3 install TTS
 python3 -c "from TTS.api import TTS; print('TTS OK')"
 
 # Check in Django
-cd /Volumes/Data/WebSites/youtubefinal/legacy/root_debris
+cd /Volumes/Data/WebSites/youtubefinal/backend
 python3 manage.py shell -c "from downloader.xtts_service import TTS_AVAILABLE; print(TTS_AVAILABLE)"
 ```
 
