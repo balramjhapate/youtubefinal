@@ -35,4 +35,14 @@ return [
         ],
     ],
 
+    'nca' => [
+        'api_url' => env('NCA_API_URL', 'https://api.nca.com'),
+        'api_key' => env('NCA_API_KEY'),
+        'enabled' => env('NCA_ENABLED', false),
+    ],
+
+    'gemini' => [
+        'api_key' => env('GEMINI_API_KEY'),
+    ],
+
 ];
