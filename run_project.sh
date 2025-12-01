@@ -121,8 +121,8 @@ fi
 
 # Install Python dependencies
 log_info "Setting up Python environment..."
-cd legacy/root_debris || {
-    log_error "Failed to change directory to legacy/root_debris"
+cd backend || {
+    log_error "Failed to change directory to backend"
     log_error "Current directory: $(pwd)"
     exit 1
 }
@@ -503,8 +503,8 @@ fi
 
 # Start Django Backend
 log_info "Starting Django Backend..."
-cd legacy/root_debris || {
-    log_error "Failed to change directory to legacy/root_debris"
+cd backend || {
+    log_error "Failed to change directory to backend"
     exit 1
 }
 source venv/bin/activate || {

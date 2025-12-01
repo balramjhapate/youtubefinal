@@ -13,10 +13,22 @@ A Django-based video download and processing system for Xiaohongshu (RedNote) vi
 
 ## Project Structure
 
-The project is organized into two main components:
+The project is organized into the following components:
 
--   `backend/`: Django application (API, Database, Video Processing)
+### Active Components
+
+-   `backend/`: **Active Django Backend** (API, Database, Video Processing)
+    - This is the currently running backend with all features
+    - Database: `backend/db.sqlite3`
+    - Media files: `backend/media/`
 -   `frontend/`: React application (User Interface)
+
+### Other Components
+
+-   `archived_backends/`: Archived/unused backend versions
+-   `youtube_laravel/`: Separate Laravel project (PHP-based, not currently integrated)
+
+**Note**: The backend is located in `backend/`. The `run_project.sh` script automatically uses the correct location.
 
 ## Quick Start
 
@@ -39,6 +51,7 @@ If you prefer to run them separately:
 **Backend:**
 ```bash
 cd backend
+source venv/bin/activate
 python3 manage.py runserver
 ```
 
@@ -58,7 +71,7 @@ npm run dev
 ## Configuration
 
 ### Backend Settings
-All backend settings are in `backend/rednote_project/settings.py`.
+All backend settings are in `backend/settings.py`.
 
 ### Frontend Settings
 Frontend configuration is in `frontend/vite.config.js`.
@@ -67,6 +80,7 @@ Frontend configuration is in `frontend/vite.config.js`.
 
 -   **Setup Issues**: See `NCA_TOOLKIT_SETUP.md`
 -   **Integration Guide**: See `INTEGRATION_SUMMARY.md`
+-   **Backend Structure**: See `BACKEND_STRUCTURE_ANALYSIS.md` for detailed explanation of project structure
 
 ---
 
