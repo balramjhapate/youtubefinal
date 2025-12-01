@@ -10,7 +10,7 @@ from django.conf import settings
 from . import whisper_transcribe
 from .nca_toolkit_client import get_nca_client
 from ..pipeline.utils import extract_audio_from_video, translate_text, _call_gemini_api, _call_openai_api
-from ..models import AIProviderSettings
+from ..model import AIProviderSettings
 import os
 import json
 import re

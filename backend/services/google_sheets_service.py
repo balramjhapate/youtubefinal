@@ -17,7 +17,7 @@ except ImportError:
     build = None
     HttpError = Exception
 
-from ..models import GoogleSheetsSettings, AIProviderSettings
+from ..model import GoogleSheetsSettings, AIProviderSettings
 from django.utils import timezone
 import re
 

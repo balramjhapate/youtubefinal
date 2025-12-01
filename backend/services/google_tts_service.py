@@ -67,7 +67,7 @@ class GoogleTTSService:
             
             # Priority 2: Try to get from Google Sheets settings in database
             try:
-                from ..models import GoogleSheetsSettings
+                from ..model import GoogleSheetsSettings
                 sheets_settings = GoogleSheetsSettings.objects.first()
                 if sheets_settings and sheets_settings.credentials_json:
                     credentials_dict = json.loads(sheets_settings.credentials_json)

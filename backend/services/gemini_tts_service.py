@@ -30,7 +30,7 @@ class GeminiTTSService:
         if not self.api_key:
             # Get API key from AIProviderSettings
             try:
-                from ..models import AIProviderSettings
+                from ..model import AIProviderSettings
                 settings_obj = AIProviderSettings.objects.first()
                 if settings_obj and settings_obj.api_key:
                     self.api_key = settings_obj.api_key

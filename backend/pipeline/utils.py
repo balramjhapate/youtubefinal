@@ -264,7 +264,7 @@ def translate_text_with_ai(text, target='hi', source='auto'):
             # Continue with AI translation below
     
     try:
-        from ..models import AIProviderSettings
+        from ..model import AIProviderSettings
         
         # Get AI provider settings
         settings_obj = AIProviderSettings.objects.first()
@@ -1050,7 +1050,7 @@ def process_video_with_ai(video_download):
             }
         
         # Step 3: Generate summary using AI Provider if available
-        from ..models import AIProviderSettings
+        from ..model import AIProviderSettings
         
         ai_summary = ""
         tags = []
@@ -2117,7 +2117,7 @@ def generate_audio_prompt(video_download):
     """
     try:
         # Import AIProviderSettings model
-        from ..models import AIProviderSettings
+        from ..model import AIProviderSettings
         
         # Check if video has transcript
         if not video_download.transcript:
@@ -3343,7 +3343,7 @@ def enhance_script_with_tts_markup(clean_script):
     
     try:
         import google.generativeai as genai
-        from ..models import AIProviderSettings
+        from ..model import AIProviderSettings
         
         # Get Gemini API key
         settings_obj = AIProviderSettings.objects.first()
@@ -3587,7 +3587,7 @@ def generate_video_metadata(video_download):
         }
     """
     try:
-        from ..models import AIProviderSettings
+        from ..model import AIProviderSettings
         from django.utils import timezone
         
         # Check if AI provider is configured
@@ -3811,7 +3811,7 @@ def generate_hindi_script(video_download):
         }
     """
     try:
-        from ..models import AIProviderSettings
+        from ..model import AIProviderSettings
         from django.utils import timezone
         
         # Check if AI provider is configured

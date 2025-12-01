@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from ..models import VideoDownload, AIProviderSettings, ClonedVoice, CloudinarySettings, GoogleSheetsSettings, WatermarkSettings
+from ..model import VideoDownload, AIProviderSettings, ClonedVoice, CloudinarySettings, GoogleSheetsSettings, WatermarkSettings
 
 
 class AIProviderSettingsSerializer(serializers.ModelSerializer):
