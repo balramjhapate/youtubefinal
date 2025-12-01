@@ -1521,7 +1521,7 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def synthesize(self, request, pk=None):
-        """Synthesize audio using Google TTS (Gemini TTS) - no voice profile required"""
+        """Synthesize audio using Gemini TTS - no voice profile required"""
         video = self.get_object()
         
         # Check if video has Hindi script or transcript
@@ -1557,7 +1557,7 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                     "error": "No script text available for synthesis"
                 }, status=status.HTTP_400_BAD_REQUEST)
             
-            # Use Gemini TTS service (Google TTS)
+            # Use Gemini TTS service
             from ..services.gemini_tts_service import GeminiTTSService, GEMINI_TTS_AVAILABLE
             import tempfile
             import os
@@ -1654,7 +1654,7 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
             
             return Response({
                 "status": "success",
-                "message": "Audio synthesized successfully using Google TTS (Gemini)",
+                "message": "Audio synthesized successfully using Gemini TTS",
                 "synthesized_audio_url": request.build_absolute_uri(video.synthesized_audio.url) if video.synthesized_audio else None
             })
             
