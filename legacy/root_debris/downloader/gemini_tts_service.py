@@ -112,7 +112,16 @@ class GeminiTTSService:
                     {
                         "parts": [
                             {
-                                "text": f"{style_prompt}\n\nRead the following text with all markup tags:\n\n{text}"
+                                "text": f"""{style_prompt}
+
+**READ THIS TEXT EXACTLY AS WRITTEN:**
+- Follow ALL markup tags precisely as documented above.
+- **PAUSE TAGS (MODE 4) - CRITICAL:** When you see [short pause], STOP SPEAKING for ~250ms (0.25 seconds) of complete silence. When you see [medium pause], STOP SPEAKING for ~500ms (0.5 seconds) of complete silence. When you see [long pause], STOP SPEAKING for ~1000ms+ (1+ seconds) of complete silence.
+- **DO NOT SPEAK THROUGH PAUSE TAGS. They insert silence into the audio - you must stop speaking completely.**
+
+Now read this text with ALL markup tags followed precisely:
+
+{text}"""
                             }
                         ]
                     }
@@ -319,10 +328,11 @@ class GeminiTTSService:
 
     def _generate_comprehensive_style_prompt(self, text, speed_instruction=""):
         """
-        Generate a comprehensive style prompt based on content analysis and TTS best practices.
+        Generate a comprehensive style prompt based on Google's TTS best practices.
         Incorporates the three levers: Style Prompt, Text Content alignment, and Markup Tags.
+        Based on: https://docs.cloud.google.com/text-to-speech/docs/gemini-tts
         """
-        # Analyze text content to determine emotional tone and context
+        # Analyze text content to determine emotional tone and context (Lever 2: Text Content)
         text_lower = text.lower()
         
         # Fear/suspense keywords
@@ -333,21 +343,20 @@ class GeminiTTSService:
         exciting_keywords = ['देखो', 'वाह', 'अरे', 'मजेदार', 'रोमांचक', 'कमाल', 'जादू', 'अद्भुत', 'शानदार', 'बेहतरीन']
         has_exciting = any(keyword in text_lower for keyword in exciting_keywords)
         
-        # Determine primary tone
+        # Determine primary tone and create specific, detailed style prompt (Lever 1: Style Prompt)
         if has_fear:
             tone_description = "suspenseful, dramatic, and engaging"
-            emotional_context = "narrating a suspenseful story with moments of tension and drama"
+            emotional_context = "narrating a suspenseful story with moments of tension and drama in Hindi"
             specific_guidance = """
-- Use a dramatic, slightly tense tone when describing scary or suspenseful moments (राक्षस, अंधेरा, डर)
+- Use a dramatic, slightly tense tone when describing scary or suspenseful moments
 - Use [whispering] tags strategically to create atmosphere for fear elements - whisper quietly and mysteriously
 - Use [sigh] for relief, tension release, or dramatic pauses
 - Maintain energy and engagement throughout - keep listeners on edge but not overwhelmed
-- This is entertainment content, so balance excitement with appropriate pacing
 - When text mentions fear elements, let your voice reflect genuine tension and drama
 - Use [long pause] before revealing important or scary information for dramatic effect"""
         elif has_exciting:
             tone_description = "energetic, enthusiastic, and vivid"
-            emotional_context = "an engaging, energetic explainer bringing scenes to life"
+            emotional_context = "an engaging, energetic explainer bringing scenes to life in Hindi"
             specific_guidance = """
 - Speak in a friendly, vivid, and enthusiastic tone throughout
 - Be genuinely enthusiastic about scenes and actions - let your excitement show
@@ -357,57 +366,99 @@ class GeminiTTSService:
 - Use [laughing] to react to humorous or delightful moments in the story"""
         else:
             tone_description = "friendly, engaging, and descriptive"
-            emotional_context = "a friendly narrator explaining content in an engaging way"
+            emotional_context = "a friendly narrator explaining content in an engaging way in Hindi"
             specific_guidance = """
 - Speak in a friendly, vivid, and descriptive tone
 - Be enthusiastic about scenes and actions - bring the content to life
 - Use natural pacing with appropriate pauses for clarity
 - Maintain engagement throughout - keep listeners interested"""
         
-        # Comprehensive style prompt incorporating all three levers
-        comprehensive_prompt = f"""You are {emotional_context} in Hindi. Create engaging, natural-sounding audio.
+        # Comprehensive style prompt incorporating all three levers (Google's best practices)
+        comprehensive_prompt = f"""You are {emotional_context}. Create engaging, natural-sounding audio.
 
-**PRIMARY STYLE:**
-1. **Tone:** {tone_description}. Natural, human-like, emotionally consistent.
-2. **Content:** Match emotional delivery to the meaning (fear=tense, excitement=energetic).
-3. **Markup:** Follow ALL tags ([sigh], [laughing], [short pause]) precisely.
+**THE THREE LEVERS OF SPEECH CONTROL (All must be aligned):**
+1. **Style Prompt (Primary Driver):** {tone_description}. Natural, human-like, emotionally consistent.
+2. **Text Content:** The semantic meaning of words. Match emotional delivery to the meaning (fear=tense, excitement=energetic).
+3. **Markup Tags:** Bracketed tags for localized actions or style modifications. They work in concert with style and content.
 
-**MARKUP TAGS:**
-- [sigh], [laughing], [uhm]: Insert actual sounds.
-- [sarcasm], [robotic], [shouting], [whispering], [extremely fast]: Modify delivery style.
-- [short pause] (~250ms), [medium pause] (~500ms), [long pause] (~1000ms+): Insert silence.
+**MARKUP TAG GUIDE (Based on Google's Official Documentation):**
 
-**STRATEGY:**
-- Align Tone, Content, and Tags.
-- Be genuine: If text is scary, sound scared.
-- **Respect Tags Precisely**: Actually sigh/laugh/whisper when tagged.
-- Maintain natural flow.
+**MODE 1: Non-speech sounds (High Reliability)**
+- [sigh] - Replaced by an audible sigh sound. The tag itself is NOT spoken. Emotional quality influenced by the prompt.
+- [laughing] - Replaced by an audible laugh. For best results, use with emotionally rich text. React naturally.
+- [uhm] - Replaced by a hesitation sound. Useful for creating natural, conversational feel.
+
+**MODE 2: Style modifiers (High Reliability)**
+- [sarcasm] - Imparts sarcastic tone on subsequent phrase. Powerful modifier - abstract concepts can steer delivery.
+- [robotic] - Makes subsequent speech sound robotic. Effect can extend across entire phrase.
+- [shouting] - Increases volume of subsequent speech. Most effective when paired with matching style prompt and text that implies yelling.
+- [whispering] - Decreases volume of subsequent speech. Best results when style prompt is also explicit (e.g., "whisper this part quietly").
+- [extremely fast] - Increases speed of subsequent speech. Ideal for disclaimers or fast-paced dialogue.
+
+**MODE 3: Vocalized markup (WARNING - Tag is spoken as word)**
+- [scared], [curious], [bored] - These tags are SPOKEN as words AND influence tone. 
+- **WARNING:** Because the tag itself is spoken, this is likely undesired for most use cases. Prefer using Style Prompt to set emotional tones instead.
+
+**MODE 4: Pacing and pauses (High Reliability - CRITICAL)**
+- [short pause] - Inserts brief pause, similar to a comma (~250ms). Use to separate clauses or list items.
+- [medium pause] - Inserts standard pause, similar to a sentence break (~500ms). Effective for separating distinct sentences or thoughts.
+- [long pause] - Inserts significant pause for dramatic effect (~1000ms+). Use for dramatic timing. Avoid overuse.
+- **CRITICAL: Pause tags insert SILENCE into the audio. When you encounter a pause tag, you MUST STOP SPEAKING IMMEDIATELY and remain COMPLETELY SILENT for the specified duration. DO NOT SPEAK THROUGH PAUSE TAGS.**
+
+**KEY STRATEGIES FOR RELIABLE RESULTS:**
+- Align all three levers: Ensure Style Prompt, Text Content, and Markup Tags are semantically consistent.
+- Use emotionally rich text: Don't rely on prompts and tags alone. Give rich, descriptive text to work with.
+- Write specific, detailed prompts: More specific prompts = more reliable results.
+- Respect markup tags precisely: Follow ALL tags exactly as written in the text.
 
 {specific_guidance}
 
 **FINAL INSTRUCTIONS:**
-- Read text exactly as written, following tags precisely.
-- Match emotional delivery to content.
-- {speed_instruction if speed_instruction else "Speak at a natural, moderate pace"}"""
+- Read text exactly as written, following ALL markup tags precisely.
+- **PAUSE TAGS ARE MANDATORY:** When you encounter [short pause], [medium pause], or [long pause] - STOP SPEAKING IMMEDIATELY and remain COMPLETELY SILENT for the specified duration (~250ms, ~500ms, ~1000ms+ respectively).
+- **DO NOT SPEAK THROUGH PAUSES. DO NOT CONTINUE TALKING. PAUSE TAGS = COMPLETE SILENCE.**
+- Match emotional delivery to content meaning.
+- {speed_instruction if speed_instruction else "Speak at a natural, moderate pace"}
+- Maintain natural flow while respecting all markup tags."""
         
         return comprehensive_prompt
     
     def _enhance_style_prompt(self, provided_prompt, speed_instruction=""):
         """
         Enhance a provided style prompt with markup tag guidance and speed instructions.
+        Based on Google's official TTS documentation.
         """
         markup_guidance = """
 
-**IMPORTANT - Markup Tag Behavior:**
-- [sigh], [laughing], [uhm] - These are replaced by actual sounds (sigh, laugh, hesitation). React naturally.
-- [whispering], [shouting], [sarcasm], [robotic] - These modify your delivery style. Follow them precisely.
-- [short pause], [medium pause], [long pause] - These insert silence (~250ms, ~500ms, ~1000ms+ respectively). Use them for rhythm control.
-- Read ALL markup tags in the text and follow them exactly as written.
-- Markup tags work in concert with your style - align them with your overall tone."""
+**MARKUP TAG GUIDE (Based on Google's Official Documentation):**
+
+**MODE 1: Non-speech sounds (High Reliability)**
+- [sigh], [laughing], [uhm] - These are replaced by actual sounds (sigh, laugh, hesitation). The tag itself is NOT spoken. React naturally.
+
+**MODE 2: Style modifiers (High Reliability)**
+- [sarcasm], [robotic], [shouting], [whispering], [extremely fast] - These modify your delivery style. Follow them precisely. Most effective when paired with matching style prompt and emotionally rich text.
+
+**MODE 3: Vocalized markup (WARNING)**
+- [scared], [curious], [bored] - These tags are SPOKEN as words AND influence tone. WARNING: The tag itself is spoken, which is likely undesired. Prefer using Style Prompt to set emotional tones instead.
+
+**MODE 4: Pacing and pauses (High Reliability - CRITICAL)**
+- [short pause] - Inserts brief pause (~250ms). Similar to a comma. Use to separate clauses.
+- [medium pause] - Inserts standard pause (~500ms). Similar to a sentence break. Effective for separating distinct thoughts.
+- [long pause] - Inserts significant pause (~1000ms+). Use for dramatic timing. Avoid overuse.
+- **CRITICAL: Pause tags insert SILENCE into the audio. When you encounter a pause tag, you MUST STOP SPEAKING IMMEDIATELY and remain COMPLETELY SILENT for the specified duration. DO NOT SPEAK THROUGH PAUSE TAGS.**
+
+**KEY STRATEGIES:**
+- Align all three levers: Style Prompt, Text Content, and Markup Tags must be semantically consistent.
+- Use emotionally rich text for best results.
+- Respect markup tags precisely: Follow ALL tags exactly as written.
+- **PAUSE TAGS ARE MANDATORY COMMANDS, NOT SUGGESTIONS. THEY REQUIRE COMPLETE SILENCE.**"""
         
         enhanced = f"""{provided_prompt}{markup_guidance}
+
+**FINAL INSTRUCTIONS:**
 - {speed_instruction if speed_instruction else "Speak at a natural, moderate pace"}
-- Read the text exactly as written, following all markup tags precisely"""
+- Read the text exactly as written, following ALL markup tags precisely.
+- **CRITICAL: When you encounter [short pause], [medium pause], or [long pause] - STOP SPEAKING IMMEDIATELY and remain COMPLETELY SILENT for the specified duration (~250ms, ~500ms, ~1000ms+ respectively). DO NOT SPEAK THROUGH PAUSES.**"""
         
         return enhanced
 
