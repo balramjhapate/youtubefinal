@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Http\Requests\ExtractVideoRequest;
 use App\Jobs\ProcessAIJob;
+use App\Jobs\SynthesizeAudioJob;
 use App\Jobs\TranscribeVideoJob;
 use App\Models\VideoDownload;
 use App\Services\TranslationService;
@@ -136,5 +137,23 @@ class VideoController extends Controller
         ProcessAIJob::dispatch($video->id);
 
         return back()->with('message', 'AI processing started');
+    }
+
+    public function synthesize(VideoDownload $video, Request $request): RedirectResponse
+    {
+        if ($video->step_tts_synthesis_status === 'processing') {
+            return back()->withErrors(['error' => 'TTS synthesis already in progress']);
+        }
+
+        if (! $video->transcript_clean_script) {
+            return back()->withErrors(['error' => 'Clean script not found. Please complete transcription first.']);
+        }
+
+        $languageCode = $request->input('language_code', 'hi-IN');
+        $voiceName = $request->input('voice_name', 'hi-IN-Standard-A');
+
+        SynthesizeAudioJob::dispatch($video->id, $languageCode, $voiceName);
+
+        return back()->with('message', 'TTS synthesis started');
     }
 }

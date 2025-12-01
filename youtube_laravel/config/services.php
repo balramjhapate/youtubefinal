@@ -45,4 +45,9 @@ return [
         'api_key' => env('GEMINI_API_KEY'),
     ],
 
+    'google_tts' => [
+        'api_key' => env('GOOGLE_TTS_API_KEY'),
+        'credentials_path' => env('GOOGLE_TTS_CREDENTIALS_PATH'),
+    ],
+
 ];

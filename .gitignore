@@ -3,9 +3,16 @@
 *.pot
 *.pyc
 __pycache__/
-local_settings.py
+# local_settings.py
+# Database files
+*.sqlite3
+*.sqlite3-journal
+*.db
+*.db-journal
 db.sqlite3
 db.sqlite3-journal
+**/db.sqlite3
+**/db.sqlite3-journal
 media/
 videos/
 staticfiles/

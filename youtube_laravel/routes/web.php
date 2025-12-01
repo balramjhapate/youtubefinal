@@ -29,5 +29,7 @@ Route::post('/videos/{video}/transcribe', [\App\Http\Controllers\VideoController
     ->name('videos.transcribe');
 Route::post('/videos/{video}/process-ai', [\App\Http\Controllers\VideoController::class, 'processAI'])
     ->name('videos.process-ai');
+Route::post('/videos/{video}/synthesize', [\App\Http\Controllers\VideoController::class, 'synthesize'])
+    ->name('videos.synthesize');
 
 require __DIR__.'/settings.php';
