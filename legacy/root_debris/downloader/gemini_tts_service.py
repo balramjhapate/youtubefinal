@@ -142,12 +142,32 @@ class GeminiTTSService:
             url = f"{self.api_endpoint}?key={self.api_key}"
             
             logger.info(f"Generating TTS with Gemini TTS (voice: {voice_name}, language: {language_code})...")
-            response = requests.post(
-                url,
-                headers=headers,
-                json=payload,
-                timeout=120  # 2 minutes timeout for TTS generation
-            )
+            logger.info(f"Text length: {len(text)} characters, estimated duration: {video_duration}s")
+            
+            # Increase timeout for longer videos/scripts
+            # Base timeout: 60 seconds, add 2 seconds per second of video duration
+            base_timeout = 60
+            duration_timeout = int(video_duration * 2) if video_duration else 0
+            total_timeout = min(base_timeout + duration_timeout, 600)  # Max 10 minutes
+            
+            logger.info(f"Using timeout: {total_timeout} seconds for TTS generation")
+            
+            try:
+                response = requests.post(
+                    url,
+                    headers=headers,
+                    json=payload,
+                    timeout=(30, total_timeout)  # (connect timeout, read timeout)
+                )
+            except requests.exceptions.ReadTimeout as e:
+                logger.error(f"Gemini TTS API read timeout after {total_timeout} seconds")
+                raise Exception(f"TTS generation timed out after {total_timeout} seconds. The script may be too long. Try splitting the script or reducing video duration.")
+            except requests.exceptions.ConnectTimeout as e:
+                logger.error(f"Gemini TTS API connection timeout")
+                raise Exception(f"Could not connect to Gemini TTS API. Please check your internet connection and API key.")
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Gemini TTS API request error: {str(e)}")
+                raise Exception(f"TTS API request failed: {str(e)}")
             
             if response.status_code != 200:
                 error_data = response.json() if response.text else {}

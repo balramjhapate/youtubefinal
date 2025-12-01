@@ -982,6 +982,7 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                                 
                                 # Generate TTS audio using Gemini TTS
                                 print(f"Generating TTS with Gemini TTS (voice: {voice_name}, language: {language_code}, temp: {tts_temperature})...")
+                                tts_success = False
                                 try:
                                     service.generate_speech(
                                         text=clean_script,
@@ -989,57 +990,68 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                                         voice_name=voice_name,
                                         output_path=temp_audio_path,
                                         temperature=tts_temperature,
-                                        style_prompt=style_prompt
+                                        style_prompt=style_prompt,
+                                        video_duration=video.duration  # Pass video duration for timeout calculation
                                     )
+                                    tts_success = True
                                 except Exception as e:
                                     error_msg = f"TTS generation failed: {str(e)}"
                                     logger.error(error_msg, exc_info=True)
                                     video.synthesis_status = 'failed'
                                     video.synthesis_error = error_msg
                                     video.save()
-                                    raise  # Re-raise to be caught by outer exception handler
+                                    # Don't re-raise - continue with pipeline even if TTS fails
+                                    # The response will indicate partial success with a warning
+                                    print(f"✗ {error_msg}")
                                 
-                                # Check audio duration and adjust if needed
-                                if video.duration and os.path.exists(temp_audio_path):
-                                    from .utils import get_audio_duration, adjust_audio_duration
-                                    audio_duration = get_audio_duration(temp_audio_path)
-                                    if audio_duration:
-                                        duration_diff = abs(audio_duration - video.duration)
-                                        if duration_diff > 0.5:  # If difference is more than 0.5 seconds
-                                            print(f"Adjusting TTS audio duration: {audio_duration:.2f}s -> {video.duration:.2f}s")
-                                            adjusted_path = adjust_audio_duration(temp_audio_path, video.duration)
-                                            if adjusted_path and adjusted_path != temp_audio_path:
-                                                # If a new file was created, update temp_audio_path
-                                                if os.path.exists(temp_audio_path):
-                                                    os.unlink(temp_audio_path)
-                                                temp_audio_path = adjusted_path
-                                            elif not adjusted_path:
-                                                print(f"WARNING: Could not adjust audio duration, using original audio")
-                                        else:
-                                            print(f"✓ TTS audio duration ({audio_duration:.2f}s) matches video duration ({video.duration:.2f}s)")
-                                
-                                # Save audio file (Gemini TTS generates MP3)
-                                from django.core.files import File
-                                with open(temp_audio_path, 'rb') as f:
-                                    video.synthesized_audio.save(f"synthesized_audio_{video.pk}.mp3", File(f), save=False)
-                                
-                                video.synthesis_status = 'synthesized'
-                                video.synthesis_error = ''
-                                video.synthesized_at = timezone.now()
-                                video.save()
-                                
-                                # Clean up temp file
-                                if os.path.exists(temp_audio_path):
-                                    os.unlink(temp_audio_path)
-                                
-                                print(f"✓ Gemini TTS audio generated successfully for video {video.pk} (voice: {voice_name})")
+                                # Only proceed with saving audio if TTS succeeded
+                                if tts_success and os.path.exists(temp_audio_path):
+                                    # Check audio duration and adjust if needed
+                                    if video.duration:
+                                        from .utils import get_audio_duration, adjust_audio_duration
+                                        audio_duration = get_audio_duration(temp_audio_path)
+                                        if audio_duration:
+                                            duration_diff = abs(audio_duration - video.duration)
+                                            if duration_diff > 0.5:  # If difference is more than 0.5 seconds
+                                                print(f"Adjusting TTS audio duration: {audio_duration:.2f}s -> {video.duration:.2f}s")
+                                                adjusted_path = adjust_audio_duration(temp_audio_path, video.duration)
+                                                if adjusted_path and adjusted_path != temp_audio_path:
+                                                    # If a new file was created, update temp_audio_path
+                                                    if os.path.exists(temp_audio_path):
+                                                        os.unlink(temp_audio_path)
+                                                    temp_audio_path = adjusted_path
+                                                elif not adjusted_path:
+                                                    print(f"WARNING: Could not adjust audio duration, using original audio")
+                                            else:
+                                                print(f"✓ TTS audio duration ({audio_duration:.2f}s) matches video duration ({video.duration:.2f}s)")
+                                    
+                                    # Save audio file (Gemini TTS generates MP3)
+                                    from django.core.files import File
+                                    with open(temp_audio_path, 'rb') as f:
+                                        video.synthesized_audio.save(f"synthesized_audio_{video.pk}.mp3", File(f), save=False)
+                                    
+                                    video.synthesis_status = 'synthesized'
+                                    video.synthesis_error = ''
+                                    video.synthesized_at = timezone.now()
+                                    video.save()
+                                    
+                                    # Clean up temp file
+                                    if os.path.exists(temp_audio_path):
+                                        os.unlink(temp_audio_path)
+                                    
+                                    print(f"✓ Gemini TTS audio generated successfully for video {video.pk} (voice: {voice_name})")
+                                elif not tts_success:
+                                    # TTS failed, but we already set the error status above
+                                    print(f"⚠ TTS generation failed, continuing pipeline without audio")
                             except Exception as tts_error:
-                                error_msg = f"XTTS generation failed: {str(tts_error)}"
+                                error_msg = f"TTS generation failed: {str(tts_error)}"
                                 logger.error(error_msg, exc_info=True)
                                 video.synthesis_status = 'failed'
                                 video.synthesis_error = error_msg
                                 video.save()
                                 print(f"✗ {error_msg}")
+                                # Don't re-raise - continue with pipeline even if TTS fails
+                                # The response will indicate partial success
                     except Exception as e:
                         print(f"TTS generation error: {e}")
                         import traceback
@@ -1047,6 +1059,7 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                         video.synthesis_status = 'failed'
                         video.synthesis_error = str(e)
                         video.save()
+                        # Don't re-raise - continue with pipeline even if TTS fails
 
                 # Step 5: Remove audio from video and combine with new TTS audio
                 # ALWAYS use ffmpeg - it's more reliable than NCA Toolkit
@@ -1095,7 +1108,26 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                                         temp_no_audio_path
                                     ]
                                     
-                                    ffmpeg_result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                                    print(f"Running ffmpeg command: {' '.join(cmd)}")
+                                    try:
+                                        ffmpeg_result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                                    except subprocess.TimeoutExpired:
+                                        error_msg = "ffmpeg remove audio timed out after 5 minutes"
+                                        print(f"✗ {error_msg}")
+                                        video.synthesis_error = error_msg
+                                        video.save()
+                                        if os.path.exists(temp_no_audio_path):
+                                            os.unlink(temp_no_audio_path)
+                                        raise
+                                    except Exception as e:
+                                        error_msg = f"ffmpeg remove audio error: {str(e)}"
+                                        print(f"✗ {error_msg}")
+                                        video.synthesis_error = error_msg
+                                        video.save()
+                                        if os.path.exists(temp_no_audio_path):
+                                            os.unlink(temp_no_audio_path)
+                                        raise
+                                    
                                     if ffmpeg_result.returncode == 0 and os.path.exists(temp_no_audio_path):
                                         # Save voice-removed video
                                         from django.core.files import File
@@ -1136,7 +1168,26 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                                                 temp_final_path
                                             ]
                                             
-                                            ffmpeg_result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                                            print(f"Running ffmpeg combine command: {' '.join(cmd)}")
+                                            try:
+                                                ffmpeg_result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                                            except subprocess.TimeoutExpired:
+                                                error_msg = "ffmpeg combine timed out after 5 minutes"
+                                                print(f"✗ {error_msg}")
+                                                video.synthesis_error = error_msg
+                                                video.save()
+                                                if os.path.exists(temp_final_path):
+                                                    os.unlink(temp_final_path)
+                                                raise
+                                            except Exception as e:
+                                                error_msg = f"ffmpeg combine error: {str(e)}"
+                                                print(f"✗ {error_msg}")
+                                                video.synthesis_error = error_msg
+                                                video.save()
+                                                if os.path.exists(temp_final_path):
+                                                    os.unlink(temp_final_path)
+                                                raise
+                                            
                                             if ffmpeg_result.returncode == 0 and os.path.exists(temp_final_path):
                                                 # Step 5c: Apply watermark if enabled
                                                 watermark_applied = False
@@ -1191,49 +1242,73 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                                                 print(f"✓ Video set to 'pending_review' status - ready for review")
                                                 
                                                 # Generate metadata, upload to Cloudinary, and sync to Google Sheets
-                                                try:
-                                                    # Generate metadata using AI
-                                                    metadata_result = generate_video_metadata(video)
-                                                    if metadata_result.get('status') == 'success':
-                                                        video.generated_title = metadata_result.get('title', '')
-                                                        video.generated_description = metadata_result.get('description', '')
-                                                        video.generated_tags = metadata_result.get('tags', '')
-                                                        print(f"✓ Generated metadata: {video.generated_title[:50]}...")
-                                                    else:
-                                                        print(f"⚠ Metadata generation failed: {metadata_result.get('error', 'Unknown error')}")
-                                                    
-                                                    # Upload to Cloudinary if enabled (replace existing if same video_id)
-                                                    if upload_video_file:
-                                                        # Use video_id as public_id to replace existing video
-                                                        video_id_for_cloudinary = video.video_id or str(video.id)
-                                                        cloudinary_result = upload_video_file(
-                                                            video.final_processed_video,
-                                                            video_id=video_id_for_cloudinary
-                                                        )
-                                                        if cloudinary_result:
-                                                            video.cloudinary_url = cloudinary_result.get('secure_url') or cloudinary_result.get('url', '')
-                                                            video.cloudinary_uploaded_at = timezone.now()
-                                                            print(f"✓ Uploaded to Cloudinary (replaced if exists): {video.cloudinary_url[:50]}...")
-                                                    else:
-                                                        print("⚠ Cloudinary upload skipped or failed (cloudinary package not installed)")
-                                                    
-                                                    # Save video with metadata and Cloudinary URL
-                                                    video.save()
-                                                    
-                                                    # Add/Update to Google Sheets if enabled (updates existing if video_id matches)
-                                                    if add_video_to_sheet:
-                                                        sheet_result = add_video_to_sheet(video, video.cloudinary_url)
-                                                        if sheet_result and sheet_result.get('success'):
-                                                            print(f"✓ Added/Updated to Google Sheets")
+                                                # Run post-processing in background to avoid blocking response
+                                                import threading
+                                                video_id_for_post = video.id
+                                                
+                                                def post_process_video():
+                                                    try:
+                                                        # Re-fetch video object in the thread
+                                                        from .models import VideoDownload
+                                                        video_obj = VideoDownload.objects.get(pk=video_id_for_post)
+                                                        
+                                                        # Generate metadata using AI
+                                                        metadata_result = generate_video_metadata(video_obj)
+                                                        if metadata_result.get('status') == 'success':
+                                                            video_obj.generated_title = metadata_result.get('title', '')
+                                                            video_obj.generated_description = metadata_result.get('description', '')
+                                                            video_obj.generated_tags = metadata_result.get('tags', '')
+                                                            video_obj.save(update_fields=['generated_title', 'generated_description', 'generated_tags'])
+                                                            print(f"✓ Generated metadata: {video_obj.generated_title[:50]}...")
                                                         else:
-                                                            error_msg = sheet_result.get('error', 'Unknown error') if sheet_result else 'Google Sheets not configured'
-                                                            print(f"⚠ Google Sheets sync failed: {error_msg}")
-                                                    else:
-                                                        print("⚠ Google Sheets skipped (google packages not installed)")
-                                                except Exception as e:
-                                                    print(f"⚠ Error in post-processing (Cloudinary/Sheets): {str(e)}")
-                                                    import traceback
-                                                    traceback.print_exc()
+                                                            print(f"⚠ Metadata generation failed: {metadata_result.get('error', 'Unknown error')}")
+                                                        
+                                                        # Upload to Cloudinary if enabled (replace existing if same video_id)
+                                                        if upload_video_file:
+                                                            try:
+                                                                # Use video_id as public_id to replace existing video
+                                                                video_id_for_cloudinary = video_obj.video_id or str(video_obj.id)
+                                                                cloudinary_result = upload_video_file(
+                                                                    video_obj.final_processed_video,
+                                                                    video_id=video_id_for_cloudinary
+                                                                )
+                                                                if cloudinary_result:
+                                                                    video_obj.cloudinary_url = cloudinary_result.get('secure_url') or cloudinary_result.get('url', '')
+                                                                    video_obj.cloudinary_uploaded_at = timezone.now()
+                                                                    video_obj.save(update_fields=['cloudinary_url', 'cloudinary_uploaded_at'])
+                                                                    print(f"✓ Uploaded to Cloudinary (replaced if exists): {video_obj.cloudinary_url[:50]}...")
+                                                            except Exception as e:
+                                                                print(f"⚠ Cloudinary upload error: {str(e)}")
+                                                        else:
+                                                            print("⚠ Cloudinary upload skipped or failed (cloudinary package not installed)")
+                                                        
+                                                        # Add/Update to Google Sheets if enabled (updates existing if video_id matches)
+                                                        # Skip Google Sheets sync in background thread to avoid blocking
+                                                        # It will be synced later via manual action or scheduled task
+                                                        print("⚠ Google Sheets sync skipped in background (will sync manually later)")
+                                                        # if add_video_to_sheet:
+                                                        #     try:
+                                                        #         sheet_result = add_video_to_sheet(video_obj, video_obj.cloudinary_url)
+                                                        #         if sheet_result and sheet_result.get('success'):
+                                                        #             print(f"✓ Added/Updated to Google Sheets")
+                                                        #         else:
+                                                        #             error_msg = sheet_result.get('error', 'Unknown error') if sheet_result else 'Google Sheets not configured'
+                                                        #             print(f"⚠ Google Sheets sync failed: {error_msg}")
+                                                        #     except Exception as e:
+                                                        #         print(f"⚠ Google Sheets sync error: {str(e)}")
+                                                        #         import traceback
+                                                        #         traceback.print_exc()
+                                                        # else:
+                                                        #     print("⚠ Google Sheets skipped (google packages not installed)")
+                                                    except Exception as e:
+                                                        print(f"⚠ Error in post-processing: {str(e)}")
+                                                        import traceback
+                                                        traceback.print_exc()
+                                                
+                                                # Start post-processing in background thread (non-blocking)
+                                                post_thread = threading.Thread(target=post_process_video, daemon=True)
+                                                post_thread.start()
+                                                print(f"→ Post-processing (metadata/Cloudinary/Sheets) started in background")
                                             else:
                                                 error_msg = f"ffmpeg combine failed: {ffmpeg_result.stderr[:500] if ffmpeg_result.stderr else 'Unknown error'}"
                                                 print(f"✗ Step 5b (ffmpeg) failed: {error_msg}")
@@ -1305,8 +1380,12 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                 })
                 
                 # Check for visual and enhanced errors from dual transcription
-                visual_error = result.get('visual_error')
-                enhanced_error = result.get('enhanced_error')
+                # IMPORTANT: Check if result is a dict before calling .get() (avoid AttributeError)
+                visual_error = None
+                enhanced_error = None
+                if isinstance(result, dict):
+                    visual_error = result.get('visual_error')
+                    enhanced_error = result.get('enhanced_error')
                 
                 # Add warnings if visual or enhanced failed
                 warnings = []
@@ -1314,6 +1393,10 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                     warnings.append(f"Visual Analysis: {visual_error}")
                 if enhanced_error:
                     warnings.append(f"AI Enhancement: {enhanced_error}")
+                
+                # Add warning if TTS failed
+                if video.synthesis_status == 'failed':
+                    warnings.append(f"TTS Generation: {video.synthesis_error or 'Failed'}")
                 
                 if warnings:
                     serializer_data["warnings"] = warnings
@@ -1760,21 +1843,32 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
             video.save()
             
             # Add/Update to Google Sheets if enabled (always sync to ensure latest data)
-            try:
-                if add_video_to_sheet:
-                    sheet_result = add_video_to_sheet(video, video.cloudinary_url)
-                    if sheet_result and sheet_result.get('success'):
-                        results['google_sheets_synced'] = True
-                        print(f"✓ Added/Updated to Google Sheets")
+            # Run in background thread to prevent blocking
+            def sync_to_sheets_background():
+                """Background task to sync video to Google Sheets"""
+                try:
+                    if add_video_to_sheet:
+                        logger.info(f"Starting Google Sheets sync for video {video.id} in background thread")
+                        sheet_result = add_video_to_sheet(video, video.cloudinary_url)
+                        if sheet_result and sheet_result.get('success'):
+                            logger.info(f"✓ Successfully synced video {video.id} to Google Sheets")
+                        else:
+                            error_msg = sheet_result.get('error', 'Unknown error') if sheet_result else 'Google Sheets not configured'
+                            logger.warning(f"Google Sheets sync failed for video {video.id}: {error_msg}")
                     else:
-                        error_msg = sheet_result.get('error', 'Unknown error') if sheet_result else 'Google Sheets not configured'
-                        results['errors'].append(f"Google Sheets sync failed: {error_msg}")
-                        logger.warning(f"Google Sheets sync failed for video {video.id}: {error_msg}")
-                else:
-                    error_msg = 'Google Sheets not configured'
-                    results['errors'].append(f"Google Sheets sync failed: {error_msg}")
-            except Exception as e:
-                results['errors'].append(f"Google Sheets sync error: {str(e)}")
+                        logger.warning(f"Google Sheets sync skipped for video {video.id}: not configured")
+                except Exception as e:
+                    logger.error(f"Google Sheets sync error for video {video.id}: {str(e)}", exc_info=True)
+            
+            # Start background thread for Google Sheets sync (non-blocking)
+            if add_video_to_sheet:
+                import threading
+                sync_thread = threading.Thread(target=sync_to_sheets_background, daemon=True)
+                sync_thread.start()
+                results['google_sheets_synced'] = True  # Background sync started successfully
+                logger.info(f"Google Sheets sync started in background for video {video.id}")
+            else:
+                results['errors'].append('Google Sheets sync failed: not configured')
             
             # Determine overall status
             success_count = sum([
