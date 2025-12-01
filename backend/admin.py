@@ -5,7 +5,7 @@ from django.contrib import messages
 from django.db import IntegrityError
 from django.utils import timezone
 from django.shortcuts import render, redirect, get_object_or_404
-from .model import VideoDownload, AIProviderSettings, ClonedVoice, CloudinarySettings, GoogleSheetsSettings, WatermarkSettings
+from .model import VideoDownload, AIProviderSettings, CloudinarySettings, GoogleSheetsSettings, WatermarkSettings
 from .pipeline.utils import (
     perform_extraction, extract_video_id, translate_text, download_file,
     process_video_with_ai, transcribe_video, add_caption_to_video,
@@ -86,39 +86,6 @@ class GoogleSheetsSettingsAdmin(admin.ModelAdmin):
         # Don't allow deletion of the settings record
         return False
 
-
-@admin.register(ClonedVoice)
-class ClonedVoiceAdmin(admin.ModelAdmin):
-    """Admin interface for Cloned Voices"""
-    list_display = ['name', 'is_default_badge', 'created_at', 'audio_player']
-    list_filter = ['is_default', 'created_at']
-    search_fields = ['name']
-    fields = ['name', 'file', 'is_default']
-    readonly_fields = ['created_at']
-    
-    def is_default_badge(self, obj):
-        if obj.is_default:
-            return format_html(
-                '<span style="background-color: #ffc107; color: #000; padding: 3px 10px; border-radius: 10px; font-size: 12px; font-weight: bold;">⭐ DEFAULT</span>'
-            )
-        return format_html('<span style="color: #6c757d;">-</span>')
-    is_default_badge.short_description = "Default"
-    
-    def audio_player(self, obj):
-        if obj.file:
-            return format_html(
-                '<audio controls src="{}" style="width: 200px; height: 30px;"></audio>',
-                obj.file.url
-            )
-        return "-"
-    audio_player.short_description = "Preview"
-    
-    def save_model(self, request, obj, form, change):
-        """Override save to ensure only one default voice exists"""
-        if obj.is_default:
-            # Unset all other defaults
-            ClonedVoice.objects.filter(is_default=True).exclude(pk=obj.pk).update(is_default=False)
-        super().save_model(request, obj, form, change)
 
 @admin.register(VideoDownload)
 class VideoDownloadAdmin(admin.ModelAdmin):
@@ -226,10 +193,6 @@ class VideoDownloadAdmin(admin.ModelAdmin):
         ('Media Details', {
             'fields': ('video_url', 'cover_url', 'local_file', 'is_downloaded', 'duration', 'voice_removed_video_url', 'final_processed_video_url'),
             'description': '1. Downloaded video (original with audio) | 2. Voice removed video (no audio) | 3. Final processed video (with new Hindi audio)'
-        }),
-        ('Voice Profile', {
-            'fields': ('voice_profile',),
-            'description': 'Voice profile used for TTS. If not set, the default voice will be used.'
         }),
         ('Extraction Status', {
             'fields': ('extraction_method', 'status', 'error_message')
@@ -731,50 +694,18 @@ class VideoDownloadAdmin(admin.ModelAdmin):
             return JsonResponse({'error': str(e)}, status=500)
 
     def synthesize_audio_view(self, request, pk):
-        """Synthesize audio for a single video"""
+        """Synthesize audio for a single video using Gemini TTS"""
         obj = get_object_or_404(VideoDownload, pk=pk)
 
-        if not obj.transcript:
-            messages.error(request, "Cannot synthesize audio: no transcript available.")
-            return redirect('admin:downloader_videodownload_changelist')
-
-        if not obj.voice_profile:
-            messages.error(request, "Cannot synthesize audio: no voice profile selected for this video.")
+        if not obj.hindi_script and not obj.transcript:
+            messages.error(request, "Cannot synthesize audio: no Hindi script or transcript available.")
             return redirect('admin:downloader_videodownload_changelist')
 
         if obj.synthesis_status == 'synthesizing':
             messages.warning(request, "Audio is already being synthesized for this video.")
             return redirect('admin:downloader_videodownload_changelist')
 
-        obj.synthesis_status = 'synthesizing'
-        obj.synthesis_error = ''
-        obj.save()
-
-        try:
-            voice_cloning_service = get_voice_cloning_service()
-            audio_file = voice_cloning_service.synthesize(obj.transcript, obj.voice_profile)
-
-            if audio_file:
-                filename = f"synthesized_audio_{obj.pk}.mp3"
-                obj.synthesized_audio.save(filename, audio_file, save=True)
-                obj.synthesis_status = 'synthesized'
-                messages.success(request, f"Successfully synthesized audio for: {obj.title}")
-            else:
-                obj.synthesis_status = 'failed'
-                obj.synthesis_error = "Failed to get audio file from service."
-                messages.error(request, f"Audio synthesis failed for '{obj.title}': Failed to get audio file.")
-
-            obj.save()
-
-        except Exception as e:
-            obj.synthesis_status = 'failed'
-            obj.synthesis_error = str(e)
-            obj.save()
-            messages.error(request, f"Audio synthesis error for '{obj.title}': {str(e)}")
-
-        referer = request.META.get('HTTP_REFERER')
-        if referer:
-            return redirect(referer)
+        messages.info(request, "Audio synthesis is now handled via the API endpoint. Please use the /api/videos/{}/synthesize/ endpoint or the frontend interface.")
         return redirect('admin:downloader_videodownload_changelist')
 
     def synthesize_audio_bulk_view(self, request):
@@ -793,41 +724,15 @@ class VideoDownloadAdmin(admin.ModelAdmin):
                 failed_count = 0
 
                 for obj in videos:
-                    if not obj.transcript:
-                        messages.warning(request, f"Skipping '{obj.title}': no transcript available.")
-                        failed_count += 1
-                        continue
-                    if not obj.voice_profile:
-                        messages.warning(request, f"Skipping '{obj.title}': no voice profile selected.")
+                    if not obj.hindi_script and not obj.transcript:
+                        messages.warning(request, f"Skipping '{obj.title}': no Hindi script or transcript available.")
                         failed_count += 1
                         continue
                     if obj.synthesis_status == 'synthesizing':
                         continue
 
-                    obj.synthesis_status = 'synthesizing'
-                    obj.synthesis_error = ''
-                    obj.save()
-
-                    try:
-                        voice_cloning_service = get_voice_cloning_service()
-                        audio_file = voice_cloning_service.synthesize(obj.transcript, obj.voice_profile)
-
-                        if audio_file:
-                            filename = f"synthesized_audio_{obj.pk}.mp3"
-                            obj.synthesized_audio.save(filename, audio_file, save=True)
-                            obj.synthesis_status = 'synthesized'
-                            success_count += 1
-                        else:
-                            obj.synthesis_status = 'failed'
-                            obj.synthesis_error = "Failed to get audio file from service."
-                            failed_count += 1
-                        obj.save()
-
-                    except Exception as e:
-                        obj.synthesis_status = 'failed'
-                        obj.synthesis_error = str(e)
-                        obj.save()
-                        failed_count += 1
+                    messages.info(request, f"Audio synthesis for '{obj.title}' should be done via the API endpoint /api/videos/{obj.pk}/synthesize/ or the frontend interface.")
+                    failed_count += 1
 
                 messages.success(
                     request,
@@ -1022,7 +927,7 @@ class VideoDownloadAdmin(admin.ModelAdmin):
         from django.urls import reverse
         buttons = []
         
-        if obj.transcription_status == 'transcribed' and obj.voice_profile:
+        if obj.transcription_status == 'transcribed' and (obj.hindi_script or obj.transcript):
             synthesize_url = reverse('admin:downloader_videodownload_synthesize_audio', args=[obj.pk])
             
             if obj.synthesis_status == 'synthesized':
@@ -1053,8 +958,8 @@ class VideoDownloadAdmin(admin.ModelAdmin):
                     '<a class="button" href="{}" style="background: linear-gradient(135deg, #9b59b6 0%, #8e44ad 100%); color: white; padding: 5px 10px; border-radius: 4px; text-decoration: none;">Synthesize Audio 🗣️</a>',
                     synthesize_url
                 ))
-        elif not obj.voice_profile:
-            return format_html('<span style="color: #6c757d;">Select a Voice Profile and Save to enable synthesis.</span>')
+        elif not (obj.hindi_script or obj.transcript):
+            return format_html('<span style="color: #6c757d;">Generate Hindi script or transcribe video first to enable synthesis.</span>')
         elif obj.transcription_status != 'transcribed':
             return format_html('<span style="color: #6c757d;">Transcribe video first to enable synthesis.</span>')
             

@@ -2447,7 +2447,7 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                                         
                                         print(f"✓ Gemini TTS audio generated successfully for video {video.pk} (voice: {voice_name})")
                                     except Exception as tts_error:
-                                        error_msg = f"XTTS generation failed: {str(tts_error)}"
+                                        error_msg = f"TTS generation failed: {str(tts_error)}"
                                         logger.error(error_msg, exc_info=True)
                                         video.synthesis_status = 'failed'
                                         video.synthesis_error = error_msg

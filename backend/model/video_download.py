@@ -193,7 +193,6 @@ class VideoDownload(models.Model):
     synthesized_audio = models.FileField(upload_to='synthesized_audio/', blank=True, null=True, help_text="Synthesized audio file")
     synthesis_started_at = models.DateTimeField(blank=True, null=True, help_text="When audio synthesis started")
     synthesized_at = models.DateTimeField(blank=True, null=True, help_text="When audio synthesis finished")
-    voice_profile = models.ForeignKey('ClonedVoice', on_delete=models.SET_NULL, null=True, blank=True, help_text="Voice profile used for synthesis")
     
     # Final Video Assembly (audio removal + combining with TTS)
     FINAL_VIDEO_STATUS_CHOICES = [

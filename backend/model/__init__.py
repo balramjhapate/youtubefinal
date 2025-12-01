@@ -5,7 +5,6 @@ from .ai_provider_settings import AIProviderSettings
 from .cloudinary_settings import CloudinarySettings
 from .google_sheets_settings import GoogleSheetsSettings
 from .watermark_settings import WatermarkSettings
-from .cloned_voice import ClonedVoice
 from .video_download import VideoDownload
 
 __all__ = [
@@ -13,7 +12,6 @@ __all__ = [
     'CloudinarySettings',
     'GoogleSheetsSettings',
     'WatermarkSettings',
-    'ClonedVoice',
     'VideoDownload',
 ]
 

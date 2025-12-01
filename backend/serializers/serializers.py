@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from ..model import VideoDownload, AIProviderSettings, ClonedVoice, CloudinarySettings, GoogleSheetsSettings, WatermarkSettings
+from ..model import VideoDownload, AIProviderSettings, CloudinarySettings, GoogleSheetsSettings, WatermarkSettings
 
 
 class AIProviderSettingsSerializer(serializers.ModelSerializer):
@@ -83,31 +83,6 @@ class WatermarkSettingsSerializer(serializers.ModelSerializer):
         model = WatermarkSettings
         fields = ['id', 'enabled', 'watermark_text', 'font_size', 'font_color', 'opacity', 'position_change_interval']
 
-class ClonedVoiceSerializer(serializers.ModelSerializer):
-    file_url = serializers.SerializerMethodField()
-    
-    class Meta:
-        model = ClonedVoice
-        fields = ['id', 'name', 'file', 'file_url', 'is_default', 'created_at']
-        read_only_fields = ['created_at']
-    
-    def get_file_url(self, obj):
-        if obj.file:
-            try:
-                request = self.context.get('request')
-                if request:
-                    try:
-                        return request.build_absolute_uri(obj.file.url)
-                    except Exception:
-                        # Fallback if build_absolute_uri fails
-                        return obj.file.url
-                return obj.file.url
-            except Exception:
-                # Fallback if file.url fails
-                return None
-        return None
-
-
 class VideoDownloadSerializer(serializers.ModelSerializer):
     """Full serializer for Video Downloads"""
     local_file_url = serializers.SerializerMethodField()
@@ -187,7 +162,7 @@ class VideoDownloadSerializer(serializers.ModelSerializer):
             # TTS Parameters
             'tts_speed', 'tts_temperature', 'tts_repetition_penalty',
             # Synthesis
-            'synthesis_status', 'synthesis_error', 'synthesized_audio', 'synthesized_audio_url', 'synthesized_at', 'voice_profile',
+            'synthesis_status', 'synthesis_error', 'synthesized_audio', 'synthesized_audio_url', 'synthesized_at',
             # Final Video Assembly
             'final_video_status', 'final_video_error',
             # Review
