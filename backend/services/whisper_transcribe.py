@@ -21,17 +21,18 @@ from django.conf import settings
 _MODEL_CACHE = {}
 
 
-def load_whisper_model(model_name: str = "base"):
+def load_whisper_model(model_name: str = "medium"):
     """
     Load Whisper model once and cache it for reuse.
+    Optimized for Mac Mini M4 (16GB RAM) - default: 'medium' for best accuracy/performance balance.
     
     Args:
-        model_name: Whisper model size ('tiny', 'base', 'small', 'medium', 'large')
+        model_name: Whisper model size ('tiny', 'base', 'small', 'medium', 'large') - Default: 'medium'
                    - tiny: Fastest, least accurate (~1GB RAM)
-                   - base: Good balance (~1GB RAM) - RECOMMENDED
+                   - base: Good balance (~1GB RAM)
                    - small: Better accuracy (~2GB RAM)
-                   - medium: High accuracy (~5GB RAM)
-                   - large: Best accuracy (~10GB RAM)
+                   - medium: High accuracy (~5GB RAM) - RECOMMENDED for Mac Mini M4 (16GB RAM)
+                   - large: Best accuracy (~10GB RAM) - May be slow on 16GB systems
     
     Returns:
         Loaded Whisper model instance

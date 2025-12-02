@@ -8,8 +8,9 @@ import {
   AlertCircle 
 } from 'lucide-react';
 import { Button } from '../common';
+import { formatDate } from '../../utils/formatters';
 
-export function ProcessingStatusCard({ video, processingState, onRetry }) {
+export function ProcessingStatusCard({ video, processingState, onRetry, wsConnected = false, wsUpdate = null }) {
   // Helper to check if a specific step is currently processing locally
   const isLocallyProcessing = (stepId) => {
     if (!processingState) return false;
@@ -60,6 +61,33 @@ export function ProcessingStatusCard({ video, processingState, onRetry }) {
       isCompleted: video.is_downloaded,
       isFailed: false,
       error: null,
+      startedAt: video.extraction_started_at || video.download_started_at,
+      finishedAt: video.extraction_finished_at || video.download_finished_at,
+    },
+    {
+      id: 'frame_extraction',
+      label: 'Frame Extraction',
+      status: video.frames_extracted ? 'extracted' : 'pending',
+      isProcessing: false, // Frame extraction happens automatically after download
+      isCompleted: video.frames_extracted,
+      isFailed: false,
+      error: null,
+      startedAt: video.frames_extracted_at, // Use extracted_at as started time if available
+      finishedAt: video.frames_extracted_at,
+      extraInfo: video.frames_extracted ? `${video.total_frames_extracted || 0} frames` : null,
+    },
+    {
+      id: 'visual_analysis',
+      label: 'Visual Analysis',
+      // If finished_at exists, consider it completed even if visual_transcript is false
+      status: (video.visual_transcript || video.visual_transcript_finished_at) ? 'completed' : (video.visual_transcript_started_at ? 'processing' : 'pending'),
+      isProcessing: video.visual_transcript_started_at && !video.visual_transcript_finished_at,
+      isCompleted: !!(video.visual_transcript || video.visual_transcript_finished_at),
+      isFailed: false,
+      error: null,
+      startedAt: video.visual_transcript_started_at,
+      finishedAt: video.visual_transcript_finished_at,
+      extraInfo: video.frames_extracted ? `${video.total_frames_extracted || 0} frames ready${video.visual_analysis_provider ? ` (${video.visual_analysis_provider})` : ''}` : null,
     },
     {
       id: 'transcription',
@@ -69,15 +97,24 @@ export function ProcessingStatusCard({ video, processingState, onRetry }) {
       isCompleted: video.transcription_status === 'transcribed',
       isFailed: video.transcription_status === 'failed',
       error: video.transcript_error_message,
+      startedAt: video.transcript_started_at,
+      finishedAt: video.transcript_processed_at,
     },
     {
       id: 'ai_processing',
-      label: 'AI Processing',
+      label: 'AI Processing & Enhanced Transcript',
       status: video.ai_processing_status,
-      isProcessing: video.ai_processing_status === 'processing' || isLocallyProcessing('ai_processing'),
-      isCompleted: video.ai_processing_status === 'processed',
+      // If enhanced_transcript is finished, consider it completed even if status is still 'processing'
+      // This handles cases where the status wasn't updated properly
+      isProcessing: (video.ai_processing_status === 'processing' || isLocallyProcessing('ai_processing')) && 
+                    !(video.enhanced_transcript && video.enhanced_transcript_finished_at),
+      isCompleted: (video.ai_processing_status === 'processed' && !!video.enhanced_transcript) ||
+                   (!!video.enhanced_transcript && !!video.enhanced_transcript_finished_at),
       isFailed: video.ai_processing_status === 'failed',
       error: video.ai_error_message,
+      startedAt: video.ai_processing_started_at || video.enhanced_transcript_started_at,
+      finishedAt: video.ai_processed_at || video.enhanced_transcript_finished_at,
+      extraInfo: video.enhanced_transcript ? 'Enhanced transcript generated' : null,
     },
     {
       id: 'script',
@@ -87,6 +124,8 @@ export function ProcessingStatusCard({ video, processingState, onRetry }) {
       isCompleted: video.script_status === 'generated',
       isFailed: video.script_status === 'failed',
       error: null,
+      startedAt: video.script_started_at,
+      finishedAt: video.script_generated_at,
     },
     {
       id: 'synthesis',
@@ -96,18 +135,23 @@ export function ProcessingStatusCard({ video, processingState, onRetry }) {
       isCompleted: video.synthesis_status === 'synthesized',
       isFailed: video.synthesis_status === 'failed',
       error: null,
+      startedAt: video.synthesis_started_at,
+      finishedAt: video.synthesized_at,
     },
     {
       id: 'final_video',
       label: 'Final Video Assembly',
       status: video.final_processed_video_url ? 'completed' : 'pending',
-      isProcessing: (video.synthesis_status === 'synthesized' && !video.final_processed_video_url) || 
+      isProcessing: (video.synthesis_status === 'synthesized' && !video.final_processed_video_url && !video.final_video_finished_at) || 
                     video.final_video_status === 'removing_audio' || 
                     video.final_video_status === 'combining_audio' || 
+                    (video.final_video_started_at && !video.final_video_finished_at) ||
                     isLocallyProcessing('final_video'),
       isCompleted: !!video.final_processed_video_url,
       isFailed: false,
       error: null,
+      startedAt: video.final_video_started_at,
+      finishedAt: video.final_video_finished_at,
     },
     {
       id: 'cloudinary',
@@ -117,6 +161,8 @@ export function ProcessingStatusCard({ video, processingState, onRetry }) {
       isCompleted: !!video.cloudinary_url,
       isFailed: false,
       error: null,
+      startedAt: video.cloudinary_upload_started_at,
+      finishedAt: video.cloudinary_uploaded_at,
     },
     {
       id: 'sheets',
@@ -126,12 +172,22 @@ export function ProcessingStatusCard({ video, processingState, onRetry }) {
       isCompleted: video.google_sheets_synced,
       isFailed: false,
       error: null,
+      startedAt: video.google_sheets_sync_started_at,
+      finishedAt: video.google_sheets_synced_at,
     }
   ];
 
   return (
     <div className="bg-white/5 rounded-lg p-4 border border-white/10 space-y-4">
-      <h3 className="text-lg font-semibold text-white mb-2">Processing Status</h3>
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-lg font-semibold text-white">Processing Status</h3>
+        {wsConnected && (
+          <div className="flex items-center gap-2 text-xs text-green-400">
+            <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
+            <span>Live</span>
+          </div>
+        )}
+      </div>
       
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         {steps.map((step, index) => {
@@ -165,7 +221,7 @@ export function ProcessingStatusCard({ video, processingState, onRetry }) {
                 </div>
                 
                 {/* Label & Status Text */}
-                <div className="flex flex-col min-w-0">
+                <div className="flex flex-col min-w-0 flex-1">
                   <span className={`text-sm font-medium truncate ${
                     step.isCompleted ? 'text-white' : 
                     step.isProcessing ? 'text-blue-300' : 
@@ -178,6 +234,28 @@ export function ProcessingStatusCard({ video, processingState, onRetry }) {
                      step.isCompleted ? 'Completed' : 
                      step.isFailed ? 'Failed' : 'Pending'}
                   </span>
+                  {/* Extra Info */}
+                  {step.extraInfo && (
+                    <span className="text-xs text-blue-400 mt-0.5">
+                      {step.extraInfo}
+                    </span>
+                  )}
+                  {/* Timestamps - Always show both if available */}
+                  {step.startedAt && (
+                    <span className="text-xs text-blue-400 mt-0.5">
+                      Started: {formatDate(step.startedAt)}
+                    </span>
+                  )}
+                  {step.finishedAt && (
+                    <span className="text-xs text-green-400 mt-0.5">
+                      Completed: {formatDate(step.finishedAt)}
+                    </span>
+                  )}
+                  {!step.startedAt && !step.finishedAt && (
+                    <span className="text-xs text-gray-500 mt-0.5">
+                      Not started
+                    </span>
+                  )}
                 </div>
               </div>
 

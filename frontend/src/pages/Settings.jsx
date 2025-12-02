@@ -14,6 +14,12 @@ export function Settings() {
   const [defaultProvider, setDefaultProvider] = useState('gemini');
   const [showApiKey, setShowApiKey] = useState(false);
   
+  // Analysis provider enable/disable settings
+  const [enableNcaTranscription, setEnableNcaTranscription] = useState(true);
+  const [enableWhisperTranscription, setEnableWhisperTranscription] = useState(true);
+  const [enableVisualAnalysis, setEnableVisualAnalysis] = useState(false);
+  const [visualAnalysisProvider, setVisualAnalysisProvider] = useState('openai');
+  
   // Legacy fields for backward compatibility
   const [provider, setProvider] = useState('gemini');
   const [apiKey, setApiKey] = useState('');
@@ -73,6 +79,12 @@ export function Settings() {
       setOpenaiApiKey(settings.openai_api_key || '');
       setScriptGenerationProvider(settings.script_generation_provider || 'gemini');
       setDefaultProvider(settings.default_provider || 'gemini');
+      
+      // Analysis provider settings
+      setEnableNcaTranscription(settings.enable_nca_transcription !== undefined ? settings.enable_nca_transcription : true);
+      setEnableWhisperTranscription(settings.enable_whisper_transcription !== undefined ? settings.enable_whisper_transcription : true);
+      setEnableVisualAnalysis(settings.enable_visual_analysis !== undefined ? settings.enable_visual_analysis : false);
+      setVisualAnalysisProvider(settings.visual_analysis_provider || 'openai');
       
       // Legacy fields for backward compatibility
       setProvider(settings.provider || 'gemini');
@@ -175,6 +187,10 @@ export function Settings() {
       openai_api_key: openaiApiKey,
       script_generation_provider: scriptGenerationProvider,
       default_provider: defaultProvider,
+      enable_nca_transcription: enableNcaTranscription,
+      enable_whisper_transcription: enableWhisperTranscription,
+      enable_visual_analysis: enableVisualAnalysis,
+      visual_analysis_provider: visualAnalysisProvider,
     }),
     onSuccess: () => {
       showSuccess('Settings Saved', 'AI settings saved successfully.', { timer: 3000 });
@@ -465,6 +481,96 @@ export function Settings() {
             <p className="mt-1 text-xs text-gray-500">
               AI provider for transcription enhancement, TTS markup, etc.
             </p>
+          </div>
+
+          {/* Analysis Provider Settings */}
+          <div className="pt-4 border-t border-white/10">
+            <h3 className="text-sm font-semibold text-white mb-4">Analysis Provider Settings</h3>
+            <p className="text-xs text-gray-400 mb-4">
+              Enable or disable specific transcription and analysis providers. Only enabled providers will be used during video processing.
+            </p>
+            
+            <div className="space-y-4">
+              {/* NCA Transcription Toggle */}
+              <div className="flex items-center justify-between p-3 bg-white/5 rounded-lg border border-white/10">
+                <div className="flex-1">
+                  <label htmlFor="enable-nca" className="text-sm font-medium text-gray-300 cursor-pointer">
+                    Enable NCA Toolkit Transcription
+                  </label>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Fast API-based transcription (10-100x faster than local Whisper)
+                  </p>
+                </div>
+                <input
+                  type="checkbox"
+                  id="enable-nca"
+                  checked={enableNcaTranscription}
+                  onChange={(e) => setEnableNcaTranscription(e.target.checked)}
+                  className="w-5 h-5 rounded cursor-pointer"
+                />
+              </div>
+
+              {/* Whisper Transcription Toggle */}
+              <div className="flex items-center justify-between p-3 bg-white/5 rounded-lg border border-white/10">
+                <div className="flex-1">
+                  <label htmlFor="enable-whisper" className="text-sm font-medium text-gray-300 cursor-pointer">
+                    Enable Whisper Transcription
+                  </label>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Local model-based transcription (medium model for Mac Mini M4)
+                  </p>
+                </div>
+                <input
+                  type="checkbox"
+                  id="enable-whisper"
+                  checked={enableWhisperTranscription}
+                  onChange={(e) => setEnableWhisperTranscription(e.target.checked)}
+                  className="w-5 h-5 rounded cursor-pointer"
+                />
+              </div>
+
+              {/* Visual Analysis Toggle */}
+              <div className="p-3 bg-white/5 rounded-lg border border-white/10 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex-1">
+                    <label htmlFor="enable-visual" className="text-sm font-medium text-gray-300 cursor-pointer">
+                      Enable Visual Analysis
+                    </label>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Frame-by-frame analysis using AI Vision
+                    </p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    id="enable-visual"
+                    checked={enableVisualAnalysis}
+                    onChange={(e) => setEnableVisualAnalysis(e.target.checked)}
+                    className="w-5 h-5 rounded cursor-pointer"
+                  />
+                </div>
+                
+                {/* Visual Analysis Provider Selection */}
+                {enableVisualAnalysis && (
+                  <div className="pt-2 border-t border-white/10">
+                    <label className="block text-xs font-medium text-gray-300 mb-2">
+                      Visual Analysis AI Provider
+                    </label>
+                    <Select
+                      value={visualAnalysisProvider}
+                      onChange={(e) => setVisualAnalysisProvider(e.target.value)}
+                      options={[
+                        { value: 'openai', label: 'OpenAI GPT-4o-mini (Recommended - avoids quota issues)' },
+                        { value: 'gemini', label: 'Google Gemini Vision API' },
+                      ]}
+                      disabled={!enableVisualAnalysis}
+                    />
+                    <p className="mt-1 text-xs text-gray-500">
+                      Choose which AI model to use for analyzing video frames. OpenAI GPT-4o-mini is recommended to avoid Gemini quota limits.
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
 
           <Button

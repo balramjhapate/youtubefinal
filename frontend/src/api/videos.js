@@ -1,4 +1,4 @@
-import apiClient from './client';
+import apiClient, { apiClientLongTimeout } from './client';
 
 export const videosApi = {
   // Get all videos
@@ -59,9 +59,15 @@ export const videosApi = {
     return response.data;
   },
 
-  // Synthesize audio (uses Gemini TTS)
+  // Synthesize audio (uses Gemini TTS) - uses long timeout
   synthesize: async (id) => {
-    const response = await apiClient.post(`/videos/${id}/synthesize/`);
+    const response = await apiClientLongTimeout.post(`/videos/${id}/synthesize/`);
+    return response.data;
+  },
+
+  // Analyze visual frames (manual trigger)
+  analyzeVisual: async (id) => {
+    const response = await apiClient.post(`/videos/${id}/analyze_visual/`);
     return response.data;
   },
 
@@ -125,29 +131,29 @@ export const videosApi = {
     return response.data;
   },
 
-  // Retry methods for failed pipeline steps
+  // Retry methods for failed pipeline steps (using new pipeline-aware endpoints)
   retryTranscription: async (id) => {
-    const response = await apiClient.post(`/videos/${id}/retry/transcription/`);
+    const response = await apiClient.post(`/videos/${id}/retry_transcription/`);
     return response.data;
   },
 
   retryAIProcessing: async (id) => {
-    const response = await apiClient.post(`/videos/${id}/retry/ai-processing/`);
+    const response = await apiClient.post(`/videos/${id}/retry_ai_processing/`);
     return response.data;
   },
 
   retryScriptGeneration: async (id) => {
-    const response = await apiClient.post(`/videos/${id}/retry/script-generation/`);
+    const response = await apiClient.post(`/videos/${id}/retry_script_generation/`);
     return response.data;
   },
 
-  retryTTSSynthesis: async (id) => {
-    const response = await apiClient.post(`/videos/${id}/retry/tts-synthesis/`);
+  retrySynthesis: async (id) => {
+    const response = await apiClientLongTimeout.post(`/videos/${id}/retry_synthesis/`);
     return response.data;
   },
 
   retryFinalVideo: async (id) => {
-    const response = await apiClient.post(`/videos/${id}/retry/final-video/`);
+    const response = await apiClient.post(`/videos/${id}/retry_final_video/`);
     return response.data;
   },
 
@@ -163,7 +169,7 @@ export const videosApi = {
   },
 
   synthesizeTTS: async (id) => {
-    const response = await apiClient.post(`/videos/${id}/synthesize_tts/`);
+    const response = await apiClientLongTimeout.post(`/videos/${id}/synthesize_tts/`);
     return response.data;
   },
 

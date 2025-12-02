@@ -1,6 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useWebSocket } from "../hooks/useWebSocket";
 import {
 	Download,
 	FileText,
@@ -12,7 +13,11 @@ import {
 	ExternalLink,
 	RefreshCw,
 	ArrowLeft,
+	ArrowRight,
 	FileEdit,
+	Loader2,
+	ChevronLeft,
+	ChevronRight,
 } from "lucide-react";
 import {
 	Button,
@@ -50,18 +55,6 @@ export function VideoDetail() {
 	// Timer state
 	const [elapsedTime, setElapsedTime] = useState(0);
 	const [isTimerRunning, setIsTimerRunning] = useState(false);
-	
-	useEffect(() => {
-		let interval;
-		if (isTimerRunning) {
-			interval = setInterval(() => {
-				setElapsedTime((prev) => prev + 1);
-			}, 1000);
-		} else {
-			clearInterval(interval);
-		}
-		return () => clearInterval(interval);
-	}, [isTimerRunning]);
 
 	const formatElapsedTime = (seconds) => {
 		const mins = Math.floor(seconds / 60);
@@ -72,7 +65,93 @@ export function VideoDetail() {
 	// Get processing state early so it can be used in refetchInterval
 	const processingState = id ? getProcessingState(id) : null;
 
-	// Fetch video details with real-time polling during processing
+	// WebSocket handler - defined before useQuery so we can use wsConnected in refetchInterval
+	const handleWebSocketUpdate = useCallback((updateData) => {
+		console.log('[VideoDetail] WebSocket update received:', updateData);
+		
+		// Update query cache directly with new data (no API call needed)
+		if (updateData) {
+			queryClient.setQueryData(['video', id], (oldData) => {
+				if (!oldData) return updateData;
+				return {
+					...oldData,
+					...updateData
+				};
+			});
+		}
+		
+		// Check for stuck processes and clear them
+		if (updateData) {
+			const stuckThreshold = 30 * 60 * 1000; // 30 minutes in milliseconds
+			const now = new Date();
+			
+			// Check transcription stuck
+			if (updateData.transcription_status === 'transcribing' && updateData.transcript_started_at) {
+				const started = new Date(updateData.transcript_started_at);
+				const elapsed = now - started;
+				if (elapsed > stuckThreshold) {
+					console.log('[VideoDetail] Transcription stuck for', Math.floor(elapsed / 60000), 'minutes, clearing...');
+					clearProcessingForVideo(id);
+				}
+			}
+			
+			// Check AI processing stuck
+			if (updateData.ai_processing_status === 'processing' && updateData.ai_processing_started_at) {
+				const started = new Date(updateData.ai_processing_started_at);
+				const elapsed = now - started;
+				if (elapsed > stuckThreshold) {
+					console.log('[VideoDetail] AI processing stuck for', Math.floor(elapsed / 60000), 'minutes, clearing...');
+					clearProcessingForVideo(id);
+				}
+			}
+			
+			// Check visual analysis stuck
+			if (updateData.visual_transcript_started_at && !updateData.visual_transcript_finished_at) {
+				const started = new Date(updateData.visual_transcript_started_at);
+				const elapsed = now - started;
+				if (elapsed > stuckThreshold) {
+					console.log('[VideoDetail] Visual analysis stuck for', Math.floor(elapsed / 60000), 'minutes, clearing...');
+					clearProcessingForVideo(id);
+				}
+			}
+		}
+		
+		// NO refetch() call - WebSocket updates the cache directly
+		// Only invalidate to trigger UI updates, but don't make API call
+		queryClient.invalidateQueries(['video', id], { refetch: false });
+	}, [id, queryClient, clearProcessingForVideo]);
+
+	// WebSocket for real-time updates (defined before useQuery so we can use wsConnected)
+	const { isConnected: wsConnected, lastUpdate: wsUpdate, error: wsError } = useWebSocket(
+		id,
+		handleWebSocketUpdate,
+		{
+			maxReconnectAttempts: 10,
+			reconnectDelay: 3000,
+			pingInterval: 30000,
+		}
+	);
+
+	// Fetch video list for navigation
+	const {
+		data: videosList,
+	} = useQuery({
+		queryKey: ["videos", "navigation"],
+		queryFn: () => videosApi.getAll({ ordering: "-created_at" }),
+		staleTime: 60 * 1000, // Consider data fresh for 1 minute
+		cacheTime: 5 * 60 * 1000, // Keep in cache for 5 minutes
+	});
+
+	// Find current video index and get previous/next video IDs
+	// API returns array directly, not { results: [...] }
+	const videosArray = Array.isArray(videosList) ? videosList : videosList?.results || [];
+	const currentVideoIndex = videosArray.findIndex(v => v.id === parseInt(id));
+	const previousVideo = currentVideoIndex > 0 ? videosArray[currentVideoIndex - 1] : null;
+	const nextVideo = currentVideoIndex >= 0 && currentVideoIndex < videosArray.length - 1 
+		? videosArray[currentVideoIndex + 1] 
+		: null;
+
+	// Fetch video details - use polling ONLY as fallback when WebSocket is not connected
 	const {
 		data: video,
 		isLoading,
@@ -81,18 +160,22 @@ export function VideoDetail() {
 		queryKey: ["video", id],
 		queryFn: () => videosApi.getById(id),
 		enabled: !!id,
-		// Add staleTime to ensure fresh data during processing
-		staleTime: 0, // Always consider data stale to force refetch
-		// Add cacheTime to keep data in cache but allow refetch
-		cacheTime: 0, // Don't cache during processing
+		staleTime: 30000, // Consider data fresh for 30 seconds
+		cacheTime: 5 * 60 * 1000, // Keep in cache for 5 minutes
+		// Only poll if WebSocket is NOT connected (fallback mechanism)
 		refetchInterval: (query) => {
+			// If WebSocket is connected, don't poll - rely on WebSocket updates
+			if (wsConnected) {
+				return false;
+			}
+
 			const video = query.state.data;
 			if (!video) return false;
 
 			// Get current processing state dynamically
 			const currentProcessingState = id ? getProcessingState(id) : null;
 
-			// Check if any processing is active
+			// Check if any processing is active (only poll as fallback when WS is disconnected)
 			const isProcessing =
 				video.transcription_status === "transcribing" ||
 				video.ai_processing_status === "processing" ||
@@ -119,11 +202,24 @@ export function VideoDetail() {
 					video.script_status === "pending");
 
 			if (isProcessing) {
-				return 5000; // Poll every 5 seconds during processing (reduced from 2s for better performance)
+				// Poll every 10 seconds as fallback (slower than before since WebSocket is primary)
+				return 10000;
 			}
 			return false;
 		},
 	});
+	
+	useEffect(() => {
+		let interval;
+		if (isTimerRunning) {
+			interval = setInterval(() => {
+				setElapsedTime((prev) => prev + 1);
+			}, 1000);
+		} else {
+			clearInterval(interval);
+		}
+		return () => clearInterval(interval);
+	}, [isTimerRunning]);
 
 	// Calculate elapsed time for transcription (after video is loaded)
 	const transcriptionElapsedMinutes =
@@ -1011,6 +1107,27 @@ export function VideoDetail() {
 		},
 	});
 
+	const analyzeVisualMutation = useMutation({
+		mutationFn: () => {
+			return videosApi.analyzeVisual(id);
+		},
+		onSuccess: (data) => {
+			showSuccess(
+				"Visual Analysis Started",
+				data.message || `Visual analysis started using Gemini Vision API. Analyzing ${video.total_frames_extracted || 0} frames.`
+			);
+			queryClient.invalidateQueries(["video", id]);
+			refetch();
+		},
+		onError: (error) => {
+			showError(
+				"Visual Analysis Failed",
+				error?.response?.data?.error ||
+					"Failed to start visual analysis. Please try again."
+			);
+		},
+	});
+
 	const copyToClipboard = (text) => {
 		navigator.clipboard.writeText(text);
 		showSuccess("Copied", "Text copied to clipboard.");
@@ -1024,42 +1141,51 @@ export function VideoDetail() {
 	];
 
 	const handleRetry = async (stepId) => {
-		switch (stepId) {
-			case "transcription":
-				transcribeMutation.mutate();
-				break;
-			case "ai_processing":
-				processAIMutation.mutate();
-				break;
-			case "script":
-				// Assuming script generation is part of AI processing or has its own endpoint?
-				// If no specific endpoint, try processAI
-				processAIMutation.mutate();
-				break;
-			case "synthesis":
-				// Use Gemini TTS (no voice profile required)
-				try {
-					startProcessing(id, "synthesis");
-					// Call synthesize - backend will use Gemini TTS
-					await videosApi.synthesize(id);
-					showSuccess(
-						"Synthesis Retried",
-						"Synthesis has been retried."
-					);
-					refetch();
-				} catch (error) {
+		try {
+			startProcessing(id, stepId);
+			let result;
+			
+			switch (stepId) {
+				case "transcription":
+					result = await videosApi.retryTranscription(id);
+					showSuccess("Transcription Retried", "Transcription has been retried and will auto-progress to next step.", { timer: 3000 });
+					break;
+				case "ai_processing":
+					result = await videosApi.retryAIProcessing(id);
+					showSuccess("AI Processing Retried", "AI processing has been retried and will auto-progress to next step.", { timer: 3000 });
+					break;
+				case "script":
+				case "script_generation":
+					result = await videosApi.retryScriptGeneration(id);
+					showSuccess("Script Generation Retried", "Script generation has been retried and will auto-progress to next step.", { timer: 3000 });
+					break;
+				case "synthesis":
+					result = await videosApi.retrySynthesis(id);
+					showSuccess("Synthesis Retried", "Synthesis has been retried and will auto-progress to next step.", { timer: 3000 });
+					break;
+				case "final_video":
+					result = await videosApi.retryFinalVideo(id);
+					showSuccess("Final Video Retried", "Final video generation has been retried and will auto-progress to next step.", { timer: 3000 });
+					break;
+				default:
 					showError(
-						"Retry Failed",
-						"Failed to retry synthesis. Please try again."
+						"Unknown Step",
+						"Unknown step to retry. Please select a valid step.",
+						{ timer: 3000 }
 					);
 					completeProcessing(id);
-				}
-				break;
-			default:
-				showError(
-					"Unknown Step",
-					"Unknown step to retry. Please select a valid step."
-				);
+					return;
+			}
+			
+			// Refetch to get updated status
+			refetch();
+		} catch (error) {
+			showError(
+				"Retry Failed",
+				error?.response?.data?.error || "Failed to retry step. Please try again.",
+				{ timer: 5000 } // Longer timeout for errors so user can read
+			);
+			completeProcessing(id);
 		}
 	};
 
@@ -1087,7 +1213,7 @@ export function VideoDetail() {
 	}
 
 	return (
-		<div className="space-y-6 pb-8">
+		<div className="space-y-6 pb-8 relative">
 			{/* Header with back button */}
 			<div className="flex items-center gap-4">
 				<Button
@@ -1097,18 +1223,126 @@ export function VideoDetail() {
 					Back
 				</Button>
 				<h1 className="text-2xl font-bold">Video Details</h1>
+				{/* Video counter in header */}
+				{videosArray.length > 0 && currentVideoIndex >= 0 && (
+					<span className="text-sm text-gray-400 px-2 ml-auto">
+						{currentVideoIndex + 1} / {videosArray.length}
+					</span>
+				)}
 			</div>
+
+			{/* Floating Previous/Next Navigation Buttons - Always visible, centered vertically */}
+			{videosArray.length > 0 && (
+				<>
+					<button
+						onClick={() => {
+							if (previousVideo) {
+								navigate(`/videos/${previousVideo.id}`);
+								window.scrollTo({ top: 0, behavior: 'smooth' });
+							}
+						}}
+						title={previousVideo ? (previousVideo.title || `Video ${previousVideo.id}`) : "No previous video"}
+						disabled={!previousVideo}
+						className="fixed lg:left-[280px] left-6 top-1/2 -translate-y-1/2 z-[100] w-14 h-14 rounded-full bg-white/10 hover:bg-white/20 backdrop-blur-md border border-white/30 flex items-center justify-center transition-all duration-200 hover:scale-110 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:scale-100 shadow-xl hover:shadow-2xl group">
+						<ChevronLeft className="w-7 h-7 text-white group-hover:text-white/90" />
+					</button>
+
+					<button
+						onClick={() => {
+							if (nextVideo) {
+								navigate(`/videos/${nextVideo.id}`);
+								window.scrollTo({ top: 0, behavior: 'smooth' });
+							}
+						}}
+						title={nextVideo ? (nextVideo.title || `Video ${nextVideo.id}`) : "No next video"}
+						disabled={!nextVideo}
+						className="fixed right-6 top-1/2 -translate-y-1/2 z-[100] w-14 h-14 rounded-full bg-white/10 hover:bg-white/20 backdrop-blur-md border border-white/30 flex items-center justify-center transition-all duration-200 hover:scale-110 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:scale-100 shadow-xl hover:shadow-2xl group">
+						<ChevronRight className="w-7 h-7 text-white group-hover:text-white/90" />
+					</button>
+				</>
+			)}
 
 			{/* Main content - Full Width Layout */}
 			<div className="grid grid-cols-1 xl:grid-cols-3 gap-6 w-full">
 				{/* Left column - Video and main content */}
 				<div className="xl:col-span-2 space-y-6 w-full">
-					{/* Video player */}
-					<div className="bg-white/5 rounded-lg p-4 border border-white/10">
+					{/* Video Preview Strip - Same Source Videos Only (Compact for Shorts) */}
+					{video?.video_url && videosArray.length > 0 && (() => {
+						// Filter videos that share the same video_url (same source)
+						const sameSourceVideos = videosArray.filter(v => v.video_url === video.video_url);
+						const sameSourceIndex = sameSourceVideos.findIndex(v => v.id === parseInt(id));
+						
+						return sameSourceVideos.length > 1 ? (
+							<div className="bg-white/5 rounded-lg p-2 border border-white/10">
+								<div className="flex items-center justify-between mb-2">
+									<h4 className="text-xs font-semibold text-gray-300 flex items-center gap-2">
+										Video Versions
+										<span className="text-[10px] text-gray-400">({sameSourceVideos.length})</span>
+									</h4>
+									{sameSourceIndex >= 0 && (
+										<span className="text-[10px] text-gray-500">
+											{sameSourceIndex + 1}/{sameSourceVideos.length}
+										</span>
+									)}
+								</div>
+								<div className="flex gap-1.5 overflow-x-auto pb-1 custom-scrollbar scroll-smooth">
+									{sameSourceVideos.map((v) => {
+										const isActive = v.id === parseInt(id);
+										// Get thumbnail - prefer cover_url, then final video, then local file
+										const thumbnailUrl = v.cover_url || v.final_processed_video_url || v.local_file_url || v.video_url;
+										return (
+											<button
+												key={v.id}
+												onClick={() => {
+													navigate(`/videos/${v.id}`);
+													window.scrollTo({ top: 0, behavior: 'smooth' });
+												}}
+												className={`flex-shrink-0 relative group transition-all ${
+													isActive 
+														? 'ring-1.5 ring-[var(--rednote-primary)] rounded-md scale-[1.02]' 
+														: 'hover:scale-[1.02]'
+												}`}
+												title={v.title || `Video ${v.id}`}
+											>
+												<div className={`w-14 h-20 rounded-md overflow-hidden border transition-all ${
+													isActive 
+														? 'border-[var(--rednote-primary)] shadow-md shadow-[var(--rednote-primary)]/40' 
+														: 'border-white/15 hover:border-white/30'
+												}`}>
+													{thumbnailUrl ? (
+														<img
+															src={thumbnailUrl}
+															alt={v.title || `Video ${v.id}`}
+															className="w-full h-full object-cover"
+															onError={(e) => {
+																// Fallback to placeholder if image fails to load
+																e.target.style.display = 'none';
+																e.target.nextElementSibling.style.display = 'flex';
+															}}
+														/>
+													) : null}
+													<div className={`w-full h-full bg-white/5 flex items-center justify-center ${thumbnailUrl ? 'hidden' : ''}`}>
+														<Play className="w-4 h-4 text-gray-400" />
+													</div>
+												</div>
+												{isActive && (
+													<div className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full bg-[var(--rednote-primary)]"></div>
+												)}
+												<div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors rounded-md pointer-events-none"></div>
+											</button>
+										);
+									})}
+								</div>
+							</div>
+						) : null;
+					})()}
+
+					{/* Video player - Optimized for shorts (9:16 aspect ratio) */}
+					<div className="bg-white/5 rounded-lg p-3 border border-white/10">
 						{video.final_processed_video_url ||
 						video.local_file_url ||
 						video.video_url ? (
-							<div className="relative rounded-lg overflow-hidden bg-black aspect-video">
+							<div className="relative rounded-lg overflow-hidden bg-black mx-auto" style={{ maxWidth: '400px', aspectRatio: '9/16' }}>
 								<video
 									src={
 										video.final_processed_video_url ||
@@ -1117,7 +1351,7 @@ export function VideoDetail() {
 									}
 									poster={video.cover_url}
 									controls
-									className="w-full h-full"
+									className="w-full h-full object-contain"
 								/>
 								{video.final_processed_video_url && (
 									<div className="absolute top-2 right-2 px-2 py-1 bg-green-500/80 text-white text-xs rounded">
@@ -1160,6 +1394,8 @@ export function VideoDetail() {
 							video={video}
 							processingState={processingState}
 							onRetry={handleRetry}
+							wsConnected={wsConnected}
+							wsUpdate={wsUpdate}
 						/>
 					)}
 
@@ -1310,6 +1546,40 @@ export function VideoDetail() {
 									</Button>
 								)}
 
+								{/* Visual Analysis button - shows when frames are extracted but visual analysis not done */}
+								{video.frames_extracted && 
+									!video.visual_transcript && 
+									!video.visual_transcript_started_at && (
+									<Button
+										size="sm"
+										variant="secondary"
+										icon={Brain}
+										onClick={() => {
+											showInfo(
+												"Starting Visual Analysis",
+												`Analyzing ${video.total_frames_extracted || 0} frames using Gemini Vision API...`
+											);
+											analyzeVisualMutation.mutate();
+										}}
+										loading={analyzeVisualMutation.isPending}
+										disabled={analyzeVisualMutation.isPending}>
+										{analyzeVisualMutation.isPending
+											? "Analyzing with Gemini AI..."
+											: `Analyze Visual (${video.total_frames_extracted || 0} frames)`}
+									</Button>
+								)}
+								{/* Show status if visual analysis is in progress */}
+								{video.visual_transcript_started_at && !video.visual_transcript_finished_at && (
+									<Button
+										size="sm"
+										variant="secondary"
+										icon={Brain}
+										disabled={true}
+										loading={true}>
+										Analyzing with Gemini AI...
+									</Button>
+								)}
+
 								{/* Clear processing state button - shows when processingState exists but video is not actually processing or is stuck */}
 								{processingState &&
 									video &&
@@ -1427,16 +1697,24 @@ export function VideoDetail() {
 						{/* Divider */}
 						<div className="border-t border-white/10 mb-6"></div>
 
-						{/* Video Versions Section */}
+						{/* Video Versions Section - Updates via WebSocket */}
 						<div>
 							<h4 className="text-sm font-semibold text-gray-300 mb-4">
 								Video Versions
+								{wsConnected && (
+									<span className="ml-2 text-xs text-green-400">
+										● Live
+									</span>
+								)}
 							</h4>
 							<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-								{(video.local_file_url || video.video_url) && (
+								{((video.local_file_url || video.video_url) || 
+								  (wsUpdate?.local_file_url || wsUpdate?.video_url)) && (
 									<a
 										href={
+											wsUpdate?.local_file_url || 
 											video.local_file_url ||
+											wsUpdate?.video_url ||
 											video.video_url
 										}
 										target="_blank"
@@ -1450,9 +1728,9 @@ export function VideoDetail() {
 									</a>
 								)}
 
-								{video.voice_removed_video_url && (
+								{(video.voice_removed_video_url || wsUpdate?.voice_removed_video_url) && (
 									<a
-										href={video.voice_removed_video_url}
+										href={wsUpdate?.voice_removed_video_url || video.voice_removed_video_url}
 										target="_blank"
 										rel="noopener noreferrer"
 										className="inline-flex items-center gap-2 px-4 py-3 text-sm rounded-lg bg-yellow-500/20 text-yellow-300 hover:bg-yellow-500/30 border border-yellow-500/30 w-full justify-center transition-colors">
@@ -1463,9 +1741,9 @@ export function VideoDetail() {
 									</a>
 								)}
 
-								{video.synthesized_audio_url && (
+								{(video.synthesized_audio_url || wsUpdate?.synthesized_audio_url) && (
 									<a
-										href={video.synthesized_audio_url}
+										href={wsUpdate?.synthesized_audio_url || video.synthesized_audio_url}
 										target="_blank"
 										rel="noopener noreferrer"
 										className="inline-flex items-center gap-2 px-4 py-3 text-sm rounded-lg bg-purple-500/20 text-purple-300 hover:bg-purple-500/30 border border-purple-500/30 w-full justify-center transition-colors">
@@ -1476,9 +1754,9 @@ export function VideoDetail() {
 									</a>
 								)}
 
-								{video.final_processed_video_url && (
+								{(video.final_processed_video_url || wsUpdate?.final_processed_video_url) && (
 									<a
-										href={video.final_processed_video_url}
+										href={wsUpdate?.final_processed_video_url || video.final_processed_video_url}
 										target="_blank"
 										rel="noopener noreferrer"
 										className="inline-flex items-center gap-2 px-4 py-3 text-sm rounded-lg bg-green-500/20 text-green-300 hover:bg-green-500/30 border border-green-500/30 w-full justify-center transition-colors">
@@ -1491,9 +1769,11 @@ export function VideoDetail() {
 								)}
 							</div>
 
-							{video.synthesis_status === "synthesized" &&
+							{((video.synthesis_status === "synthesized" || wsUpdate?.synthesis_status === "synthesized") &&
 								!video.voice_removed_video_url &&
-								!video.final_processed_video_url && (
+								!wsUpdate?.voice_removed_video_url &&
+								!video.final_processed_video_url &&
+								!wsUpdate?.final_processed_video_url) && (
 									<div className="text-xs text-yellow-400 p-3 bg-yellow-500/10 rounded-lg border border-yellow-500/30 mt-3">
 										⏳ Processing video files... (This may
 										take a few moments)
@@ -1578,6 +1858,67 @@ export function VideoDetail() {
 						</div>
 					</div>
 
+					{/* Currently Processing Videos - Sidebar */}
+					{(() => {
+						// Get current processing step for this video
+						const getCurrentStep = () => {
+							if (processingState?.type === "download" || !video.is_downloaded) return "Download";
+							if (!video.frames_extracted) return "Frame Extraction";
+							if (video.visual_transcript_started_at && !video.visual_transcript_finished_at) return "Visual Analysis";
+							if (video.transcription_status === "transcribing" || processingState?.type === "transcribe") return "Transcription";
+							if (video.ai_processing_status === "processing" || processingState?.type === "processAI") return "AI Processing";
+							if (video.enhanced_transcript_started_at && !video.enhanced_transcript_finished_at) return "Enhanced Transcript";
+							if (video.script_status === "generating" || processingState?.type === "script") return "Script Generation";
+							if (video.synthesis_status === "synthesizing" || processingState?.type === "synthesis") return "TTS Synthesis";
+							if (video.synthesis_status === "synthesized" && !video.final_processed_video_url) return "Final Video Assembly";
+							if (video.final_processed_video_url && !video.cloudinary_url) return "Cloudinary Upload";
+							if (video.cloudinary_url && !video.google_sheets_synced) return "Google Sheets Sync";
+							return null;
+						};
+
+						const currentStep = getCurrentStep();
+						if (!currentStep) return null;
+
+						return (
+							<div className="bg-blue-500/10 rounded-lg p-4 border border-blue-500/30 mb-4">
+								<div className="flex items-center gap-2 mb-2">
+									<Loader2 className="w-4 h-4 text-blue-400 animate-spin" />
+									<h4 className="text-xs font-semibold text-blue-400 uppercase tracking-wide">
+										Currently Processing
+									</h4>
+								</div>
+								<div className="space-y-1">
+									<div className="text-sm text-white font-medium">
+										{video.title || "Untitled"}
+									</div>
+									<div className="text-xs text-blue-300">
+										Step: {currentStep}
+									</div>
+									{(() => {
+										const startedAt = 
+											processingState?.type === "download" ? video.extraction_started_at :
+											video.visual_transcript_started_at && !video.visual_transcript_finished_at ? video.visual_transcript_started_at :
+											video.transcription_status === "transcribing" ? video.transcript_started_at :
+											video.ai_processing_status === "processing" ? video.ai_processing_started_at :
+											video.enhanced_transcript_started_at && !video.enhanced_transcript_finished_at ? video.enhanced_transcript_started_at :
+											video.script_status === "generating" ? video.script_started_at :
+											video.synthesis_status === "synthesizing" ? video.synthesis_started_at :
+											video.synthesis_status === "synthesized" && !video.final_processed_video_url ? video.final_video_started_at :
+											null;
+										if (startedAt) {
+											return (
+												<div className="text-xs text-gray-400">
+													Started: {formatDate(startedAt)}
+												</div>
+											);
+										}
+										return null;
+									})()}
+								</div>
+							</div>
+						);
+					})()}
+
 					{/* Processing Status Card - Sidebar */}
 					<div className="bg-white/5 rounded-lg p-4 border border-white/10">
 						<div className="flex items-center justify-between mb-3">
@@ -1605,39 +1946,51 @@ export function VideoDetail() {
 										done:
 											video.is_downloaded ||
 											isDownloading,
-										weight: 10,
+										weight: 8,
+									},
+									{
+										done: video.frames_extracted,
+										weight: 5,
+									},
+									{
+										done: !!video.visual_transcript,
+										weight: 8,
 									},
 									{
 										done:
 											video.transcription_status ===
 											"transcribed",
-										weight: 25,
+										weight: 12,
 									},
 									{
 										done:
 											video.ai_processing_status ===
 											"processed",
-										weight: 15,
+										weight: 10,
+									},
+									{
+										done: !!video.enhanced_transcript,
+										weight: 8,
 									},
 									{
 										done:
 											video.script_status === "generated",
-										weight: 15,
+										weight: 12,
 									},
 									{
 										done:
 											video.synthesis_status ===
 											"synthesized",
-										weight: 20,
+										weight: 15,
 									},
 									{
 										done: !!video.final_processed_video_url,
-										weight: 10,
+										weight: 12,
 									},
-									{ done: !!video.cloudinary_url, weight: 3 },
+									{ done: !!video.cloudinary_url, weight: 5 },
 									{
 										done: !!video.google_sheets_synced,
-										weight: 2,
+										weight: 5,
 									},
 								];
 								const totalWeight = steps.reduce(
@@ -1691,6 +2044,36 @@ export function VideoDetail() {
 										: "Pending"}
 								</span>
 							</div>
+							{video.extraction_started_at && (
+								<div className="text-xs text-gray-500 ml-2">
+									Started: {formatDate(video.extraction_started_at)}
+								</div>
+							)}
+							{video.extraction_finished_at && (
+								<div className="text-xs text-gray-500 ml-2">
+									Completed: {formatDate(video.extraction_finished_at)}
+								</div>
+							)}
+							<div className="flex items-center justify-between">
+								<span className="text-xs text-gray-400">
+									Frame Extraction
+								</span>
+								<span
+									className={`text-xs px-2 py-0.5 rounded ${
+										video.frames_extracted
+											? "bg-green-500/20 text-green-300"
+											: "bg-gray-500/20 text-gray-400"
+									}`}>
+									{video.frames_extracted
+										? `✓ ${video.total_frames_extracted || 0} frames`
+										: "Pending"}
+								</span>
+							</div>
+							{video.frames_extracted_at && (
+								<div className="text-xs text-gray-500 ml-2">
+									Extracted: {formatDate(video.frames_extracted_at)}
+								</div>
+							)}
 							<div className="flex items-center justify-between">
 								<span className="text-xs text-gray-400">
 									Transcription
@@ -1728,6 +2111,92 @@ export function VideoDetail() {
 									);
 								})()}
 							</div>
+							{video.transcript_started_at && (
+								<div className="text-xs text-gray-500 ml-2">
+									Started: {formatDate(video.transcript_started_at)}
+								</div>
+							)}
+							{video.transcript_processed_at && (
+								<div className="text-xs text-gray-500 ml-2">
+									Completed: {formatDate(video.transcript_processed_at)}
+								</div>
+							)}
+							<div className="flex items-center justify-between">
+								<span className="text-xs text-gray-400">
+									Visual Analysis (Gemini)
+								</span>
+								{(() => {
+									const isProcessing =
+										video.visual_transcript_started_at &&
+										!video.visual_transcript_finished_at;
+									const isComplete = !!video.visual_transcript;
+
+									return (
+										<span
+											className={`text-xs px-2 py-0.5 rounded ${
+												isComplete
+													? "bg-green-500/20 text-green-300"
+													: isProcessing
+													? "bg-yellow-500/20 text-yellow-300 animate-pulse"
+													: "bg-gray-500/20 text-gray-400"
+											}`}>
+											{isComplete
+												? "✓ Complete"
+												: isProcessing
+												? "⏳ Processing"
+												: "Pending"}
+										</span>
+									);
+								})()}
+							</div>
+							{video.visual_transcript_started_at && (
+								<div className="text-xs text-gray-500 ml-2">
+									Started: {formatDate(video.visual_transcript_started_at)}
+								</div>
+							)}
+							{video.visual_transcript_finished_at && (
+								<div className="text-xs text-gray-500 ml-2">
+									Completed: {formatDate(video.visual_transcript_finished_at)}
+								</div>
+							)}
+							<div className="flex items-center justify-between">
+								<span className="text-xs text-gray-400">
+									Enhanced Transcript
+								</span>
+								{(() => {
+									const isProcessing =
+										video.enhanced_transcript_started_at &&
+										!video.enhanced_transcript_finished_at;
+									const isComplete = !!video.enhanced_transcript;
+
+									return (
+										<span
+											className={`text-xs px-2 py-0.5 rounded ${
+												isComplete
+													? "bg-green-500/20 text-green-300"
+													: isProcessing
+													? "bg-yellow-500/20 text-yellow-300 animate-pulse"
+													: "bg-gray-500/20 text-gray-400"
+											}`}>
+											{isComplete
+												? "✓ Complete"
+												: isProcessing
+												? "⏳ Processing"
+												: "Pending"}
+										</span>
+									);
+								})()}
+							</div>
+							{video.enhanced_transcript_started_at && (
+								<div className="text-xs text-gray-500 ml-2">
+									Started: {formatDate(video.enhanced_transcript_started_at)}
+								</div>
+							)}
+							{video.enhanced_transcript_finished_at && (
+								<div className="text-xs text-gray-500 ml-2">
+									Completed: {formatDate(video.enhanced_transcript_finished_at)}
+								</div>
+							)}
 							<div className="flex items-center justify-between">
 								<span className="text-xs text-gray-400">
 									AI Processing
@@ -1765,6 +2234,16 @@ export function VideoDetail() {
 									);
 								})()}
 							</div>
+							{video.ai_processing_started_at && (
+								<div className="text-xs text-gray-500 ml-2">
+									Started: {formatDate(video.ai_processing_started_at)}
+								</div>
+							)}
+							{video.ai_processed_at && (
+								<div className="text-xs text-gray-500 ml-2">
+									Completed: {formatDate(video.ai_processed_at)}
+								</div>
+							)}
 							<div className="flex items-center justify-between">
 								<span className="text-xs text-gray-400">
 									Script Generation
@@ -1789,6 +2268,16 @@ export function VideoDetail() {
 										: "Pending"}
 								</span>
 							</div>
+							{video.script_started_at && (
+								<div className="text-xs text-gray-500 ml-2">
+									Started: {formatDate(video.script_started_at)}
+								</div>
+							)}
+							{video.script_generated_at && (
+								<div className="text-xs text-gray-500 ml-2">
+									Completed: {formatDate(video.script_generated_at)}
+								</div>
+							)}
 							<div className="flex items-center justify-between">
 								<span className="text-xs text-gray-400">
 									TTS Synthesis
@@ -1826,6 +2315,16 @@ export function VideoDetail() {
 									);
 								})()}
 							</div>
+							{video.synthesis_started_at && (
+								<div className="text-xs text-gray-500 ml-2">
+									Started: {formatDate(video.synthesis_started_at)}
+								</div>
+							)}
+							{video.synthesized_at && (
+								<div className="text-xs text-gray-500 ml-2">
+									Completed: {formatDate(video.synthesized_at)}
+								</div>
+							)}
 							<div className="flex items-center justify-between">
 								<span className="text-xs text-gray-400">
 									Final Video
@@ -1849,6 +2348,16 @@ export function VideoDetail() {
 										: "Pending"}
 								</span>
 							</div>
+							{video.final_video_started_at && (
+								<div className="text-xs text-gray-500 ml-2">
+									Started: {formatDate(video.final_video_started_at)}
+								</div>
+							)}
+							{video.final_video_finished_at && (
+								<div className="text-xs text-gray-500 ml-2">
+									Completed: {formatDate(video.final_video_finished_at)}
+								</div>
+							)}
 							<div className="flex items-center justify-between">
 								<span className="text-xs text-gray-400">
 									Cloudinary Upload
@@ -1868,6 +2377,16 @@ export function VideoDetail() {
 										: "Not Ready"}
 								</span>
 							</div>
+							{video.cloudinary_upload_started_at && (
+								<div className="text-xs text-gray-500 ml-2">
+									Started: {formatDate(video.cloudinary_upload_started_at)}
+								</div>
+							)}
+							{video.cloudinary_uploaded_at && (
+								<div className="text-xs text-gray-500 ml-2">
+									Completed: {formatDate(video.cloudinary_uploaded_at)}
+								</div>
+							)}
 							<div className="flex items-center justify-between">
 								<span className="text-xs text-gray-400">
 									Google Sheets Sync
@@ -1887,6 +2406,16 @@ export function VideoDetail() {
 										: "Not Ready"}
 								</span>
 							</div>
+							{video.google_sheets_sync_started_at && (
+								<div className="text-xs text-gray-500 ml-2">
+									Started: {formatDate(video.google_sheets_sync_started_at)}
+								</div>
+							)}
+							{video.google_sheets_synced_at && (
+								<div className="text-xs text-gray-500 ml-2">
+									Completed: {formatDate(video.google_sheets_synced_at)}
+								</div>
+							)}
 						</div>
 					</div>
 
@@ -2049,6 +2578,36 @@ export function VideoDetail() {
 									</span>
 									<span className="text-xs text-indigo-300">
 										✓ Generated
+									</span>
+								</div>
+							)}
+							{video.frames_extracted && (
+								<div className="flex items-center justify-between">
+									<span className="text-xs text-gray-400">
+										Frames Extracted
+									</span>
+									<span className="text-xs text-blue-300">
+										✓ {video.total_frames_extracted || 0} frames
+									</span>
+								</div>
+							)}
+							{video.frames_extracted_at && (
+								<div className="flex items-center justify-between">
+									<span className="text-xs text-gray-400">
+										Frames Extracted At
+									</span>
+									<span className="text-xs text-gray-300">
+										{formatDate(video.frames_extracted_at)}
+									</span>
+								</div>
+							)}
+							{video.visual_transcript && (
+								<div className="flex items-center justify-between">
+									<span className="text-xs text-gray-400">
+										Visual Transcript
+									</span>
+									<span className="text-xs text-purple-300">
+										✓ Available (Gemini AI)
 									</span>
 								</div>
 							)}
