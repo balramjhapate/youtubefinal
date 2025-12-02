@@ -56,6 +56,8 @@ export function VideoDetail() {
 	const [elapsedTime, setElapsedTime] = useState(0);
 	const [isTimerRunning, setIsTimerRunning] = useState(false);
 
+
+
 	const formatElapsedTime = (seconds) => {
 		const mins = Math.floor(seconds / 60);
 		const secs = seconds % 60;
@@ -208,6 +210,40 @@ export function VideoDetail() {
 			return false;
 		},
 	});
+
+	// Video Player State
+	const [activeVideoUrl, setActiveVideoUrl] = useState(null);
+	const [activeVersion, setActiveVersion] = useState(null); // 'original', 'voice_removed', 'final'
+
+	// Update active video when video data loads or changes, but only if user hasn't manually selected one (or if the selected one is now invalid/better one available?)
+	// Actually, simpler: Default to the best available, allow user to override.
+	useEffect(() => {
+		if (video) {
+			// If we already have an active version that is still valid, keep it? 
+			// Or just always default to the "best" new one if we are in a "processing" flow?
+			// Let's try to preserve user choice if possible, but default to new final video if it just appeared.
+			
+			const finalUrl = video.final_processed_video_url;
+			const voiceRemovedUrl = video.voice_removed_video_url;
+			const originalUrl = video.local_file_url || video.video_url;
+
+			// If we just finished processing final video, switch to it
+			if (finalUrl && activeVersion !== 'final') {
+				setActiveVideoUrl(finalUrl);
+				setActiveVersion('final');
+			} 
+			// If we don't have a final video yet, but have voice removed, and we aren't on original
+			else if (!finalUrl && voiceRemovedUrl && activeVersion !== 'voice_removed' && activeVersion !== 'original') {
+				setActiveVideoUrl(voiceRemovedUrl);
+				setActiveVersion('voice_removed');
+			}
+			// Fallback to original
+			else if (!finalUrl && !voiceRemovedUrl && !activeVideoUrl) {
+				setActiveVideoUrl(originalUrl);
+				setActiveVersion('original');
+			}
+		}
+	}, [video?.final_processed_video_url, video?.voice_removed_video_url, video?.local_file_url, video?.video_url]);
 	
 	useEffect(() => {
 		let interval;
@@ -1333,31 +1369,73 @@ export function VideoDetail() {
 
 					{/* Video player - Optimized for shorts (9:16 aspect ratio) */}
 					<div className="bg-white/5 rounded-lg p-3 border border-white/10">
-						{video.final_processed_video_url ||
-						video.local_file_url ||
-						video.video_url ? (
+						{/* Version Switcher Tabs */}
+						<div className="flex p-1 bg-black/20 rounded-lg mb-3 gap-1 overflow-x-auto">
+							<button
+								onClick={() => {
+									setActiveVideoUrl(video.local_file_url || video.video_url);
+									setActiveVersion('original');
+								}}
+								disabled={!video.local_file_url && !video.video_url}
+								className={`flex-1 py-2 px-3 text-xs font-medium rounded-md transition-all whitespace-nowrap ${
+									activeVersion === 'original'
+										? 'bg-blue-600 text-white shadow-lg'
+										: 'text-gray-400 hover:text-white hover:bg-white/5'
+								} disabled:opacity-30 disabled:cursor-not-allowed`}
+							>
+								Original Video
+							</button>
+							<button
+								onClick={() => {
+									setActiveVideoUrl(video.voice_removed_video_url);
+									setActiveVersion('voice_removed');
+								}}
+								disabled={!video.voice_removed_video_url}
+								className={`flex-1 py-2 px-3 text-xs font-medium rounded-md transition-all whitespace-nowrap ${
+									activeVersion === 'voice_removed'
+										? 'bg-yellow-600 text-white shadow-lg'
+										: 'text-gray-400 hover:text-white hover:bg-white/5'
+								} disabled:opacity-30 disabled:cursor-not-allowed`}
+							>
+								Voice Removed
+							</button>
+							<button
+								onClick={() => {
+									setActiveVideoUrl(video.final_processed_video_url);
+									setActiveVersion('final');
+								}}
+								disabled={!video.final_processed_video_url}
+								className={`flex-1 py-2 px-3 text-xs font-medium rounded-md transition-all whitespace-nowrap ${
+									activeVersion === 'final'
+										? 'bg-green-600 text-white shadow-lg'
+										: 'text-gray-400 hover:text-white hover:bg-white/5'
+								} disabled:opacity-30 disabled:cursor-not-allowed`}
+							>
+								Final Video
+							</button>
+						</div>
+
+						{activeVideoUrl ? (
 							<div className="relative rounded-lg overflow-hidden bg-black mx-auto" style={{ maxWidth: '400px', aspectRatio: '9/16' }}>
 								<video
-									src={
-										video.final_processed_video_url ||
-										video.local_file_url ||
-										video.video_url
-									}
+									key={activeVideoUrl} // Force reload when URL changes
+									src={activeVideoUrl}
 									poster={video.cover_url}
 									controls
 									className="w-full h-full object-contain"
 								/>
-								{video.final_processed_video_url && (
-									<div className="absolute top-2 right-2 px-2 py-1 bg-green-500/80 text-white text-xs rounded">
-										✓ Final Video (with new Hindi audio)
-									</div>
-								)}
-								{!video.final_processed_video_url &&
-									video.local_file_url && (
-										<div className="absolute top-2 right-2 px-2 py-1 bg-blue-500/80 text-white text-xs rounded">
-											✓ Downloaded Video (original audio)
-										</div>
+								{/* Overlay Badge */}
+								<div className="absolute top-2 right-2 px-2 py-1 rounded text-xs font-medium backdrop-blur-md shadow-sm">
+									{activeVersion === 'final' && (
+										<span className="bg-green-500/90 text-white px-2 py-1 rounded">✓ Final Video (Hindi)</span>
 									)}
+									{activeVersion === 'voice_removed' && (
+										<span className="bg-yellow-500/90 text-white px-2 py-1 rounded">🔇 No Audio</span>
+									)}
+									{activeVersion === 'original' && (
+										<span className="bg-blue-500/90 text-white px-2 py-1 rounded">Original Audio</span>
+									)}
+								</div>
 							</div>
 						) : video.cover_url ? (
 							<img
@@ -1372,26 +1450,8 @@ export function VideoDetail() {
 						)}
 					</div>
 
-					{/* Progress Indicators - Replaced with ProcessingStatusCard */}
-					{(processingState ||
-						video.transcription_status === "transcribing" ||
-						video.ai_processing_status === "processing" ||
-						video.script_status === "generating" ||
-						video.synthesis_status === "synthesizing" ||
-						video.transcription_status === "failed" ||
-						video.ai_processing_status === "failed" ||
-						video.script_status === "failed" ||
-						video.synthesis_status === "failed" ||
-						(video.synthesis_status === "synthesized" &&
-							!video.final_processed_video_url)) && (
-						<ProcessingStatusCard
-							video={video}
-							processingState={processingState}
-							onRetry={handleRetry}
-							wsConnected={wsConnected}
-							wsUpdate={wsUpdate}
-						/>
-					)}
+					{/* Progress Indicators - Moved below Actions for stability */}
+
 
 					{/* Actions and Video Versions - Combined in one card */}
 					<div className="bg-white/5 rounded-lg p-4 border border-white/10">
@@ -1691,89 +1751,20 @@ export function VideoDetail() {
 						{/* Divider */}
 						<div className="border-t border-white/10 mb-6"></div>
 
-						{/* Video Versions Section - Updates via WebSocket */}
-						<div>
-							<h4 className="text-sm font-semibold text-gray-300 mb-4">
-								Video Versions
-								{wsConnected && (
-									<span className="ml-2 text-xs text-green-400">
-										● Live
-									</span>
-								)}
-							</h4>
-							<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-								{((video.local_file_url || video.video_url) || 
-								  (wsUpdate?.local_file_url || wsUpdate?.video_url)) && (
-									<a
-										href={
-											wsUpdate?.local_file_url || 
-											video.local_file_url ||
-											wsUpdate?.video_url ||
-											video.video_url
-										}
-										target="_blank"
-										rel="noopener noreferrer"
-										className="inline-flex items-center gap-2 px-4 py-3 text-sm rounded-lg bg-blue-500/20 text-blue-300 hover:bg-blue-500/30 border border-blue-500/30 w-full justify-center transition-colors">
-										<ExternalLink className="w-4 h-4" />
-										<span className="text-center">
-											Downloaded Video (Original with
-											Audio)
-										</span>
-									</a>
-								)}
+						{/* Video Versions Section - Removed as it's now integrated in the player */}
+						{/* We can keep download links if needed, but for now let's clean up the UI as requested */}
+					</div>
 
-								{(video.voice_removed_video_url || wsUpdate?.voice_removed_video_url) && (
-									<a
-										href={wsUpdate?.voice_removed_video_url || video.voice_removed_video_url}
-										target="_blank"
-										rel="noopener noreferrer"
-										className="inline-flex items-center gap-2 px-4 py-3 text-sm rounded-lg bg-yellow-500/20 text-yellow-300 hover:bg-yellow-500/30 border border-yellow-500/30 w-full justify-center transition-colors">
-										<ExternalLink className="w-4 h-4" />
-										<span className="text-center">
-											Voice Removed Video (No Audio)
-										</span>
-									</a>
-								)}
 
-								{(video.synthesized_audio_url || wsUpdate?.synthesized_audio_url) && (
-									<a
-										href={wsUpdate?.synthesized_audio_url || video.synthesized_audio_url}
-										target="_blank"
-										rel="noopener noreferrer"
-										className="inline-flex items-center gap-2 px-4 py-3 text-sm rounded-lg bg-purple-500/20 text-purple-300 hover:bg-purple-500/30 border border-purple-500/30 w-full justify-center transition-colors">
-										<ExternalLink className="w-4 h-4" />
-										<span className="text-center">
-											🎵 Synthesized TTS Audio (Hindi)
-										</span>
-									</a>
-								)}
-
-								{(video.final_processed_video_url || wsUpdate?.final_processed_video_url) && (
-									<a
-										href={wsUpdate?.final_processed_video_url || video.final_processed_video_url}
-										target="_blank"
-										rel="noopener noreferrer"
-										className="inline-flex items-center gap-2 px-4 py-3 text-sm rounded-lg bg-green-500/20 text-green-300 hover:bg-green-500/30 border border-green-500/30 w-full justify-center transition-colors">
-										<ExternalLink className="w-4 h-4" />
-										<span className="text-center">
-											Final Processed Video (with New
-											Hindi Audio)
-										</span>
-									</a>
-								)}
-							</div>
-
-							{((video.synthesis_status === "synthesized" || wsUpdate?.synthesis_status === "synthesized") &&
-								!video.voice_removed_video_url &&
-								!wsUpdate?.voice_removed_video_url &&
-								!video.final_processed_video_url &&
-								!wsUpdate?.final_processed_video_url) && (
-									<div className="text-xs text-yellow-400 p-3 bg-yellow-500/10 rounded-lg border border-yellow-500/30 mt-3">
-										⏳ Processing video files... (This may
-										take a few moments)
-									</div>
-								)}
-						</div>
+					{/* Processing Status Card - Always visible below actions */}
+					<div className="mt-6">
+						<ProcessingStatusCard
+							video={video}
+							processingState={processingState}
+							onRetry={handleRetry}
+							wsConnected={wsConnected}
+							wsUpdate={wsUpdate}
+						/>
 					</div>
 				</div>
 
