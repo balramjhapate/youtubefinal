@@ -1266,76 +1266,70 @@ export function VideoDetail() {
 			<div className="grid grid-cols-1 xl:grid-cols-3 gap-6 w-full">
 				{/* Left column - Video and main content */}
 				<div className="xl:col-span-2 space-y-6 w-full">
-					{/* Video Preview Strip - Same Source Videos Only (Compact for Shorts) */}
-					{video?.video_url && videosArray.length > 0 && (() => {
-						// Filter videos that share the same video_url (same source)
-						const sameSourceVideos = videosArray.filter(v => v.video_url === video.video_url);
-						const sameSourceIndex = sameSourceVideos.findIndex(v => v.id === parseInt(id));
-						
-						return sameSourceVideos.length > 1 ? (
-							<div className="bg-white/5 rounded-lg p-2 border border-white/10">
-								<div className="flex items-center justify-between mb-2">
-									<h4 className="text-xs font-semibold text-gray-300 flex items-center gap-2">
-										Video Versions
-										<span className="text-[10px] text-gray-400">({sameSourceVideos.length})</span>
-									</h4>
-									{sameSourceIndex >= 0 && (
-										<span className="text-[10px] text-gray-500">
-											{sameSourceIndex + 1}/{sameSourceVideos.length}
-										</span>
-									)}
-								</div>
-								<div className="flex gap-1.5 overflow-x-auto pb-1 custom-scrollbar scroll-smooth">
-									{sameSourceVideos.map((v) => {
-										const isActive = v.id === parseInt(id);
-										// Get thumbnail - prefer cover_url, then final video, then local file
-										const thumbnailUrl = v.cover_url || v.final_processed_video_url || v.local_file_url || v.video_url;
-										return (
-											<button
-												key={v.id}
-												onClick={() => {
-													navigate(`/videos/${v.id}`);
-													window.scrollTo({ top: 0, behavior: 'smooth' });
-												}}
-												className={`flex-shrink-0 relative group transition-all ${
-													isActive 
-														? 'ring-1.5 ring-[var(--rednote-primary)] rounded-md scale-[1.02]' 
-														: 'hover:scale-[1.02]'
-												}`}
-												title={v.title || `Video ${v.id}`}
-											>
-												<div className={`w-14 h-20 rounded-md overflow-hidden border transition-all ${
-													isActive 
-														? 'border-[var(--rednote-primary)] shadow-md shadow-[var(--rednote-primary)]/40' 
-														: 'border-white/15 hover:border-white/30'
-												}`}>
-													{thumbnailUrl ? (
-														<img
-															src={thumbnailUrl}
-															alt={v.title || `Video ${v.id}`}
-															className="w-full h-full object-cover"
-															onError={(e) => {
-																// Fallback to placeholder if image fails to load
-																e.target.style.display = 'none';
-																e.target.nextElementSibling.style.display = 'flex';
-															}}
-														/>
-													) : null}
-													<div className={`w-full h-full bg-white/5 flex items-center justify-center ${thumbnailUrl ? 'hidden' : ''}`}>
-														<Play className="w-4 h-4 text-gray-400" />
-													</div>
-												</div>
-												{isActive && (
-													<div className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full bg-[var(--rednote-primary)]"></div>
-												)}
-												<div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors rounded-md pointer-events-none"></div>
-											</button>
-										);
-									})}
-								</div>
+					{/* Video Preview Strip - All Videos (Compact for Shorts) */}
+					{videosArray.length > 0 && (
+						<div className="bg-white/5 rounded-lg p-2 border border-white/10">
+							<div className="flex items-center justify-between mb-2">
+								<h4 className="text-xs font-semibold text-gray-300 flex items-center gap-2">
+									All Videos
+									<span className="text-[10px] text-gray-400">({videosArray.length})</span>
+								</h4>
+								{currentVideoIndex >= 0 && (
+									<span className="text-[10px] text-gray-500">
+										{currentVideoIndex + 1}/{videosArray.length}
+									</span>
+								)}
 							</div>
-						) : null;
-					})()}
+							<div className="flex gap-1.5 overflow-x-auto pb-1 custom-scrollbar scroll-smooth">
+								{videosArray.map((v) => {
+									const isActive = v.id === parseInt(id);
+									// Get thumbnail - prefer cover_url, then final video, then local file
+									const thumbnailUrl = v.cover_url || v.final_processed_video_url || v.local_file_url || v.video_url;
+									return (
+										<button
+											key={v.id}
+											onClick={() => {
+												navigate(`/videos/${v.id}`);
+												window.scrollTo({ top: 0, behavior: 'smooth' });
+											}}
+											className={`flex-shrink-0 relative group transition-all ${
+												isActive 
+													? 'ring-1.5 ring-[var(--rednote-primary)] rounded-md scale-[1.02]' 
+													: 'hover:scale-[1.02]'
+											}`}
+											title={v.title || `Video ${v.id}`}
+										>
+											<div className={`w-14 h-20 rounded-md overflow-hidden border transition-all ${
+												isActive 
+													? 'border-[var(--rednote-primary)] shadow-md shadow-[var(--rednote-primary)]/40' 
+													: 'border-white/15 hover:border-white/30'
+											}`}>
+												{thumbnailUrl ? (
+													<img
+														src={thumbnailUrl}
+														alt={v.title || `Video ${v.id}`}
+														className="w-full h-full object-cover"
+														onError={(e) => {
+															// Fallback to placeholder if image fails to load
+															e.target.style.display = 'none';
+															e.target.nextElementSibling.style.display = 'flex';
+														}}
+													/>
+												) : null}
+												<div className={`w-full h-full bg-white/5 flex items-center justify-center ${thumbnailUrl ? 'hidden' : ''}`}>
+													<Play className="w-4 h-4 text-gray-400" />
+												</div>
+											</div>
+											{isActive && (
+												<div className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full bg-[var(--rednote-primary)]"></div>
+											)}
+											<div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors rounded-md pointer-events-none"></div>
+										</button>
+									);
+								})}
+							</div>
+						</div>
+					)}
 
 					{/* Video player - Optimized for shorts (9:16 aspect ratio) */}
 					<div className="bg-white/5 rounded-lg p-3 border border-white/10">
