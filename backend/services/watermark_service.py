@@ -54,7 +54,7 @@ def apply_moving_watermark(video_path, watermark_text, output_path,
     """
     try:
         # Find ffmpeg
-        from ..pipeline.utils import find_ffmpeg
+        from pipeline.utils import find_ffmpeg
         ffmpeg_path = find_ffmpeg()
         if not ffmpeg_path:
             logger.error("ffmpeg not found. Cannot apply watermark.")
@@ -69,7 +69,7 @@ def apply_moving_watermark(video_path, watermark_text, output_path,
             return False
         
         # Get video dimensions and duration using ffprobe
-        from ..pipeline.utils import find_ffprobe
+        from pipeline.utils import find_ffprobe
         ffprobe_path = find_ffprobe()
         if not ffprobe_path:
             logger.error("ffprobe not found. Cannot get video dimensions.")

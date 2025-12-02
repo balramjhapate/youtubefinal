@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'settings')
 django.setup()
 
-from ..model import GoogleSheetsSettings
+from model import GoogleSheetsSettings
 from google_sheets_service import get_google_sheets_service, extract_spreadsheet_id, ensure_header_row
 import json
 

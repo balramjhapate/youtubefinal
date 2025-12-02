@@ -81,6 +81,11 @@ trap cleanup SIGINT
 trap 'log_error "Script failed at line $LINENO. Check logs in $LOG_DIR"' ERR
 
 log_info "Starting RedNote Project..."
+
+# Store the project root directory
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+log_debug "Project root: $PROJECT_ROOT"
+
 log_system_info
 
 # Check for Docker (optional - only needed for NCA Toolkit)
@@ -121,8 +126,9 @@ fi
 
 # Install Python dependencies
 log_info "Setting up Python environment..."
-cd backend || {
+cd "$PROJECT_ROOT/backend" || {
     log_error "Failed to change directory to backend"
+    log_error "Expected: $PROJECT_ROOT/backend"
     log_error "Current directory: $(pwd)"
     exit 1
 }
@@ -200,7 +206,27 @@ source venv/bin/activate || {
     log_error "Failed to activate virtual environment"
     exit 1
 }
-log_debug "Virtual environment activated: $(which python)"
+
+# Determine the Python executable to use (venv may have python, python3, or python3.10)
+if [ -f "venv/bin/python" ]; then
+    PYTHON_EXE="venv/bin/python"
+elif [ -f "venv/bin/python3" ]; then
+    PYTHON_EXE="venv/bin/python3"
+elif [ -f "venv/bin/python3.10" ]; then
+    PYTHON_EXE="venv/bin/python3.10"
+else
+    # Try to find it via which after activation
+    PYTHON_EXE=$(which python || which python3 || which python3.10 || echo "")
+    if [ -z "$PYTHON_EXE" ]; then
+        log_error "Could not find Python executable in virtual environment"
+        log_error "Venv directory contents:"
+        ls -la venv/bin/ | head -20
+        exit 1
+    fi
+fi
+
+log_debug "Virtual environment activated: Using $PYTHON_EXE"
+log_debug "Python version: $($PYTHON_EXE --version 2>&1)"
 
 # Check if dependencies need to be installed
 log_info "Checking Python dependencies..."
@@ -222,19 +248,19 @@ else
 fi
 
 # Quick check if Django is installed (as a proxy for all dependencies)
-if pip show django > /dev/null 2>&1; then
+if $PYTHON_EXE -m pip show django > /dev/null 2>&1; then
     if [ "$NEEDS_INSTALL" = false ]; then
         log_info "✓ Python dependencies already installed"
     else
         # requirements.txt changed, need to update
         log_info "Updating Python dependencies..."
         log_debug "Upgrading pip..."
-        if ! pip install --upgrade pip >> "$PIP_LOG" 2>&1; then
+        if ! $PYTHON_EXE -m pip install --upgrade pip >> "$PIP_LOG" 2>&1; then
             log_warning "pip upgrade had issues, but continuing..."
         fi
         # Run pip install and capture output
         log_info "Installing/updating packages from requirements.txt..."
-        PIP_OUTPUT=$(pip install -r requirements.txt 2>&1)
+        PIP_OUTPUT=$($PYTHON_EXE -m pip install -r requirements.txt 2>&1)
         PIP_EXIT=$?
         echo "$PIP_OUTPUT" >> "$PIP_LOG"
         # Only show output if there are actual changes (not just "already satisfied")
@@ -257,12 +283,12 @@ else
     # Dependencies not installed
     log_info "Installing Python dependencies (this may take a few minutes)..."
     log_debug "Upgrading pip..."
-    if ! pip install --upgrade pip >> "$PIP_LOG" 2>&1; then
+    if ! $PYTHON_EXE -m pip install --upgrade pip >> "$PIP_LOG" 2>&1; then
         log_warning "pip upgrade had issues, but continuing..."
     fi
     # Show progress for initial installation, filter out "already satisfied"
     log_info "Installing packages from requirements.txt..."
-    PIP_OUTPUT=$(pip install -r requirements.txt 2>&1)
+    PIP_OUTPUT=$($PYTHON_EXE -m pip install -r requirements.txt 2>&1)
     PIP_EXIT=$?
     echo "$PIP_OUTPUT" >> "$PIP_LOG"
     echo "$PIP_OUTPUT" | grep -v "Requirement already satisfied" | grep -v "^$" || true
@@ -283,9 +309,9 @@ fi
 
 # Ensure PyTorch is installed with GPU support (MPS for Mac, CUDA for NVIDIA)
 log_info "Installing/updating PyTorch with GPU support..."
-if pip install torch torchvision torchaudio >> "$PIP_LOG" 2>&1; then
+if $PYTHON_EXE -m pip install torch torchvision torchaudio >> "$PIP_LOG" 2>&1; then
     log_info "✓ PyTorch installed/updated successfully"
-    log_debug "PyTorch version: $(pip show torch | grep Version | awk '{print $2}' 2>/dev/null || echo 'unknown')"
+    log_debug "PyTorch version: $($PYTHON_EXE -m pip show torch | grep Version | awk '{print $2}' 2>/dev/null || echo 'unknown')"
 else
     log_warning "PyTorch installation had issues, but continuing..."
     log_warning "Check $PIP_LOG for details"
@@ -293,7 +319,7 @@ fi
 
 # Install AI Provider SDKs (for metadata generation and AI features)
 log_info "Installing AI Provider SDKs..."
-if pip install google-generativeai openai anthropic >> "$PIP_LOG" 2>&1; then
+if $PYTHON_EXE -m pip install google-generativeai openai anthropic >> "$PIP_LOG" 2>&1; then
     log_info "✓ AI Provider SDKs installed/updated successfully"
 else
     log_warning "AI Provider SDKs installation had issues, but continuing..."
@@ -301,14 +327,16 @@ else
     log_warning "Check $PIP_LOG for details"
 fi
 
-cd ../.. || {
+cd "$PROJECT_ROOT" || {
     log_error "Failed to return to project root"
+    log_error "Expected: $PROJECT_ROOT"
+    log_error "Current: $(pwd)"
     exit 1
 }
 
 # Install npm dependencies
 log_info "Setting up frontend dependencies..."
-cd frontend || {
+cd "$PROJECT_ROOT/frontend" || {
     log_error "Failed to change directory to frontend"
     log_error "Current directory: $(pwd)"
     exit 1
@@ -352,8 +380,10 @@ else
         log_info "✓ npm dependencies already installed"
     fi
 fi
-cd .. || {
+cd "$PROJECT_ROOT" || {
     log_error "Failed to return to project root"
+    log_error "Expected: $PROJECT_ROOT"
+    log_error "Current: $(pwd)"
     exit 1
 }
 
@@ -503,14 +533,36 @@ fi
 
 # Start Django Backend
 log_info "Starting Django Backend..."
-cd backend || {
+cd "$PROJECT_ROOT/backend" || {
     log_error "Failed to change directory to backend"
+    log_error "Expected: $PROJECT_ROOT/backend"
+    log_error "Current: $(pwd)"
     exit 1
 }
 source venv/bin/activate || {
     log_error "Failed to activate virtual environment"
     exit 1
 }
+
+# Determine the Python executable to use (venv may have python, python3, or python3.10)
+if [ -f "venv/bin/python" ]; then
+    PYTHON_EXE="venv/bin/python"
+elif [ -f "venv/bin/python3" ]; then
+    PYTHON_EXE="venv/bin/python3"
+elif [ -f "venv/bin/python3.10" ]; then
+    PYTHON_EXE="venv/bin/python3.10"
+else
+    # Try to find it via which after activation
+    PYTHON_EXE=$(which python || which python3 || which python3.10 || echo "")
+    if [ -z "$PYTHON_EXE" ]; then
+        log_error "Could not find Python executable in virtual environment"
+        log_error "Venv directory contents:"
+        ls -la venv/bin/ | head -20
+        exit 1
+    fi
+fi
+
+log_debug "Using Python: $PYTHON_EXE"
 
 # Check if manage.py exists
 if [ ! -f "manage.py" ]; then
@@ -520,25 +572,68 @@ fi
 
 # Run migrations
 log_info "Running database migrations..."
-MIGRATION_OUTPUT=$(python3 manage.py migrate --noinput 2>&1)
+log_debug "Checking migration status..."
+MIGRATION_STATUS=$($PYTHON_EXE manage.py showmigrations --plan 2>&1)
+echo "$MIGRATION_STATUS" | tee -a "$DJANGO_LOG"
+
+# Check for unapplied migrations
+UNAPPLIED=$(echo "$MIGRATION_STATUS" | grep -E "\[ \]" | wc -l | tr -d ' ')
+if [ "$UNAPPLIED" -gt 0 ]; then
+    log_info "Found $UNAPPLIED unapplied migration(s). Applying migrations..."
+else
+    log_info "All migrations are up to date."
+fi
+
+# Run migrations with detailed output
+log_info "Applying migrations..."
+MIGRATION_OUTPUT=$($PYTHON_EXE manage.py migrate --noinput 2>&1)
 MIGRATION_EXIT=$?
 echo "$MIGRATION_OUTPUT" | tee -a "$DJANGO_LOG"
+
+# Check for specific migration errors
 if [ $MIGRATION_EXIT -ne 0 ]; then
     log_error "Database migrations failed."
     log_error "Exit code: $MIGRATION_EXIT"
     log_error "Migration output saved to: $DJANGO_LOG"
+    
+    # Check for specific error patterns
+    if echo "$MIGRATION_OUTPUT" | grep -qi "conflict"; then
+        log_error "Migration conflict detected!"
+        log_error "You may need to resolve migration conflicts manually."
+        log_error "Run: python manage.py makemigrations --merge"
+    elif echo "$MIGRATION_OUTPUT" | grep -qi "no such table"; then
+        log_error "Database table missing - database may need to be recreated."
+        log_error "If this is a fresh install, delete db.sqlite3 and run migrations again."
+    elif echo "$MIGRATION_OUTPUT" | grep -qi "django_migrations"; then
+        log_error "Migration table issue - database may be corrupted."
+    fi
+    
     log_error "Common issues:"
     log_error "  - Database connection problems"
     log_error "  - Missing database file or permissions"
     log_error "  - Migration conflicts"
+    log_error "  - Corrupted migration state"
+    log_error "Last 50 lines of migration output:"
+    echo "$MIGRATION_OUTPUT" | tail -50
     exit 1
 fi
-log_info "✓ Migrations completed"
+
+# Verify migrations were applied successfully
+log_debug "Verifying migration status..."
+FINAL_STATUS=$($PYTHON_EXE manage.py showmigrations --plan 2>&1)
+REMAINING_UNAPPLIED=$(echo "$FINAL_STATUS" | grep -E "\[ \]" | wc -l | tr -d ' ')
+if [ "$REMAINING_UNAPPLIED" -gt 0 ]; then
+    log_warning "Warning: $REMAINING_UNAPPLIED migration(s) still unapplied after migration run."
+    log_warning "This may indicate a migration issue. Check $DJANGO_LOG for details."
+else
+    log_info "✓ All migrations applied successfully"
+fi
 
 # Start Django server
 log_info "Starting Django server on port $DJANGO_PORT..."
 log_debug "Django log file: $DJANGO_LOG"
-python3 manage.py runserver 0.0.0.0:$DJANGO_PORT >> "$DJANGO_LOG" 2>&1 &
+log_debug "Using Python: $PYTHON_EXE"
+$PYTHON_EXE manage.py runserver 0.0.0.0:$DJANGO_PORT >> "$DJANGO_LOG" 2>&1 &
 DJANGO_PID=$!
 log_debug "Django PID: $DJANGO_PID"
 
@@ -584,14 +679,16 @@ fi
 
 log_info "✓ Django is running on port $DJANGO_PORT"
 
-cd ../.. || {
+cd "$PROJECT_ROOT" || {
     log_error "Failed to return to project root"
+    log_error "Expected: $PROJECT_ROOT"
+    log_error "Current: $(pwd)"
     exit 1
 }
 
 # Start React Frontend
 log_info "Starting React Frontend..."
-cd frontend || {
+cd "$PROJECT_ROOT/frontend" || {
     log_error "Failed to change directory to frontend"
     exit 1
 }
@@ -638,8 +735,10 @@ if ! lsof -ti:$REACT_PORT &> /dev/null; then
     log_warning "Check $REACT_LOG for details"
 fi
 
-cd .. || {
+cd "$PROJECT_ROOT" || {
     log_error "Failed to return to project root"
+    log_error "Expected: $PROJECT_ROOT"
+    log_error "Current: $(pwd)"
     exit 1
 }
 

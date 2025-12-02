@@ -3,8 +3,8 @@ from django.shortcuts import render, redirect
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
-from ..model import VideoDownload
-from ..pipeline.utils import perform_extraction, extract_video_id, translate_text
+from model import VideoDownload
+from pipeline.utils import perform_extraction, extract_video_id, translate_text
 
 def index(request):
     """Redirect homepage to admin login"""
@@ -111,7 +111,7 @@ def extract_video(request):
         
         return JsonResponse({"error": str(e)}, status=400)
 
-from ..model import AIProviderSettings
+from model import AIProviderSettings
 
 @csrf_exempt
 @require_http_methods(["GET", "POST"])

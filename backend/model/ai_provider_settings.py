@@ -56,6 +56,7 @@ class AIProviderSettings(models.Model):
     )
 
     class Meta:
+        app_label = 'downloader'
         verbose_name = "AI Provider Setting"
         verbose_name_plural = "AI Provider Settings"
 

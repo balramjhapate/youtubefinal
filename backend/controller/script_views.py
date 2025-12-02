@@ -4,8 +4,8 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import AllowAny
 from django.conf import settings
-from ..model import VideoDownload, AIProviderSettings
-from ..pipeline.utils import _call_gemini_api, _call_openai_api
+from model import VideoDownload, AIProviderSettings
+from pipeline.utils import _call_gemini_api, _call_openai_api
 
 @api_view(['POST'])
 @permission_classes([AllowAny])

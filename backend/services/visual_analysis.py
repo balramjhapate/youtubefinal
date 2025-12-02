@@ -9,7 +9,7 @@ import base64
 import requests
 from pathlib import Path
 from django.conf import settings
-from ..pipeline.utils import translate_text
+from pipeline.utils import translate_text
 
 
 def detect_audio_in_video(video_path):

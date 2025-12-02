@@ -11,6 +11,7 @@ class WatermarkSettings(models.Model):
     opacity = models.FloatField(default=0.7, help_text="Watermark opacity (0.0 to 1.0)")
     
     class Meta:
+        app_label = 'downloader'
         verbose_name = "Watermark Setting"
         verbose_name_plural = "Watermark Settings"
     

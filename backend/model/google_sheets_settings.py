@@ -9,6 +9,7 @@ class GoogleSheetsSettings(models.Model):
     enabled = models.BooleanField(default=False, help_text="Enable Google Sheets tracking")
 
     class Meta:
+        app_label = 'downloader'
         verbose_name = "Google Sheets Setting"
         verbose_name_plural = "Google Sheets Settings"
 

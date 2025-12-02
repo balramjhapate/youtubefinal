@@ -9,8 +9,8 @@ from django.utils import timezone
 from django.conf import settings
 from . import whisper_transcribe
 from .nca_toolkit_client import get_nca_client
-from ..pipeline.utils import extract_audio_from_video, translate_text, _call_gemini_api, _call_openai_api
-from ..model import AIProviderSettings
+from pipeline.utils import extract_audio_from_video, translate_text, _call_gemini_api, _call_openai_api
+from model import AIProviderSettings
 import os
 import json
 import re
@@ -385,7 +385,7 @@ def transcribe_video_dual(video_download):
                     # Translate to Hindi using AI for better quality and meaning preservation
                     if transcript_text:
                         print("Translating NCA transcript to Hindi using AI (preserves meaning)...")
-                        from ..pipeline.utils import translate_text_with_ai
+                        from pipeline.utils import translate_text_with_ai
                         hindi_translation = translate_text_with_ai(transcript_text, target='hi')
                         video_download.transcript_hindi = hindi_translation
                     
@@ -424,7 +424,7 @@ def transcribe_video_dual(video_download):
         if not video_download.is_downloaded or not video_download.local_file:
             if video_download.video_url:
                 print("Video not downloaded, downloading first...")
-                from ..pipeline.utils import download_file
+                from pipeline.utils import download_file
                 file_content = download_file(video_download.video_url)
                 if file_content:
                     filename = f"{video_download.video_id or 'video'}_{video_download.pk}.mp4"
@@ -499,7 +499,7 @@ def transcribe_video_dual(video_download):
                 # Translate to Hindi using AI for better quality and meaning preservation
                 if whisper_result.get('text'):
                     print("Translating Whisper transcript to Hindi using AI (preserves meaning)...")
-                    from ..pipeline.utils import translate_text_with_ai
+                    from pipeline.utils import translate_text_with_ai
                     hindi_translation = translate_text_with_ai(whisper_result['text'], target='hi')
                     video_download.whisper_transcript_hindi = hindi_translation
                 
@@ -611,7 +611,7 @@ def transcribe_video_dual(video_download):
                     # Translate to Hindi using AI for better quality and meaning preservation
                     print("Translating visual description to Hindi using AI (preserves meaning)...")
                     try:
-                        from ..pipeline.utils import translate_text_with_ai
+                        from pipeline.utils import translate_text_with_ai
                         hindi_translation = translate_text_with_ai(visual_result['text'], target='hi')
                         video_download.visual_transcript_hindi = hindi_translation
                     except Exception as trans_error:
@@ -740,7 +740,7 @@ def transcribe_video_dual(video_download):
                         # Translate filtered enhanced transcript to Hindi using AI (preserves meaning)
                         print("Translating filtered enhanced transcript to Hindi using AI (removes Chinese/English, preserves meaning)...")
                         try:
-                            from ..pipeline.utils import translate_text_with_ai
+                            from pipeline.utils import translate_text_with_ai
                             hindi_translation = translate_text_with_ai(filtered_enhanced_text, target='hi')
                         except Exception as trans_error:
                             print(f"⚠ Hindi translation failed for enhanced transcript: {trans_error}")

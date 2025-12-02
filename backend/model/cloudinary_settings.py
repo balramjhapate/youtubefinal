@@ -9,6 +9,7 @@ class CloudinarySettings(models.Model):
     enabled = models.BooleanField(default=False, help_text="Enable Cloudinary uploads")
 
     class Meta:
+        app_label = 'downloader'
         verbose_name = "Cloudinary Setting"
         verbose_name_plural = "Cloudinary Settings"
 

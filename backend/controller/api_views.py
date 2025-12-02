@@ -13,14 +13,15 @@ from rest_framework.permissions import AllowAny
 
 logger = logging.getLogger(__name__)
 
-from ..model import VideoDownload, AIProviderSettings, CloudinarySettings, GoogleSheetsSettings, WatermarkSettings
-from ..serializers.serializers import (
+# Use absolute imports since we're at the project root
+from model import VideoDownload, AIProviderSettings, CloudinarySettings, GoogleSheetsSettings, WatermarkSettings
+from serializers.serializers import (
     VideoDownloadSerializer, VideoDownloadListSerializer,
     AIProviderSettingsSerializer, VideoExtractSerializer,
     VideoTranscribeSerializer, BulkActionSerializer, DashboardStatsSerializer,
     CloudinarySettingsSerializer, GoogleSheetsSettingsSerializer, WatermarkSettingsSerializer
 )
-from ..pipeline.utils import (
+from pipeline.utils import (
     perform_extraction, extract_video_id, detect_video_source, translate_text,
     transcribe_video, download_file,
     process_video_with_ai, get_video_duration,
@@ -28,13 +29,13 @@ from ..pipeline.utils import (
 )
 # Optional imports - these services may not be installed
 try:
-    from ..services.cloudinary_service import upload_video_file
+    from services.cloudinary_service import upload_video_file
 except ImportError:
     upload_video_file = None
     logger.warning("Cloudinary service not available (cloudinary package not installed)")
 
 try:
-    from ..services.google_sheets_service import add_video_to_sheet
+    from services.google_sheets_service import add_video_to_sheet
 except ImportError:
     add_video_to_sheet = None
     logger.warning("Google Sheets service not available (google packages not installed)")
@@ -55,7 +56,7 @@ def calculate_optimal_tts_speed(video):
     
     # Estimate script reading time at normal speed
     # Average Hindi reading speed: ~150 words/minute = 2.5 words/second
-    from ..pipeline.utils import get_clean_script_for_tts
+    from pipeline.utils import get_clean_script_for_tts
     clean_script = get_clean_script_for_tts(video.hindi_script)
     word_count = len(clean_script.split())
     
@@ -284,7 +285,7 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                     # Try to extract duration from video URL using yt-dlp if available
                     if download.video_url:
                         try:
-                            from ..pipeline.utils import extract_video_ytdlp
+                            from pipeline.utils import extract_video_ytdlp
                             metadata = extract_video_ytdlp(download.video_url)
                             if metadata and metadata.get('duration'):
                                 duration = float(metadata.get('duration'))
@@ -295,7 +296,7 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                 
                 # Calculate TTS parameters if duration is available
                 if download.duration:
-                    from ..pipeline.utils import calculate_tts_parameters
+                    from pipeline.utils import calculate_tts_parameters
                     tts_params = calculate_tts_parameters(download.duration)
                     download.tts_speed = tts_params['speed']
                     download.tts_temperature = tts_params['temperature']
@@ -410,7 +411,7 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
             
             if is_hls:
                 print(f"Detected HLS stream, using yt-dlp to download: {video.video_url}")
-                from ..pipeline.utils import download_video_with_ytdlp
+                from pipeline.utils import download_video_with_ytdlp
                 result = download_video_with_ytdlp(video.video_url)
                 if result:
                     if isinstance(result, tuple) and len(result) == 2:
@@ -425,7 +426,7 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                 # If download failed or returned None, try using yt-dlp as fallback
                 if not file_content:
                     print(f"Direct download failed, trying yt-dlp for: {video.video_url}")
-                    from ..pipeline.utils import download_video_with_ytdlp
+                    from pipeline.utils import download_video_with_ytdlp
                     result = download_video_with_ytdlp(video.video_url)
                     if result:
                         if isinstance(result, tuple) and len(result) == 2:
@@ -503,7 +504,7 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                 if not duration and video.video_url:
                     if video.video_source == 'youtube' or 'youtube' in video.video_url.lower():
                         try:
-                            from ..pipeline.utils import extract_video_ytdlp
+                            from pipeline.utils import extract_video_ytdlp
                             metadata = extract_video_ytdlp(video.video_url)
                             if metadata and metadata.get('duration'):
                                 duration = float(metadata.get('duration'))
@@ -739,7 +740,7 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                         video.transcript = timestamped_text
                     elif srt_text:
                         # Convert SRT to timestamped format
-                        from ..pipeline.utils import convert_srt_to_timestamped_text
+                        from pipeline.utils import convert_srt_to_timestamped_text
                         video.transcript = convert_srt_to_timestamped_text(srt_text) or srt_text
                     else:
                         video.transcript = transcript_text
@@ -762,7 +763,7 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                     hindi_transcript = result.get('text_hindi', '')
                     if not hindi_transcript and transcript_without_timestamps:
                         # If Hindi translation not provided, translate the plain text using AI
-                        from ..pipeline.utils import translate_text_with_ai
+                        from pipeline.utils import translate_text_with_ai
                         print(f"Translating transcript to Hindi using AI (preserves meaning) (language: {result.get('language', 'unknown')})...")
                         hindi_transcript = translate_text_with_ai(transcript_without_timestamps, target='hi')
                     
@@ -939,11 +940,11 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                         video.synthesis_status = 'synthesizing'
                         video.save()
                         
-                        from ..pipeline.utils import get_clean_script_for_tts
+                        from pipeline.utils import get_clean_script_for_tts
                         clean_script = get_clean_script_for_tts(video.hindi_script)
                         
                         # Use Gemini TTS service for TTS generation
-                        from ..services.gemini_tts_service import GeminiTTSService, GEMINI_TTS_AVAILABLE
+                        from services.gemini_tts_service import GeminiTTSService, GEMINI_TTS_AVAILABLE
                         import tempfile
                         import os
                         
@@ -955,7 +956,7 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                         else:
                             try:
                                 # Get Gemini API key from AIProviderSettings
-                                from ..model import AIProviderSettings
+                                from model import AIProviderSettings
                                 settings_obj = AIProviderSettings.objects.first()
                                 api_key = settings_obj.get_api_key('gemini') if settings_obj else None
                                 
@@ -1008,7 +1009,7 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                                 if tts_success and os.path.exists(temp_audio_path):
                                     # Check audio duration and adjust if needed
                                     if video.duration:
-                                        from ..pipeline.utils import get_audio_duration, adjust_audio_duration
+                                        from pipeline.utils import get_audio_duration, adjust_audio_duration
                                         audio_duration = get_audio_duration(temp_audio_path)
                                         if audio_duration:
                                             duration_diff = abs(audio_duration - video.duration)
@@ -1075,7 +1076,7 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                     else:
                         # ALWAYS use ffmpeg - it's more reliable
                         try:
-                            from ..pipeline.utils import find_ffmpeg
+                            from pipeline.utils import find_ffmpeg
                             import subprocess
                             import tempfile
                             import os
@@ -1192,8 +1193,8 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                                                 # Step 5c: Apply watermark if enabled
                                                 watermark_applied = False
                                                 try:
-                                                    from ..model import WatermarkSettings
-                                                    from ..services.watermark_service import apply_moving_watermark
+                                                    from model import WatermarkSettings
+                                                    from services.watermark_service import apply_moving_watermark
                                                     
                                                     watermark_settings = WatermarkSettings.objects.first()
                                                     if watermark_settings and watermark_settings.enabled and watermark_settings.watermark_text:
@@ -1249,7 +1250,7 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                                                 def post_process_video():
                                                     try:
                                                         # Re-fetch video object in the thread
-                                                        from ..model import VideoDownload
+                                                        from model import VideoDownload
                                                         video_obj = VideoDownload.objects.get(pk=video_id_for_post)
                                                         
                                                         # Generate metadata using AI
@@ -1542,7 +1543,7 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
             video.synthesis_status = 'synthesizing'
             video.save()
             
-            from ..pipeline.utils import get_clean_script_for_tts
+            from pipeline.utils import get_clean_script_for_tts
             
             # Use Hindi script if available, otherwise use transcript
             script_to_use = video.hindi_script if video.hindi_script else video.transcript
@@ -1558,7 +1559,7 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                 }, status=status.HTTP_400_BAD_REQUEST)
             
             # Use Gemini TTS service
-            from ..services.gemini_tts_service import GeminiTTSService, GEMINI_TTS_AVAILABLE
+            from services.gemini_tts_service import GeminiTTSService, GEMINI_TTS_AVAILABLE
             import tempfile
             import os
             
@@ -1574,7 +1575,7 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                 }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
             
             # Get Gemini API key from AIProviderSettings
-            from ..model import AIProviderSettings
+            from model import AIProviderSettings
             settings_obj = AIProviderSettings.objects.first()
             api_key = settings_obj.get_api_key('gemini') if settings_obj else None
             
@@ -1619,7 +1620,7 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
             
             # Check audio duration and adjust if needed
             if video.duration and os.path.exists(temp_audio_path):
-                from ..pipeline.utils import get_audio_duration, adjust_audio_duration
+                from pipeline.utils import get_audio_duration, adjust_audio_duration
                 audio_duration = get_audio_duration(temp_audio_path)
                 if audio_duration:
                     duration_diff = abs(audio_duration - video.duration)
@@ -2211,7 +2212,7 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                             if timestamped_text:
                                 video.transcript = timestamped_text
                             elif srt_text:
-                                from ..pipeline.utils import convert_srt_to_timestamped_text
+                                from pipeline.utils import convert_srt_to_timestamped_text
                                 video.transcript = convert_srt_to_timestamped_text(srt_text) or srt_text
                             else:
                                 video.transcript = transcript_text
@@ -2228,7 +2229,7 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                             
                             hindi_transcript = result.get('text_hindi', '')
                             if not hindi_transcript and transcript_without_timestamps:
-                                from ..pipeline.utils import translate_text_with_ai
+                                from pipeline.utils import translate_text_with_ai
                                 print(f"Translating transcript to Hindi using AI (preserves meaning) (language: {result.get('language', 'unknown')})...")
                                 hindi_transcript = translate_text_with_ai(transcript_without_timestamps, target='hi')
                             
@@ -2373,11 +2374,11 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                                 video.synthesis_status = 'synthesizing'
                                 video.save()
                                 
-                                from ..pipeline.utils import get_clean_script_for_tts
+                                from pipeline.utils import get_clean_script_for_tts
                                 clean_script = get_clean_script_for_tts(video.hindi_script)
                                 
                                 # Use Gemini TTS service for TTS generation
-                                from ..services.gemini_tts_service import GeminiTTSService, GEMINI_TTS_AVAILABLE
+                                from services.gemini_tts_service import GeminiTTSService, GEMINI_TTS_AVAILABLE
                                 import tempfile
                                 import os
                                 
@@ -2389,7 +2390,7 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                                 else:
                                     try:
                                         # Get Gemini API key from AIProviderSettings
-                                        from ..model import AIProviderSettings
+                                        from model import AIProviderSettings
                                         settings_obj = AIProviderSettings.objects.first()
                                         api_key = settings_obj.get_api_key('gemini') if settings_obj else None
                                         
@@ -2475,7 +2476,7 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                             else:
                                 # ALWAYS use ffmpeg - it's more reliable
                                 try:
-                                    from ..pipeline.utils import find_ffmpeg
+                                    from pipeline.utils import find_ffmpeg
                                     import subprocess
                                     import tempfile
                                     import os
@@ -2772,7 +2773,7 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
         
         def run_tts_synthesis():
             try:
-                from ..pipeline.utils import get_clean_script_for_tts, enhance_script_with_tts_markup
+                from pipeline.utils import get_clean_script_for_tts, enhance_script_with_tts_markup
                 clean_script = get_clean_script_for_tts(video.hindi_script)
                 
                 # Check if script is already enhanced (contains markup tags)
@@ -2789,7 +2790,7 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                     enhanced_script = enhance_script_with_tts_markup(clean_script)
                 
                 # Use Gemini TTS service for TTS generation
-                from ..services.gemini_tts_service import GeminiTTSService, GEMINI_TTS_AVAILABLE
+                from services.gemini_tts_service import GeminiTTSService, GEMINI_TTS_AVAILABLE
                 import tempfile
                 import os
                 
@@ -2797,7 +2798,7 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                     raise Exception("Gemini TTS service not available")
                 
                 # Get Gemini API key from AIProviderSettings
-                from ..model import AIProviderSettings
+                from model import AIProviderSettings
                 settings_obj = AIProviderSettings.objects.first()
                 api_key = settings_obj.get_api_key('gemini') if settings_obj else None
                 
@@ -2912,7 +2913,7 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
             # Delete from Cloudinary if public_id exists
             if upload_video_file and video.video_id:
                 try:
-                    from ..services.cloudinary_service import get_cloudinary_config
+                    from services.cloudinary_service import get_cloudinary_config
                     import cloudinary.uploader
                     config = get_cloudinary_config()
                     if config:
@@ -2931,7 +2932,7 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
             # Delete from Google Sheets if synced
             if video.google_sheets_synced and add_video_to_sheet:
                 try:
-                    from ..services.google_sheets_service import get_google_sheets_service
+                    from services.google_sheets_service import get_google_sheets_service
                     sheets_config = get_google_sheets_service()
                     if sheets_config:
                         service = sheets_config['service']
@@ -3190,8 +3191,8 @@ class WatermarkSettingsViewSet(viewsets.ViewSet):
 @permission_classes([AllowAny])
 def test_google_sheets(request):
     """Test endpoint for Google Sheets configuration"""
-    from ..services.google_sheets_service import get_google_sheets_service, ensure_header_row, extract_spreadsheet_id
-    from ..model import GoogleSheetsSettings
+    from services.google_sheets_service import get_google_sheets_service, ensure_header_row, extract_spreadsheet_id
+    from model import GoogleSheetsSettings
     import json
     
     results = {
@@ -3562,7 +3563,7 @@ def bulk_delete(request):
             # Delete from Cloudinary if exists
             if upload_video_file and video.video_id:
                 try:
-                    from ..services.cloudinary_service import get_cloudinary_config
+                    from services.cloudinary_service import get_cloudinary_config
                     import cloudinary.uploader
                     config = get_cloudinary_config()
                     if config:
@@ -3580,7 +3581,7 @@ def bulk_delete(request):
             # Delete from Google Sheets if synced
             if video.google_sheets_synced and add_video_to_sheet:
                 try:
-                    from ..services.google_sheets_service import get_google_sheets_service
+                    from services.google_sheets_service import get_google_sheets_service
                     sheets_config = get_google_sheets_service()
                     if sheets_config:
                         service = sheets_config['service']

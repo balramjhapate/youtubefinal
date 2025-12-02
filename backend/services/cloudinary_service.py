@@ -11,7 +11,7 @@ except ImportError:
     cloudinary = None
 
 from django.conf import settings
-from ..model import CloudinarySettings
+from model import CloudinarySettings
 import logging
 
 logger = logging.getLogger(__name__)

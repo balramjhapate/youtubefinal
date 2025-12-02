@@ -173,11 +173,10 @@ export function VideoDetail() {
 			console.log(`Auto-clearing stuck processing state for ${type}`);
 			clearProcessingForVideo(id);
 			if (isTranscriptionStuck) {
-				showWarning(
-					"Processing State Cleared",
-					"Processing state cleared. Transcription appears stuck. You can retry now.",
-					{ timer: 5000 }
-				);
+			showWarning(
+				"Processing State Cleared",
+				"Processing state cleared. Transcription appears stuck. You can retry now."
+			);
 			}
 		}
 	}, [
@@ -239,8 +238,7 @@ export function VideoDetail() {
 					if (isStuck) {
 						showWarning(
 							"Processing Stuck",
-							"Processing state cleared. You can now retry the operation.",
-							{ timer: 3000, showConfirmButton: false }
+							"Processing state cleared. You can now retry the operation."
 						);
 					}
 				}, 1000);
@@ -271,8 +269,7 @@ export function VideoDetail() {
 			queryClient.invalidateQueries(["videos"]);
 			showSuccess(
 				"Download Started",
-				"Video download has been started.",
-				{ timer: 3000 }
+				"Video download has been started."
 			);
 		},
 		onError: (error) => {
@@ -316,8 +313,7 @@ export function VideoDetail() {
 			} else {
 				showSuccess(
 					"Processing Started",
-					"Video processing has been started.",
-					{ timer: 3000 }
+					"Video processing has been started."
 				);
 			}
 
@@ -380,8 +376,7 @@ export function VideoDetail() {
 								} else {
 									showSuccess(
 										"Transcription Completed",
-										"Transcription completed successfully!",
-										{ timer: 3000 }
+										"Transcription completed successfully!"
 									);
 								}
 							}
@@ -399,8 +394,6 @@ export function VideoDetail() {
 											elapsed / 60
 										)}m ${elapsed % 60}s`,
 										{
-											showConfirmButton: false,
-											timer: 2000,
 											toast: true,
 											position: "top-end",
 										}
@@ -412,8 +405,6 @@ export function VideoDetail() {
 										"AI Processing...",
 										"This may take a few minutes.",
 										{
-											showConfirmButton: false,
-											timer: 2000,
 											toast: true,
 											position: "top-end",
 										}
@@ -425,8 +416,6 @@ export function VideoDetail() {
 										"Generating Script...",
 										"Creating Hindi script...",
 										{
-											showConfirmButton: false,
-											timer: 2000,
 											toast: true,
 											position: "top-end",
 										}
@@ -438,8 +427,6 @@ export function VideoDetail() {
 										"Synthesizing...",
 										"Generating audio...",
 										{
-											showConfirmButton: false,
-											timer: 2000,
 											toast: true,
 											position: "top-end",
 										}
@@ -503,8 +490,7 @@ export function VideoDetail() {
 			} else if (errorMsg.includes("already_processing")) {
 				showInfo(
 					"Processing in Progress",
-					"Processing is already in progress. Please wait.",
-					{ showConfirmButton: false, timer: 3000 }
+					"Processing is already in progress. Please wait."
 				);
 			} else {
 				showError("Processing Failed", errorDetails || errorMsg, {
@@ -524,8 +510,7 @@ export function VideoDetail() {
 			queryClient.invalidateQueries(["video", id]);
 			showSuccess(
 				"AI Processing Started",
-				"AI processing has been started.",
-				{ timer: 3000 }
+				"AI processing has been started."
 			);
 		},
 		onError: (error) => {
@@ -662,7 +647,6 @@ export function VideoDetail() {
 				currentVideo.status === "success"
 			) {
 				showInfo("Step 1/8: Downloading video...", "", {
-					timer: 2000,
 					toast: true,
 					position: "top-end",
 				});
@@ -693,7 +677,6 @@ export function VideoDetail() {
 			startProcessing(id, "transcribe"); // Switch status to transcribe
 			
 			showInfo("Step 2/8: Starting transcription and processing...", "", {
-				timer: 2000,
 				toast: true,
 				position: "top-end",
 			});
@@ -705,7 +688,7 @@ export function VideoDetail() {
 				showWarning(
 					"Transcription skipped (no audio stream). Continuing with other steps...",
 					"",
-					{ timer: 3000, toast: true, position: "top-end" }
+					{ toast: true, position: "top-end" }
 				);
 			}
 
@@ -788,7 +771,6 @@ export function VideoDetail() {
 				if (!currentVideo.cloudinary_url) {
 					startProcessing(id, "cloudinary");
 					showInfo("Step 7/8: Uploading to Cloudinary...", "", {
-						timer: 2000,
 						toast: true,
 						position: "top-end",
 					});
@@ -817,7 +799,6 @@ export function VideoDetail() {
 				if (!currentVideo.google_sheets_synced) {
 					startProcessing(id, "sheets");
 					showInfo("Step 8/8: Syncing to Google Sheets...", "", {
-						timer: 2000,
 						toast: true,
 						position: "top-end",
 					});
@@ -875,8 +856,7 @@ export function VideoDetail() {
 		onSuccess: () => {
 			showSuccess(
 				"Reprocessing Started",
-				"Video reprocessing has been started in the background.",
-				{ timer: 3000 }
+				"Video reprocessing has been started in the background."
 			);
 			queryClient.invalidateQueries(["video", id]);
 			queryClient.invalidateQueries(["videos"]);
@@ -941,9 +921,7 @@ export function VideoDetail() {
 		onSuccess: () => {
 			setIsEditingScript(false);
 			queryClient.invalidateQueries(["video", id]);
-			showSuccess("Script Updated", "Script saved successfully!", {
-				timer: 3000,
-			});
+			showSuccess("Script Updated", "Script saved successfully!");
 
 			// Automatically trigger TTS synthesis after saving script
 			synthesizeTTSMutation.mutate();
@@ -961,8 +939,7 @@ export function VideoDetail() {
 		onSuccess: (response) => {
 			showSuccess(
 				"TTS Synthesis Started",
-				`TTS synthesis started with speed ${response.tts_speed}x to match video duration`,
-				{ timer: 5000 }
+				`TTS synthesis started with speed ${response.tts_speed}x to match video duration`
 			);
 			queryClient.invalidateQueries(["video", id]);
 			// Start polling for synthesis completion
@@ -1018,8 +995,7 @@ export function VideoDetail() {
 		onSuccess: (data) => {
 			showSuccess(
 				"Transcription Reset",
-				data.message || "Transcription reset successfully.",
-				{ timer: 3000 }
+				data.message || "Transcription reset successfully."
 			);
 			queryClient.invalidateQueries(["video", id]);
 			queryClient.invalidateQueries(["videos"]);
@@ -1037,7 +1013,7 @@ export function VideoDetail() {
 
 	const copyToClipboard = (text) => {
 		navigator.clipboard.writeText(text);
-		showSuccess("Copied", "Text copied to clipboard.", { timer: 2000 });
+		showSuccess("Copied", "Text copied to clipboard.");
 	};
 
 	const tabs = [
@@ -1068,8 +1044,7 @@ export function VideoDetail() {
 					await videosApi.synthesize(id);
 					showSuccess(
 						"Synthesis Retried",
-						"Synthesis has been retried.",
-						{ timer: 3000 }
+						"Synthesis has been retried."
 					);
 					refetch();
 				} catch (error) {
@@ -1357,8 +1332,7 @@ export function VideoDetail() {
 												clearProcessingForVideo(id);
 												showSuccess(
 													"Processing State Cleared",
-													"Processing state cleared. You can now retry the operation.",
-													{ timer: 3000 }
+													"Processing state cleared. You can now retry the operation."
 												);
 											}}>
 											{isTranscriptionStuck
@@ -3741,7 +3715,7 @@ export function VideoDetail() {
 									setEditedScript(video?.hindi_script || "");
 									showInfo(
 										"Script Reset",
-										"Script reset to original generated version"
+										"Script reset to original generated version."
 									);
 								}}
 								disabled={updateScriptMutation.isPending}>

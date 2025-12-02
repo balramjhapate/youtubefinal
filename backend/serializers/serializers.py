@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from ..model import VideoDownload, AIProviderSettings, CloudinarySettings, GoogleSheetsSettings, WatermarkSettings
+from model import VideoDownload, AIProviderSettings, CloudinarySettings, GoogleSheetsSettings, WatermarkSettings
 
 
 class AIProviderSettingsSerializer(serializers.ModelSerializer):
@@ -229,7 +229,7 @@ class VideoDownloadSerializer(serializers.ModelSerializer):
     
     def get_clean_script_for_tts(self, obj):
         """Get clean script text for TTS (without formatting headers)"""
-        from .utils import get_clean_script_for_tts
+        from pipeline.utils import get_clean_script_for_tts
         try:
             script = getattr(obj, 'hindi_script', '')
             if script:

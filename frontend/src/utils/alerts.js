@@ -8,9 +8,8 @@ export const showSuccess = (title, message = '', options = {}) => {
     icon: 'success',
     title: title,
     text: message,
-    confirmButtonColor: '#9333ea', // Purple color matching theme
-    confirmButtonText: options.confirmText || 'OK',
-    timer: options.timer || 3000,
+    showConfirmButton: false,
+    timer: options.timer || 100,
     timerProgressBar: true,
     ...options,
   });
@@ -24,8 +23,9 @@ export const showError = (title, message = '', options = {}) => {
     icon: 'error',
     title: title,
     text: message,
-    confirmButtonColor: '#dc2626', // Red color
-    confirmButtonText: options.confirmText || 'OK',
+    showConfirmButton: false,
+    timer: options.timer || 100,
+    timerProgressBar: true,
     ...options,
   });
 };
@@ -38,8 +38,9 @@ export const showWarning = (title, message = '', options = {}) => {
     icon: 'warning',
     title: title,
     text: message,
-    confirmButtonColor: '#f59e0b', // Amber color
-    confirmButtonText: options.confirmText || 'OK',
+    showConfirmButton: false,
+    timer: options.timer || 100,
+    timerProgressBar: true,
     ...options,
   });
 };
@@ -52,9 +53,8 @@ export const showInfo = (title, message = '', options = {}) => {
     icon: 'info',
     title: title,
     text: message,
-    confirmButtonColor: '#3b82f6', // Blue color
-    confirmButtonText: options.confirmText || 'OK',
-    timer: options.timer || 3000,
+    showConfirmButton: false,
+    timer: options.timer || 100,
     timerProgressBar: true,
     ...options,
   });

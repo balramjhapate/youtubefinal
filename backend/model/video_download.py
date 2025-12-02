@@ -5,6 +5,7 @@ from django.utils import timezone
 class VideoDownload(models.Model):
     """Model to track video downloads from Xiaohongshu/RedNote"""
     
+    
     STATUS_CHOICES = [
         ('success', 'Success'),
         ('failed', 'Failed'),
@@ -158,6 +159,7 @@ class VideoDownload(models.Model):
     updated_at = models.DateTimeField(auto_now=True, help_text="Last update time")
     
     class Meta:
+        app_label = 'downloader'
         ordering = ['-created_at']
         verbose_name = "Video Download"
         verbose_name_plural = "Video Downloads"

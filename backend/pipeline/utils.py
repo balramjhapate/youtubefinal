@@ -14,10 +14,10 @@ from deep_translator import GoogleTranslator
 import requests
 
 # Import NCA Toolkit client
-from ..services.nca_toolkit_client import get_nca_client
+from services.nca_toolkit_client import get_nca_client
 
 # Import new Whisper transcription module
-from ..services import whisper_transcribe
+from services import whisper_transcribe
 
 def detect_video_source(url):
     """Detect video source/platform from URL"""
@@ -264,7 +264,7 @@ def translate_text_with_ai(text, target='hi', source='auto'):
             # Continue with AI translation below
     
     try:
-        from ..model import AIProviderSettings
+        from model import AIProviderSettings
         
         # Get AI provider settings
         settings_obj = AIProviderSettings.objects.first()
@@ -1050,7 +1050,7 @@ def process_video_with_ai(video_download):
             }
         
         # Step 3: Generate summary using AI Provider if available
-        from ..model import AIProviderSettings
+        from model import AIProviderSettings
         
         ai_summary = ""
         tags = []
@@ -1544,7 +1544,7 @@ def transcribe_video(video_download):
     # Check if dual transcription is enabled
     if getattr(settings, 'DUAL_TRANSCRIPTION_ENABLED', False):
         print("🔄 Dual transcription mode enabled - running both NCA and Whisper...")
-        from ..services import dual_transcribe
+        from services import dual_transcribe
         return dual_transcribe.transcribe_video_dual(video_download)
     
     # Original single transcription logic (NCA or Whisper fallback)
@@ -2117,7 +2117,7 @@ def generate_audio_prompt(video_download):
     """
     try:
         # Import AIProviderSettings model
-        from ..model import AIProviderSettings
+        from model import AIProviderSettings
         
         # Check if video has transcript
         if not video_download.transcript:
@@ -3022,7 +3022,7 @@ def get_clean_script_for_tts(formatted_script):
         return ""
     
     # Filter negative/abusive words first
-    from .word_filter import filter_negative_words
+    from utils.word_filter import filter_negative_words
     formatted_script = filter_negative_words(formatted_script)
     
     import re
@@ -3234,7 +3234,7 @@ def get_clean_script_for_tts(formatted_script):
     clean_script = clean_script.strip()
     
     # Filter negative words again after cleaning repetitive phrases
-    from .word_filter import filter_negative_words
+    from utils.word_filter import filter_negative_words
     clean_script = filter_negative_words(clean_script)
     
     # Add "Dekho" at the start if not present
@@ -3312,7 +3312,7 @@ def get_clean_script_for_tts(formatted_script):
         clean_script = cta_text
     
     # Final filter for negative words before returning (ensures all negative words are removed)
-    from .word_filter import filter_negative_words
+    from utils.word_filter import filter_negative_words
     clean_script = filter_negative_words(clean_script)
     
     # Add natural pauses and expressions for better TTS (Gemini TTS markup tags)
@@ -3343,7 +3343,7 @@ def enhance_script_with_tts_markup(clean_script):
     
     try:
         import google.generativeai as genai
-        from ..model import AIProviderSettings
+        from model import AIProviderSettings
         
         # Get Gemini API key
         settings_obj = AIProviderSettings.objects.first()
@@ -3587,7 +3587,7 @@ def generate_video_metadata(video_download):
         }
     """
     try:
-        from ..model import AIProviderSettings
+        from model import AIProviderSettings
         from django.utils import timezone
         
         # Check if AI provider is configured
@@ -3811,7 +3811,7 @@ def generate_hindi_script(video_download):
         }
     """
     try:
-        from ..model import AIProviderSettings
+        from model import AIProviderSettings
         from django.utils import timezone
         
         # Check if AI provider is configured
@@ -4210,7 +4210,7 @@ Generate the Hindi script following the STRICT RULES defined in the system promp
             formatted_script = script
             
             # Filter negative/abusive words
-            from .word_filter import filter_negative_words
+            from utils.word_filter import filter_negative_words
             # Word filtering is disabled (all replacements commented out)
             print("Word filtering is disabled - script will be used as-is...")
             formatted_script = filter_negative_words(formatted_script)

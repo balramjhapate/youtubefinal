@@ -3,7 +3,12 @@ REST API URL Configuration for RedNote Downloader
 """
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .controller import api_views, script_views
+
+# Import controller views
+# Note: We use absolute imports here because api_urls.py is at the project root
+# The controller module uses relative imports internally, which works when
+# Django loads it as part of the project structure
+from controller import api_views, script_views
 
 # Create a router and register our viewsets
 router = DefaultRouter()

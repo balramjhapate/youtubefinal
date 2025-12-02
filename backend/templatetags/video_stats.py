@@ -1,5 +1,5 @@
 from django import template
-from ..model import VideoDownload
+from model import VideoDownload
 
 register = template.Library()
 

@@ -1,6 +1,6 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .controller import views, script_views
+from controller import views, script_views
 
 app_name = 'downloader'
 

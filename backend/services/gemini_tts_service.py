@@ -30,7 +30,7 @@ class GeminiTTSService:
         if not self.api_key:
             # Get API key from AIProviderSettings
             try:
-                from ..model import AIProviderSettings
+                from model import AIProviderSettings
                 settings_obj = AIProviderSettings.objects.first()
                 if settings_obj and settings_obj.api_key:
                     self.api_key = settings_obj.api_key
@@ -250,7 +250,7 @@ Now read this text with ALL markup tags followed precisely:
                 temp_pcm.close()
                 
                 # Convert PCM to MP3 using ffmpeg
-                from ..pipeline.utils import find_ffmpeg
+                from pipeline.utils import find_ffmpeg
                 import subprocess
                 
                 ffmpeg_path = find_ffmpeg()
