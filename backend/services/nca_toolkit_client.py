@@ -7,11 +7,17 @@ import requests
 import os
 import time
 import logging
+from urllib.parse import urlparse
+from requests.exceptions import SSLError
+from urllib3.exceptions import InsecureRequestWarning
 from django.conf import settings
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 
 logger = logging.getLogger(__name__)
+
+# Suppress SSL warnings for localhost connections (common with Docker containers)
+requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
 class NCAToolkitClient:
     """Client for interacting with NCA Toolkit API"""
@@ -50,12 +56,24 @@ class NCAToolkitClient:
             **kwargs.pop('headers', {})
         }
         
+        # For localhost connections, disable SSL verification since Docker containers
+        # often use self-signed certificates. This handles HTTP->HTTPS redirects gracefully.
+        verify_ssl = kwargs.pop('verify', None)
+        if verify_ssl is None:
+            # Check if connecting to localhost - disable SSL verification for local development
+            parsed_url = urlparse(self.api_url)
+            is_localhost = parsed_url.hostname in ('localhost', '127.0.0.1', '::1') or \
+                          parsed_url.hostname is None
+            verify_ssl = not is_localhost  # Disable SSL verification for localhost
+        
         try:
             response = requests.request(
                 method,
                 url,
                 headers=headers,
                 timeout=self.timeout,
+                verify=verify_ssl,
+                allow_redirects=True,  # Follow redirects (HTTP -> HTTPS)
                 **kwargs
             )
             
@@ -79,6 +97,22 @@ class NCAToolkitClient:
                 'success': False,
                 'error': error_msg,
                 'error_type': 'timeout'
+            }
+        except SSLError as e:
+            # Handle SSL certificate errors (common with localhost Docker containers)
+            error_msg = f'SSL certificate verification failed when connecting to NCA Toolkit API at {self.api_url}. '
+            if 'localhost' in self.api_url or '127.0.0.1' in self.api_url:
+                error_msg += 'The API appears to be redirecting HTTP to HTTPS with a self-signed certificate. '
+                error_msg += 'SSL verification has been disabled for localhost connections.'
+                logger.warning(f"NCA Toolkit API SSL error (localhost): {str(e)}")
+            else:
+                error_msg += f'Original error: {str(e)}'
+                logger.error(f"NCA Toolkit API SSL error: {error_msg}")
+            return {
+                'success': False,
+                'error': error_msg,
+                'error_type': 'ssl',
+                'suggestion': 'If using localhost, SSL verification is automatically disabled. For production, ensure valid SSL certificates are configured.'
             }
         except requests.exceptions.ConnectionError as e:
             error_msg = f'Could not connect to NCA Toolkit API at {self.api_url}. Make sure it is running and accessible.'

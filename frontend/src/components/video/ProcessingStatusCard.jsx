@@ -178,24 +178,24 @@ export function ProcessingStatusCard({ video, processingState, onRetry, wsConnec
   ];
 
   return (
-    <div className="bg-white/5 rounded-lg p-4 border border-white/10 space-y-4">
-      <div className="flex items-center justify-between mb-2">
-        <h3 className="text-lg font-semibold text-white">Processing Status</h3>
+    <div className="bg-white/5 rounded-lg p-3 border border-white/10">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-base font-semibold text-white">Processing Status</h3>
         {wsConnected && (
-          <div className="flex items-center gap-2 text-xs text-green-400">
+          <div className="flex items-center gap-1.5 text-xs text-green-400">
             <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
             <span>Live</span>
           </div>
         )}
       </div>
       
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2.5">
         {steps.map((step, index) => {
           // Determine card styling based on state
-          let cardClasses = "flex flex-col justify-between p-3 rounded-md border transition-all duration-300 relative overflow-hidden";
+          let cardClasses = "flex flex-col p-2.5 rounded border transition-all duration-300 relative overflow-hidden";
           
           if (step.isProcessing) {
-            cardClasses += " bg-blue-500/10 border-blue-500/50 shadow-[0_0_15px_rgba(59,130,246,0.2)]";
+            cardClasses += " bg-blue-500/10 border-blue-500/50 shadow-[0_0_10px_rgba(59,130,246,0.2)]";
           } else if (step.isFailed) {
             cardClasses += " bg-red-500/5 border-red-500/30";
           } else if (step.isCompleted) {
@@ -206,53 +206,53 @@ export function ProcessingStatusCard({ video, processingState, onRetry, wsConnec
 
           return (
             <div key={step.id} className={cardClasses}>
-              <div className="flex items-start gap-3 mb-3 relative z-10">
+              <div className="flex items-start gap-2 mb-2 relative z-10">
                 {/* Status Icon */}
                 <div className="flex-shrink-0 mt-0.5">
                   {step.isProcessing ? (
-                    <Loader2 className="w-5 h-5 text-blue-400 animate-spin" />
+                    <Loader2 className="w-4 h-4 text-blue-400 animate-spin" />
                   ) : step.isCompleted ? (
-                    <CheckCircle className="w-5 h-5 text-green-400" />
+                    <CheckCircle className="w-4 h-4 text-green-400" />
                   ) : step.isFailed ? (
-                    <XCircle className="w-5 h-5 text-red-400" />
+                    <XCircle className="w-4 h-4 text-red-400" />
                   ) : (
-                    <Clock className="w-5 h-5 text-gray-500" />
+                    <Clock className="w-4 h-4 text-gray-500" />
                   )}
                 </div>
                 
                 {/* Label & Status Text */}
                 <div className="flex flex-col min-w-0 flex-1">
-                  <span className={`text-sm font-medium truncate ${
+                  <span className={`text-xs font-medium truncate leading-snug ${
                     step.isCompleted ? 'text-white' : 
                     step.isProcessing ? 'text-blue-300' : 
                     step.isFailed ? 'text-red-300' : 'text-gray-400'
                   }`}>
                     {step.label}
                   </span>
-                  <span className="text-xs text-gray-500 truncate">
+                  <span className="text-[10px] text-gray-500 truncate leading-snug mt-0.5">
                     {step.isProcessing ? 'Processing...' : 
                      step.isCompleted ? 'Completed' : 
                      step.isFailed ? 'Failed' : 'Pending'}
                   </span>
                   {/* Extra Info */}
                   {step.extraInfo && (
-                    <span className="text-xs text-blue-400 mt-0.5">
+                    <span className="text-[10px] text-blue-400 mt-1 truncate leading-snug">
                       {step.extraInfo}
                     </span>
                   )}
-                  {/* Timestamps - Always show both if available */}
-                  {step.startedAt && (
-                    <span className="text-xs text-blue-400 mt-0.5">
-                      Started: {formatDate(step.startedAt)}
+                  {/* Timestamps - Compact format */}
+                  {step.finishedAt && (
+                    <span className="text-[10px] text-green-400 mt-1 truncate leading-snug">
+                      {formatDate(step.finishedAt)}
                     </span>
                   )}
-                  {step.finishedAt && (
-                    <span className="text-xs text-green-400 mt-0.5">
-                      Completed: {formatDate(step.finishedAt)}
+                  {!step.finishedAt && step.startedAt && (
+                    <span className="text-[10px] text-blue-400 mt-1 truncate leading-snug">
+                      {formatDate(step.startedAt)}
                     </span>
                   )}
                   {!step.startedAt && !step.finishedAt && (
-                    <span className="text-xs text-gray-500 mt-0.5">
+                    <span className="text-[10px] text-gray-500 mt-1 truncate leading-snug">
                       Not started
                     </span>
                   )}
@@ -261,7 +261,7 @@ export function ProcessingStatusCard({ video, processingState, onRetry, wsConnec
 
               {/* Progress Bar for Processing State */}
               {step.isProcessing && (
-                <div className="w-full h-1.5 bg-blue-900/30 rounded-full overflow-hidden mt-2 mb-1">
+                <div className="w-full h-1.5 bg-blue-900/30 rounded-full overflow-hidden mt-1.5">
                   <div 
                     className="h-full bg-blue-500 rounded-full transition-all duration-500 ease-out"
                     style={{ width: `${localProgress}%` }}
@@ -269,17 +269,17 @@ export function ProcessingStatusCard({ video, processingState, onRetry, wsConnec
                 </div>
               )}
 
-              {/* Action Buttons - Full width at bottom if failed */}
+              {/* Action Buttons - Compact retry button */}
               {step.isFailed && (
-                <div className="mt-auto pt-2 relative z-10">
+                <div className="mt-1.5 relative z-10">
                   <Button
                     size="sm"
                     variant="danger"
                     icon={RefreshCw}
                     onClick={() => onRetry(step.id)}
-                    className="w-full justify-center"
+                    className="w-full justify-center text-[11px] py-1.5 h-7"
                   >
-                    Retry {step.label}
+                    Retry
                   </Button>
                 </div>
               )}
