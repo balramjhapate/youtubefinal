@@ -839,7 +839,8 @@ def ensure_header_row(sheets_config):
 
 def add_video_to_sheet(video, cloudinary_url=None):
     """
-    Add video data to Google Sheet
+    Add or update video data in Google Sheet.
+    If video ID already exists, updates the existing row instead of creating a new one.
     
     Args:
         video: VideoDownload instance
@@ -848,9 +849,22 @@ def add_video_to_sheet(video, cloudinary_url=None):
     Returns:
         dict: {
             'success': bool,
-            'error': str (if failed)
+            'error': str (if failed),
+            'action': str ('created' or 'updated')
         }
     """
+    import signal
+    import threading
+    
+    # Set a timeout for the entire operation (5 minutes max)
+    timeout_seconds = 300
+    
+    def timeout_handler():
+        raise TimeoutError("Google Sheets sync operation timed out after 5 minutes")
+    
+    timer = threading.Timer(timeout_seconds, timeout_handler)
+    timer.start()
+    
     try:
         sheets_config = get_google_sheets_service()
         if not sheets_config:
@@ -885,34 +899,87 @@ def add_video_to_sheet(video, cloudinary_url=None):
         # Generate unique UUID for this video entry
         video_uuid = str(uuid.uuid4())
         
-        # Generate SEO-optimized English title using Gemini
+        # Check if video already exists in sheet by Video ID (column M, index 12)
+        # Use a more efficient method: search only the Video ID column instead of reading all rows
+        existing_row_index = None
+        video_id = video.video_id or str(video.id)
+        
+        try:
+            logger.info(f"Checking for existing video ID '{video_id}' in Google Sheet...")
+            
+            # First, try to find the row by searching column M (Video ID column)
+            # Read only column M to find the row index (more efficient than reading all columns)
+            video_id_range = f'{sheet_name}!M:M'
+            video_id_rows = service.spreadsheets().values().get(
+                spreadsheetId=spreadsheet_id,
+                range=video_id_range
+            ).execute()
+            
+            if video_id_rows.get('values'):
+                # Find the row index where Video ID matches (skip header row, so start at index 1)
+                for idx, row in enumerate(video_id_rows['values'], start=1):
+                    if row and len(row) > 0 and str(row[0]).strip() == str(video_id).strip():
+                        existing_row_index = idx + 1  # +1 because sheet rows are 1-indexed, +1 to skip header
+                        logger.info(f"Found existing video in Google Sheet at row {existing_row_index}")
+                        
+                        # Get the UUID from the existing row (column A)
+                        uuid_range = f'{sheet_name}!A{existing_row_index}'
+                        uuid_result = service.spreadsheets().values().get(
+                            spreadsheetId=spreadsheet_id,
+                            range=uuid_range
+                        ).execute()
+                        
+                        if uuid_result.get('values') and len(uuid_result['values']) > 0:
+                            existing_uuid = uuid_result['values'][0][0] if uuid_result['values'][0] else ''
+                            if existing_uuid:
+                                video_uuid = existing_uuid
+                                logger.info(f"Using existing UUID: {video_uuid}")
+                        break
+            
+            if not existing_row_index:
+                logger.info(f"Video ID '{video_id}' not found in sheet, will create new row")
+        except Exception as e:
+            logger.warning(f"Error checking for existing video in sheet: {str(e)}")
+            existing_row_index = None
+        
+        # Generate SEO-optimized English title using Gemini (with timeout)
+        raw_title = video.generated_title or video.title or 'Untitled'
+        title = raw_title[:60] if len(raw_title) > 60 else raw_title
+        
         if gemini_api_key:
             try:
-                title = generate_seo_title_with_gemini(video, gemini_api_key)
-                logger.info(f"Generated SEO title using Gemini for video {video.id}")
+                # Use existing title if available and not expired (to avoid unnecessary API calls)
+                if existing_row_index and video.generated_title:
+                    # If updating existing row and we already have a generated title, reuse it
+                    title = video.generated_title[:60] if len(video.generated_title) > 60 else video.generated_title
+                    logger.info(f"Reusing existing generated title for video {video.id}")
+                else:
+                    # Generate new title only if creating new row or title is missing
+                    title = generate_seo_title_with_gemini(video, gemini_api_key)
+                    logger.info(f"Generated SEO title using Gemini for video {video.id}")
             except Exception as e:
                 logger.warning(f"Failed to generate SEO title with Gemini: {str(e)}")
-                raw_title = video.generated_title or video.title or 'Untitled'
                 title = raw_title[:60] if len(raw_title) > 60 else raw_title
         else:
-            # Fallback to original title if Gemini not available
-            raw_title = video.generated_title or video.title or 'Untitled'
-            title = raw_title[:60] if len(raw_title) > 60 else raw_title
             logger.warning("Gemini API key not found, using original title")
         
-        # Generate SEO-optimized English description using Gemini
+        # Generate SEO-optimized English description using Gemini (with reuse logic)
+        raw_description = video.generated_description or video.description or ''
+        description = raw_description[:5000] if raw_description else ""
+        
         if gemini_api_key:
             try:
-                description = generate_seo_description_with_gemini(video, gemini_api_key)
-                logger.info(f"Generated SEO description using Gemini for video {video.id}")
+                # Reuse existing description if updating and available
+                if existing_row_index and video.generated_description:
+                    description = video.generated_description[:5000] if len(video.generated_description) > 5000 else video.generated_description
+                    logger.info(f"Reusing existing generated description for video {video.id}")
+                else:
+                    description = generate_seo_description_with_gemini(video, gemini_api_key)
+                    logger.info(f"Generated SEO description using Gemini for video {video.id}")
             except Exception as e:
                 logger.warning(f"Failed to generate SEO description with Gemini: {str(e)}")
-                raw_description = video.generated_description or video.description or ''
-                description = raw_description[:200] if raw_description else ""
+                description = raw_description[:5000] if raw_description else ""
         else:
-            # Fallback to original description if Gemini not available
-            raw_description = video.generated_description or video.description or ''
-            description = raw_description[:5000] if raw_description else ""
             logger.warning("Gemini API key not found, using original description")
         
         # Generate trending tags using Gemini (includes #Shorts if duration <= 3 minutes)
@@ -1024,68 +1091,6 @@ def add_video_to_sheet(video, cloudinary_url=None):
         status = video.review_status or 'pending_review'
         synced_at = timezone.now().strftime('%Y-%m-%d %H:%M:%S')
         
-        # Check if video already exists in sheet (by UUID in column A)
-        # Read all rows to find existing video and remove duplicates (keep only latest)
-        try:
-            all_rows = service.spreadsheets().values().get(
-                spreadsheetId=spreadsheet_id,
-                range=f'{sheet_name}!A:Q'
-            ).execute()
-            
-            existing_row_index = None
-            duplicate_row_indices = []
-            
-            if all_rows.get('values'):
-                # Column A (index 0) contains UUID, Column M (index 12) contains Video ID, Column Q (index 16) contains Synced At
-                # First check by Video ID to see if we should update existing entry
-                matching_rows = []
-                for idx, row in enumerate(all_rows['values'], start=1):  # Start at 1 (row 1 is header)
-                    if len(row) > 12 and row[12] == video_id:  # Check Video ID column (M)
-                        synced_at_val = row[16] if len(row) > 16 else ''
-                        row_uuid = row[0] if len(row) > 0 else ''
-                        matching_rows.append({
-                            'index': idx + 1,  # +1 because sheet rows are 1-indexed
-                            'synced_at': synced_at_val,
-                            'uuid': row_uuid
-                        })
-                
-                if matching_rows:
-                    # Sort by synced_at (most recent first) - keep the latest one
-                    matching_rows.sort(key=lambda x: x['synced_at'], reverse=True)
-                    existing_row_index = matching_rows[0]['index']  # Keep the latest
-                    # Use existing UUID for update
-                    if matching_rows[0]['uuid']:
-                        video_uuid = matching_rows[0]['uuid']
-                    duplicate_row_indices = [r['index'] for r in matching_rows[1:]]  # Mark others for deletion
-                    
-                    logger.info(f"Found {len(matching_rows)} existing video(s) in Google Sheet. Keeping row {existing_row_index}, removing {len(duplicate_row_indices)} duplicate(s)")
-                    
-                    # Delete duplicate rows (in reverse order to maintain indices)
-                    if duplicate_row_indices:
-                        for row_idx in sorted(duplicate_row_indices, reverse=True):
-                            try:
-                                service.spreadsheets().batchUpdate(
-                                    spreadsheetId=spreadsheet_id,
-                                    body={
-                                        'requests': [{
-                                            'deleteDimension': {
-                                                'range': {
-                                                    'sheetId': 0,  # Assuming first sheet
-                                                    'dimension': 'ROWS',
-                                                    'startIndex': row_idx - 1,  # Convert to 0-indexed
-                                                    'endIndex': row_idx
-                                                }
-                                            }
-                                        }]
-                                    }
-                                ).execute()
-                                logger.info(f"Deleted duplicate row {row_idx} from Google Sheets")
-                            except Exception as e:
-                                logger.warning(f"Could not delete duplicate row {row_idx}: {e}")
-        except Exception as e:
-            logger.warning(f"Error checking for existing video in sheet: {str(e)}")
-            existing_row_index = None
-        
         # Prepare row data with UUID as first column, including all platform content
         values = [[
             video_uuid,           # UUID column (A)
@@ -1111,32 +1116,39 @@ def add_video_to_sheet(video, cloudinary_url=None):
             'values': values
         }
         
-        if existing_row_index:
-            # Update existing row
-            result = service.spreadsheets().values().update(
-                spreadsheetId=spreadsheet_id,
-                range=f'{sheet_name}!A{existing_row_index}:Q{existing_row_index}',
-                valueInputOption='RAW',
-                body=body
-            ).execute()
-            logger.info(f"Successfully updated video in Google Sheet at row {existing_row_index}: {video.id} (UUID: {video_uuid})")
-        else:
-            # Append new row
-            result = service.spreadsheets().values().append(
-                spreadsheetId=spreadsheet_id,
-                range=f'{sheet_name}!A:Q',
-                valueInputOption='RAW',
-                insertDataOption='INSERT_ROWS',
-                body=body
-            ).execute()
-            logger.info(f"Successfully added video to Google Sheet: {video.id} (UUID: {video_uuid})")
-        
-        # Update video model
-        video.google_sheets_synced = True
-        video.google_sheets_synced_at = timezone.now()
-        video.save(update_fields=['google_sheets_synced', 'google_sheets_synced_at'])
-        
-        return {'success': True, 'error': None}
+        # Perform update or insert operation
+        action = 'updated' if existing_row_index else 'created'
+        try:
+            if existing_row_index:
+                # Update existing row
+                result = service.spreadsheets().values().update(
+                    spreadsheetId=spreadsheet_id,
+                    range=f'{sheet_name}!A{existing_row_index}:Q{existing_row_index}',
+                    valueInputOption='RAW',
+                    body=body
+                ).execute()
+                logger.info(f"✓ Successfully updated video in Google Sheet at row {existing_row_index}: {video.id} (UUID: {video_uuid})")
+            else:
+                # Append new row
+                result = service.spreadsheets().values().append(
+                    spreadsheetId=spreadsheet_id,
+                    range=f'{sheet_name}!A:Q',
+                    valueInputOption='RAW',
+                    insertDataOption='INSERT_ROWS',
+                    body=body
+                ).execute()
+                logger.info(f"✓ Successfully added video to Google Sheet: {video.id} (UUID: {video_uuid})")
+            
+            # Update video model
+            video.google_sheets_synced = True
+            video.google_sheets_synced_at = timezone.now()
+            video.save(update_fields=['google_sheets_synced', 'google_sheets_synced_at'])
+            
+            timer.cancel()  # Cancel timeout timer on success
+            return {'success': True, 'error': None, 'action': action}
+        except Exception as e:
+            timer.cancel()
+            raise
     except HttpError as e:
         error_details = str(e)
         # Extract more specific error information
@@ -1160,18 +1172,12 @@ def add_video_to_sheet(video, cloudinary_url=None):
             error_msg = f"Google Sheets API error: {error_details}"
         
         logger.error(f"Error adding video to Google Sheet: {error_msg}")
-        return {'success': False, 'error': error_msg}
+        return {'success': False, 'error': error_msg, 'action': None}
     except Exception as e:
+        timer.cancel()
         error_msg = f"Unexpected error adding video to Google Sheet: {str(e)}"
         logger.error(error_msg)
         import traceback
         logger.error(traceback.format_exc())
-        return {'success': False, 'error': error_msg}
-    except Exception as outer_e:
-        # Catch any unexpected errors to prevent crashes
-        error_msg = f"Unexpected error in Google Sheets sync: {str(outer_e)}"
-        logger.error(error_msg)
-        import traceback
-        logger.error(traceback.format_exc())
-        return {'success': False, 'error': error_msg}
+        return {'success': False, 'error': error_msg, 'action': None}
 

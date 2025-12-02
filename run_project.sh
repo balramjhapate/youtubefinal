@@ -629,12 +629,33 @@ else
     log_info "✓ All migrations applied successfully"
 fi
 
-# Start Django server
-log_info "Starting Django server on port $DJANGO_PORT..."
+# Start Django server with ASGI (WebSocket support)
+log_info "Starting Django server with ASGI (WebSocket support) on port $DJANGO_PORT..."
 log_debug "Django log file: $DJANGO_LOG"
 log_debug "Using Python: $PYTHON_EXE"
-$PYTHON_EXE manage.py runserver 0.0.0.0:$DJANGO_PORT >> "$DJANGO_LOG" 2>&1 &
-DJANGO_PID=$!
+
+# Check if daphne is available (ASGI server for WebSocket support)
+if $PYTHON_EXE -m pip show daphne > /dev/null 2>&1; then
+    log_info "Using Daphne ASGI server (WebSocket enabled)"
+    $PYTHON_EXE -m daphne -b 0.0.0.0 -p $DJANGO_PORT asgi:application >> "$DJANGO_LOG" 2>&1 &
+    DJANGO_PID=$!
+elif $PYTHON_EXE -m pip show uvicorn > /dev/null 2>&1; then
+    log_info "Using Uvicorn ASGI server (WebSocket enabled)"
+    $PYTHON_EXE -m uvicorn asgi:application --host 0.0.0.0 --port $DJANGO_PORT >> "$DJANGO_LOG" 2>&1 &
+    DJANGO_PID=$!
+else
+    log_warning "Daphne/Uvicorn not found. Installing daphne for WebSocket support..."
+    if $PYTHON_EXE -m pip install daphne >> "$PIP_LOG" 2>&1; then
+        log_info "✓ Daphne installed. Starting with ASGI server..."
+        $PYTHON_EXE -m daphne -b 0.0.0.0 -p $DJANGO_PORT asgi:application >> "$DJANGO_LOG" 2>&1 &
+        DJANGO_PID=$!
+    else
+        log_warning "Failed to install daphne. Falling back to runserver (WebSocket disabled)"
+        log_warning "To enable WebSocket support, install daphne: pip install daphne"
+        $PYTHON_EXE manage.py runserver 0.0.0.0:$DJANGO_PORT >> "$DJANGO_LOG" 2>&1 &
+        DJANGO_PID=$!
+    fi
+fi
 log_debug "Django PID: $DJANGO_PID"
 
 # Wait for Django to be ready (check if port is listening)

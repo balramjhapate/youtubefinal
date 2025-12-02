@@ -41,6 +41,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',  # Django REST Framework
     'corsheaders',  # CORS headers
+    'channels',  # WebSocket support
     'downloader',  # RedNote downloader app
 ]
 
@@ -77,7 +78,19 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'wsgi.application'
+ASGI_APPLICATION = 'asgi.application'
 
+# Channels (WebSocket) Configuration
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels.layers.InMemoryChannelLayer',  # For development
+        # For production, use Redis:
+        # 'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        # 'CONFIG': {
+        #     "hosts": [('127.0.0.1', 6379)],
+        # },
+    },
+}
 
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
@@ -149,15 +162,16 @@ NCA_API_ENABLED = os.environ.get('NCA_API_ENABLED', 'false').lower() == 'true'  
 # If NCA_API_ENABLED is False, will fallback to local processing (Whisper, ffmpeg)
 
 # Whisper Transcription Configuration (Primary method)
-# Changed default from 'large' to 'base' for faster transcription
-# 'large' model can take 10-30 minutes for a 27-second video, 'base' takes ~30 seconds
-WHISPER_MODEL_SIZE = os.environ.get('WHISPER_MODEL_SIZE', 'base')  # tiny, base, small, medium, large
-# Model size recommendations:
+# Optimized for Mac Mini M4 (16GB RAM, 10-core CPU/GPU)
+# Changed default from 'base' to 'medium' for better accuracy while maintaining good performance
+# 'large' model can take 10-30 minutes for a 27-second video, 'medium' takes ~1-2 minutes
+WHISPER_MODEL_SIZE = os.environ.get('WHISPER_MODEL_SIZE', 'medium')  # tiny, base, small, medium, large
+# Model size recommendations for Mac Mini M4 (16GB RAM):
 #   - tiny: Fastest, least accurate (~1GB RAM, ~32x realtime)
-#   - base: Good balance (~1GB RAM, ~16x realtime) - RECOMMENDED (DEFAULT)
+#   - base: Good balance (~1GB RAM, ~16x realtime)
 #   - small: Better accuracy (~2GB RAM, ~6x realtime)
-#   - medium: High accuracy (~5GB RAM, ~2x realtime)
-#   - large: Best accuracy (~10GB RAM, ~1x realtime) - VERY SLOW, use only for high-quality needs
+#   - medium: High accuracy (~5GB RAM, ~2x realtime) - RECOMMENDED (DEFAULT) for M4 with 16GB RAM
+#   - large: Best accuracy (~10GB RAM, ~1x realtime) - May be slow on 16GB systems, use only for high-quality needs
 
 WHISPER_DEVICE = os.environ.get('WHISPER_DEVICE', 'cpu')  # 'cpu' or 'cuda' (GPU)
 WHISPER_CONFIDENCE_THRESHOLD = float(os.environ.get('WHISPER_CONFIDENCE_THRESHOLD', '-1.5'))  # Confidence threshold for retry
