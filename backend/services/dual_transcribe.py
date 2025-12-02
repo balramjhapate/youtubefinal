@@ -342,6 +342,13 @@ def transcribe_video_dual(video_download):
         settings_obj.enable_nca_transcription
     )
     
+    # Check if Whisper is also enabled (for dual transcription mode)
+    whisper_enabled = (
+        settings_obj and
+        settings_obj.enable_whisper_transcription
+    )
+    dual_transcription_enabled = nca_enabled and whisper_enabled
+    
     if nca_enabled:
         nca_client = get_nca_client()
         if nca_client:
@@ -407,16 +414,52 @@ def transcribe_video_dual(video_download):
                     results['nca_result'] = nca_result
                     print(f"✓ NCA transcription successful: {len(transcript_text)} chars")
                 else:
-                    video_download.transcription_status = 'failed'
-                    video_download.transcript_error_message = nca_result.get('error', 'Unknown error')
-                    video_download.save()
-                    print(f"✗ NCA transcription failed: {nca_result.get('error')}")
+                    # NCA failed - log detailed error information
+                    error_msg = nca_result.get('error', 'Unknown error')
+                    error_type = nca_result.get('error_type', 'unknown')
+                    suggestion = nca_result.get('suggestion', '')
+                    
+                    # Don't mark as failed if we have dual transcription - Whisper will try
+                    if dual_transcription_enabled:
+                        print(f"⚠️  NCA transcription failed: {error_msg}")
+                        if suggestion:
+                            print(f"   Suggestion: {suggestion}")
+                        print("   Continuing with Whisper transcription...")
+                    else:
+                        video_download.transcription_status = 'failed'
+                        video_download.transcript_error_message = error_msg
+                        video_download.save()
+                        print(f"✗ NCA transcription failed: {error_msg}")
+                        if suggestion:
+                            print(f"   Suggestion: {suggestion}")
+                    
+                    results['nca_result'] = {
+                        'status': 'failed',
+                        'error': error_msg,
+                        'error_type': error_type
+                    }
                     
             except Exception as e:
-                print(f"✗ NCA transcription error: {e}")
-                video_download.transcription_status = 'failed'
-                video_download.transcript_error_message = str(e)
-                video_download.save()
+                import logging
+                logger = logging.getLogger(__name__)
+                error_msg = str(e)
+                logger.error(f"NCA transcription exception: {error_msg}", exc_info=True)
+                
+                # Don't mark as failed if we have dual transcription - Whisper will try
+                if dual_transcription_enabled:
+                    print(f"⚠️  NCA transcription error: {error_msg}")
+                    print("   Continuing with Whisper transcription...")
+                else:
+                    video_download.transcription_status = 'failed'
+                    video_download.transcript_error_message = error_msg
+                    video_download.save()
+                    print(f"✗ NCA transcription error: {error_msg}")
+                
+                results['nca_result'] = {
+                    'status': 'failed',
+                    'error': error_msg,
+                    'error_type': 'exception'
+                }
     else:
         # Check if NCA is enabled in database settings
         nca_settings_enabled = settings_obj and settings_obj.enable_nca_transcription
@@ -425,10 +468,20 @@ def transcribe_video_dual(video_download):
             print("NCA transcription disabled in provider settings, skipping NCA transcription")
             print("  To enable NCA, go to Settings > Analysis Provider Settings and enable 'NCA Toolkit Transcription'")
         else:
-            # NCA is enabled in settings but failed - log the error
-            error_msg = results.get('nca_result', {}).get('error', 'Unknown error')
-            print(f"NCA transcription failed: {error_msg}")
-            print("  Check if NCA Toolkit server is running and NCA_API_URL/NCA_API_KEY are configured in settings.py")
+            # NCA is enabled in settings but client is None - connection/health check failed
+            nca_result = results.get('nca_result', {})
+            error_msg = nca_result.get('error', 'NCA Toolkit connection failed')
+            error_type = nca_result.get('error_type', 'connection')
+            suggestion = nca_result.get('suggestion', '')
+            
+            print(f"⚠️  NCA Toolkit health check failed: {error_msg}")
+            if suggestion:
+                print(f"   Suggestion: {suggestion}")
+            print("   Check if NCA Toolkit server is running:")
+            print("     - Docker: docker ps | grep nca-toolkit")
+            print("     - Health: curl http://localhost:8080/v1/toolkit/health")
+            print("     - Settings: Verify NCA_API_URL and NCA_API_KEY in settings.py")
+            print("   Falling back to Whisper transcription...")
     
     # ========== WHISPER TRANSCRIPTION ==========
     print("\n" + "="*60)

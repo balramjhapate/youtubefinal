@@ -8,6 +8,7 @@ import tempfile
 import logging
 import json
 import base64
+import time
 import requests
 from django.conf import settings
 
@@ -161,22 +162,82 @@ Now read this text with ALL markup tags followed precisely:
             
             logger.info(f"Using timeout: {total_timeout} seconds for TTS generation")
             
-            try:
-                response = requests.post(
-                    url,
-                    headers=headers,
-                    json=payload,
-                    timeout=(30, total_timeout)  # (connect timeout, read timeout)
-                )
-            except requests.exceptions.ReadTimeout as e:
-                logger.error(f"Gemini TTS API read timeout after {total_timeout} seconds")
-                raise Exception(f"TTS generation timed out after {total_timeout} seconds. The script may be too long. Try splitting the script or reducing video duration.")
-            except requests.exceptions.ConnectTimeout as e:
-                logger.error(f"Gemini TTS API connection timeout")
-                raise Exception(f"Could not connect to Gemini TTS API. Please check your internet connection and API key.")
-            except requests.exceptions.RequestException as e:
-                logger.error(f"Gemini TTS API request error: {str(e)}")
-                raise Exception(f"TTS API request failed: {str(e)}")
+            # Retry logic for transient network errors
+            max_retries = 2
+            retry_delay = 2  # seconds
+            last_exception = None
+            
+            for attempt in range(max_retries + 1):
+                try:
+                    response = requests.post(
+                        url,
+                        headers=headers,
+                        json=payload,
+                        timeout=(30, total_timeout)  # (connect timeout, read timeout)
+                    )
+                    # Success - break out of retry loop
+                    break
+                except requests.exceptions.ReadTimeout as e:
+                    last_exception = e
+                    if attempt < max_retries:
+                        logger.warning(f"Gemini TTS API read timeout (attempt {attempt + 1}/{max_retries + 1}). Retrying in {retry_delay}s...")
+                        time.sleep(retry_delay)
+                        retry_delay *= 2  # Exponential backoff
+                        continue
+                    else:
+                        logger.error(f"Gemini TTS API read timeout after {total_timeout} seconds (all {max_retries + 1} attempts failed)")
+                        # Provide helpful error message with suggestions
+                        word_count = len(text.split())
+                        char_count = len(text)
+                        suggestions = []
+                        if char_count > 1000:
+                            suggestions.append(f"Script is {char_count} characters long. Consider splitting into smaller chunks.")
+                        if video_duration and video_duration > 60:
+                            suggestions.append(f"Video duration is {video_duration:.1f}s. For long videos, consider using shorter scripts.")
+                        suggestions.append("Check your internet connection and API quota limits.")
+                        suggestion_text = " " + " ".join(suggestions) if suggestions else ""
+                        raise Exception(f"TTS generation timed out after {total_timeout} seconds after {max_retries + 1} attempts.{suggestion_text}")
+                except requests.exceptions.ConnectTimeout as e:
+                    last_exception = e
+                    if attempt < max_retries:
+                        logger.warning(f"Gemini TTS API connection timeout (attempt {attempt + 1}/{max_retries + 1}). Retrying in {retry_delay}s...")
+                        time.sleep(retry_delay)
+                        retry_delay *= 2
+                        continue
+                    else:
+                        logger.error(f"Gemini TTS API connection timeout after {max_retries + 1} attempts")
+                        raise Exception(f"Could not connect to Gemini TTS API after {max_retries + 1} attempts. Please check your internet connection, firewall settings, and API key configuration.")
+                except requests.exceptions.ConnectionError as e:
+                    last_exception = e
+                    if attempt < max_retries:
+                        logger.warning(f"Gemini TTS API connection error (attempt {attempt + 1}/{max_retries + 1}): {str(e)}. Retrying in {retry_delay}s...")
+                        time.sleep(retry_delay)
+                        retry_delay *= 2
+                        continue
+                    else:
+                        logger.error(f"Gemini TTS API connection error after {max_retries + 1} attempts: {str(e)}")
+                        raise Exception(f"TTS API connection failed after {max_retries + 1} attempts: {str(e)}. Please check your internet connection and API key.")
+                except requests.exceptions.RequestException as e:
+                    last_exception = e
+                    # Don't retry for non-network errors (4xx, etc.)
+                    if isinstance(e, (requests.exceptions.HTTPError, requests.exceptions.InvalidURL)):
+                        logger.error(f"Gemini TTS API request error: {str(e)}")
+                        raise Exception(f"TTS API request failed: {str(e)}")
+                    # Retry for other network errors
+                    if attempt < max_retries:
+                        logger.warning(f"Gemini TTS API request error (attempt {attempt + 1}/{max_retries + 1}): {str(e)}. Retrying in {retry_delay}s...")
+                        time.sleep(retry_delay)
+                        retry_delay *= 2
+                        continue
+                    else:
+                        logger.error(f"Gemini TTS API request error after {max_retries + 1} attempts: {str(e)}")
+                        raise Exception(f"TTS API request failed after {max_retries + 1} attempts: {str(e)}")
+            else:
+                # This should not happen, but handle it just in case
+                if last_exception:
+                    raise Exception(f"TTS generation failed after {max_retries + 1} attempts: {str(last_exception)}")
+                else:
+                    raise Exception("TTS generation failed: Unknown error")
             
             if response.status_code != 200:
                 error_data = response.json() if response.text else {}

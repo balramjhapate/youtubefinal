@@ -6,9 +6,12 @@ Documentation: https://github.com/stephengpope/no-code-architects-toolkit
 import requests
 import os
 import time
+import logging
 from django.conf import settings
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
+
+logger = logging.getLogger(__name__)
 
 class NCAToolkitClient:
     """Client for interacting with NCA Toolkit API"""
@@ -69,20 +72,38 @@ class NCAToolkitClient:
                     'error': error_msg,
                     'status_code': response.status_code
                 }
-        except requests.exceptions.Timeout:
+        except requests.exceptions.Timeout as e:
+            error_msg = f'Request timed out after {self.timeout} seconds. The API may be processing a large file or is overloaded.'
+            logger.error(f"NCA Toolkit API timeout: {error_msg}")
             return {
                 'success': False,
-                'error': 'Request timed out. The API may be processing a large file.'
+                'error': error_msg,
+                'error_type': 'timeout'
             }
-        except requests.exceptions.ConnectionError:
+        except requests.exceptions.ConnectionError as e:
+            error_msg = f'Could not connect to NCA Toolkit API at {self.api_url}. Make sure it is running and accessible.'
+            logger.error(f"NCA Toolkit API connection error: {error_msg}. Original error: {str(e)}")
             return {
                 'success': False,
-                'error': f'Could not connect to NCA Toolkit API at {self.api_url}. Make sure it is running.'
+                'error': error_msg,
+                'error_type': 'connection',
+                'suggestion': 'Check if NCA Toolkit is running: docker ps | grep nca-toolkit or curl http://localhost:8080/v1/toolkit/health'
+            }
+        except requests.exceptions.RequestException as e:
+            error_msg = f'NCA Toolkit API request failed: {str(e)}'
+            logger.error(f"NCA Toolkit API request error: {error_msg}")
+            return {
+                'success': False,
+                'error': error_msg,
+                'error_type': 'request'
             }
         except Exception as e:
+            error_msg = f'Unexpected error calling NCA Toolkit API: {str(e)}'
+            logger.error(f"NCA Toolkit API unexpected error: {error_msg}", exc_info=True)
             return {
                 'success': False,
-                'error': str(e)
+                'error': error_msg,
+                'error_type': 'unknown'
             }
     
     def transcribe_video(self, video_url=None, video_file_path=None, language=None, webhook_url=None):
@@ -471,9 +492,16 @@ def get_nca_client():
         try:
             health = client.health_check()
             if not health.get('success'):
-                print(f"⚠️  NCA Toolkit health check failed: {health.get('error', 'Unknown error')}. Falling back to Whisper.")
+                error_msg = health.get('error', 'Unknown error')
+                error_type = health.get('error_type', 'unknown')
+                suggestion = health.get('suggestion', '')
+                logger.warning(f"NCA Toolkit health check failed: {error_msg} (type: {error_type})")
+                if suggestion:
+                    logger.info(f"Suggestion: {suggestion}")
+                print(f"⚠️  NCA Toolkit health check failed: {error_msg}. Falling back to Whisper.")
                 return None
         except Exception as e:
+            logger.warning(f"NCA Toolkit connection test failed: {e}", exc_info=True)
             print(f"⚠️  NCA Toolkit connection test failed: {e}. Falling back to Whisper.")
             return None
         

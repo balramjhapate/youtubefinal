@@ -1049,11 +1049,26 @@ class VideoDownloadViewSet(viewsets.ModelViewSet):
                                     )
                                     tts_success = True
                                 except Exception as e:
-                                    error_msg = f"TTS generation failed: {str(e)}"
-                                    logger.error(error_msg, exc_info=True)
+                                    error_str = str(e)
+                                    # Provide more helpful error messages
+                                    if 'timed out' in error_str.lower() or 'timeout' in error_str.lower():
+                                        error_msg = f"TTS generation timed out: {error_str}"
+                                        logger.warning(error_msg)
+                                        # Suggest splitting script for long videos
+                                        if video.duration and video.duration > 60:
+                                            logger.info(f"Video duration is {video.duration:.1f}s. Consider using shorter scripts for long videos.")
+                                    elif 'connection' in error_str.lower() or 'connect' in error_str.lower():
+                                        error_msg = f"TTS API connection failed: {error_str}"
+                                        logger.error(error_msg)
+                                        logger.info("Check your internet connection and API key configuration.")
+                                    else:
+                                        error_msg = f"TTS generation failed: {error_str}"
+                                        logger.error(error_msg, exc_info=True)
+                                    
                                     video.synthesis_status = 'failed'
                                     video.synthesis_error = error_msg
                                     video.save()
+                                    broadcast_video_update(video.id, video_instance=video)
                                     # Don't re-raise - continue with pipeline even if TTS fails
                                     # The response will indicate partial success with a warning
                                     print(f"✗ {error_msg}")
