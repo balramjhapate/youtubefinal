@@ -42,6 +42,28 @@ class AIProviderSettings(models.Model):
         help_text="Default AI provider for general tasks (enhancement, TTS markup, etc.)"
     )
     
+    # Analysis Provider Enable/Disable Settings
+    enable_nca_transcription = models.BooleanField(
+        default=True,
+        help_text="Enable NCA Toolkit transcription (fast API-based transcription)"
+    )
+    enable_whisper_transcription = models.BooleanField(
+        default=True,
+        help_text="Enable Whisper transcription (local model-based transcription)"
+    )
+    enable_visual_analysis = models.BooleanField(
+        default=False,
+        help_text="Enable Visual Analysis (frame-by-frame analysis using AI Vision)"
+    )
+    
+    # Visual Analysis Provider Selection
+    visual_analysis_provider = models.CharField(
+        max_length=50,
+        choices=PROVIDER_CHOICES,
+        default='openai',
+        help_text="AI provider for visual analysis (OpenAI GPT-4o-mini or Gemini Vision)"
+    )
+    
     # Legacy fields for backward compatibility (deprecated)
     provider = models.CharField(
         max_length=50, 

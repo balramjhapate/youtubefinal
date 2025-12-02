@@ -138,6 +138,13 @@ class VideoDownload(models.Model):
     
     # Visual Transcription (for videos without audio - uses Gemini Vision API)
     has_audio = models.BooleanField(default=True, help_text="Whether video contains audio track")
+    # Frame Extraction
+    frames_extracted = models.BooleanField(default=False, help_text="Whether frames have been extracted from video")
+    extracted_frames_paths = models.JSONField(blank=True, null=True, help_text="Array of extracted frame file paths stored in media/visual_frames/{video_id}/")
+    frames_extracted_at = models.DateTimeField(blank=True, null=True, help_text="When frames were extracted from video")
+    frames_extraction_interval = models.FloatField(blank=True, null=True, help_text="Interval in seconds between extracted frames (e.g., 1.0 for 1 frame per second)")
+    total_frames_extracted = models.IntegerField(default=0, help_text="Total number of frames extracted")
+    # Visual Transcript
     visual_transcript = models.TextField(blank=True, help_text="Visual: Frame-by-frame description WITH timestamps (HH:MM:SS format)")
     visual_transcript_without_timestamps = models.TextField(blank=True, help_text="Visual: Frame-by-frame description WITHOUT timestamps (plain text)")
     visual_transcript_hindi = models.TextField(blank=True, help_text="Visual: Hindi translation of visual description")

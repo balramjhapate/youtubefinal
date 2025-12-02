@@ -14,6 +14,10 @@ class AIProviderSettingsSerializer(serializers.ModelSerializer):
             'anthropic_api_key',
             'script_generation_provider',
             'default_provider',
+            'enable_nca_transcription',
+            'enable_whisper_transcription',
+            'enable_visual_analysis',
+            'visual_analysis_provider',
             # Legacy fields (deprecated)
             'provider',
             'api_key'
@@ -120,10 +124,20 @@ class VideoDownloadSerializer(serializers.ModelSerializer):
     visual_transcript = serializers.SerializerMethodField()
     visual_transcript_without_timestamps = serializers.SerializerMethodField()
     visual_transcript_hindi = serializers.SerializerMethodField()
+    visual_transcript_started_at = serializers.SerializerMethodField()
+    visual_transcript_finished_at = serializers.SerializerMethodField()
+    # Frame extraction fields
+    frames_extracted = serializers.SerializerMethodField()
+    extracted_frames_paths = serializers.SerializerMethodField()
+    frames_extracted_at = serializers.SerializerMethodField()
+    frames_extraction_interval = serializers.SerializerMethodField()
+    total_frames_extracted = serializers.SerializerMethodField()
     # Enhanced transcription fields
     enhanced_transcript = serializers.SerializerMethodField()
     enhanced_transcript_without_timestamps = serializers.SerializerMethodField()
     enhanced_transcript_hindi = serializers.SerializerMethodField()
+    enhanced_transcript_started_at = serializers.SerializerMethodField()
+    enhanced_transcript_finished_at = serializers.SerializerMethodField()
     # Final video assembly fields
     final_video_status = serializers.SerializerMethodField()
     final_video_error = serializers.SerializerMethodField()
@@ -154,8 +168,12 @@ class VideoDownloadSerializer(serializers.ModelSerializer):
             'whisper_transcript_error_message',
             # Visual Transcription
             'has_audio', 'visual_transcript', 'visual_transcript_without_timestamps', 'visual_transcript_hindi',
+            'visual_transcript_started_at', 'visual_transcript_finished_at',
+            # Frame Extraction
+            'frames_extracted', 'extracted_frames_paths', 'frames_extracted_at', 'frames_extraction_interval', 'total_frames_extracted',
             # Enhanced Transcription
             'enhanced_transcript', 'enhanced_transcript_without_timestamps', 'enhanced_transcript_hindi',
+            'enhanced_transcript_started_at', 'enhanced_transcript_finished_at',
             # Script Generation
             'script_status', 'hindi_script', 'clean_script_for_tts', 'script_error_message', 'script_generated_at',
             'script_edited', 'script_edited_at',
@@ -164,15 +182,17 @@ class VideoDownloadSerializer(serializers.ModelSerializer):
             # Synthesis
             'synthesis_status', 'synthesis_error', 'synthesized_audio', 'synthesized_audio_url', 'synthesized_at',
             # Final Video Assembly
-            'final_video_status', 'final_video_error',
+            'final_video_status', 'final_video_error', 'final_video_started_at', 'final_video_finished_at',
             # Review
             'review_status', 'review_notes', 'reviewed_at',
             # Cloudinary
-            'cloudinary_url', 'cloudinary_uploaded_at',
+            'cloudinary_url', 'cloudinary_upload_started_at', 'cloudinary_uploaded_at',
             # Generated Metadata
             'generated_title', 'generated_description', 'generated_tags',
             # Google Sheets
-            'google_sheets_synced', 'google_sheets_synced_at',
+            'google_sheets_synced', 'google_sheets_sync_started_at', 'google_sheets_synced_at',
+            # Extraction timestamps
+            'extraction_started_at', 'extraction_finished_at',
         ]
         read_only_fields = [
             'id', 'video_id', 'created_at', 'updated_at',
@@ -417,6 +437,56 @@ class VideoDownloadSerializer(serializers.ModelSerializer):
         except (AttributeError, ValueError):
             return ''
     
+    def get_visual_transcript_started_at(self, obj):
+        """Safely get visual_transcript_started_at field"""
+        try:
+            return getattr(obj, 'visual_transcript_started_at', None)
+        except (AttributeError, ValueError):
+            return None
+    
+    def get_visual_transcript_finished_at(self, obj):
+        """Safely get visual_transcript_finished_at field"""
+        try:
+            return getattr(obj, 'visual_transcript_finished_at', None)
+        except (AttributeError, ValueError):
+            return None
+    
+    # Frame extraction getters
+    def get_frames_extracted(self, obj):
+        """Safely get frames_extracted field"""
+        try:
+            return getattr(obj, 'frames_extracted', False)
+        except (AttributeError, ValueError):
+            return False
+    
+    def get_extracted_frames_paths(self, obj):
+        """Safely get extracted_frames_paths field"""
+        try:
+            return getattr(obj, 'extracted_frames_paths', [])
+        except (AttributeError, ValueError):
+            return []
+    
+    def get_frames_extracted_at(self, obj):
+        """Safely get frames_extracted_at field"""
+        try:
+            return getattr(obj, 'frames_extracted_at', None)
+        except (AttributeError, ValueError):
+            return None
+    
+    def get_frames_extraction_interval(self, obj):
+        """Safely get frames_extraction_interval field"""
+        try:
+            return getattr(obj, 'frames_extraction_interval', None)
+        except (AttributeError, ValueError):
+            return None
+    
+    def get_total_frames_extracted(self, obj):
+        """Safely get total_frames_extracted field"""
+        try:
+            return getattr(obj, 'total_frames_extracted', 0)
+        except (AttributeError, ValueError):
+            return 0
+    
     # Enhanced transcription getters
     def get_enhanced_transcript(self, obj):
         """Safely get enhanced_transcript field"""
@@ -439,6 +509,20 @@ class VideoDownloadSerializer(serializers.ModelSerializer):
         except (AttributeError, ValueError):
             return ''
     
+    def get_enhanced_transcript_started_at(self, obj):
+        """Safely get enhanced_transcript_started_at field"""
+        try:
+            return getattr(obj, 'enhanced_transcript_started_at', None)
+        except (AttributeError, ValueError):
+            return None
+    
+    def get_enhanced_transcript_finished_at(self, obj):
+        """Safely get enhanced_transcript_finished_at field"""
+        try:
+            return getattr(obj, 'enhanced_transcript_finished_at', None)
+        except (AttributeError, ValueError):
+            return None
+    
     def get_final_video_status(self, obj):
         """Safely get final_video_status field"""
         try:
@@ -457,6 +541,34 @@ class VideoDownloadSerializer(serializers.ModelSerializer):
         """Safely get synthesized_at field"""
         try:
             return getattr(obj, 'synthesized_at', None)
+        except (AttributeError, ValueError):
+            return None
+    
+    def get_final_video_started_at(self, obj):
+        """Safely get final_video_started_at field"""
+        try:
+            return getattr(obj, 'final_video_started_at', None)
+        except (AttributeError, ValueError):
+            return None
+    
+    def get_final_video_finished_at(self, obj):
+        """Safely get final_video_finished_at field"""
+        try:
+            return getattr(obj, 'final_video_finished_at', None)
+        except (AttributeError, ValueError):
+            return None
+    
+    def get_cloudinary_upload_started_at(self, obj):
+        """Safely get cloudinary_upload_started_at field"""
+        try:
+            return getattr(obj, 'cloudinary_upload_started_at', None)
+        except (AttributeError, ValueError):
+            return None
+    
+    def get_google_sheets_sync_started_at(self, obj):
+        """Safely get google_sheets_sync_started_at field"""
+        try:
+            return getattr(obj, 'google_sheets_sync_started_at', None)
         except (AttributeError, ValueError):
             return None
 

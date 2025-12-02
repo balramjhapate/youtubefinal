@@ -1402,18 +1402,19 @@ def extract_audio_from_video(video_path, output_audio_path=None):
         traceback.print_exc()
         return None
 
-def transcribe_audio_local(audio_path, language=None, model_size='base'):
+def transcribe_audio_local(audio_path, language=None, model_size='medium'):
     """
     Transcribe audio file locally using OpenAI Whisper with enhanced features.
     Now uses the whisper_transcribe module for better language detection,
     time-aligned segments, and confidence checking.
+    Optimized for Mac Mini M4 (16GB RAM) - default: 'medium' for best accuracy/performance balance.
     
     Args:
         audio_path: Path to audio file
         language: Optional language code (e.g., 'zh', 'en', 'auto'). If None, auto-detect
         model_size: Whisper model size ('tiny', 'base', 'small', 'medium', 'large')
                     Smaller = faster, less accurate. Larger = slower, more accurate.
-                    'base' is a good balance.
+                    'medium' is recommended for Mac Mini M4 (16GB RAM) - good balance of accuracy and speed.
         
     Returns:
         dict: {
@@ -1892,15 +1893,15 @@ def transcribe_video(video_download):
             # Transcribe audio
             print(f"Starting local Whisper transcription...")
             # Auto-detect language for Chinese/English videos
-            # Use 'base' model for faster transcription (can be changed to 'small' or 'medium' for better accuracy)
-            # 'base' is ~10x faster than 'large' and still very accurate
-            model_size = getattr(settings, 'WHISPER_MODEL_SIZE', 'base')
+            # Use 'medium' model for better accuracy (optimized for Mac Mini M4 with 16GB RAM)
+            # 'medium' provides high accuracy with ~2x realtime speed, good balance for M4 systems
+            model_size = getattr(settings, 'WHISPER_MODEL_SIZE', 'medium')
             if model_size == 'large':
                 print("⚠️  Warning: Using 'large' model which is very slow. Consider using 'base' or 'small' for faster transcription.")
             transcript_result = transcribe_audio_local(
                 audio_path,
                 language=None,  # Auto-detect (will detect Chinese, English, etc.)
-                model_size=model_size  # Use setting or default to 'base'
+                model_size=model_size  # Use setting or default to 'medium' (optimized for Mac Mini M4)
             )
             
             # Process segments and generate SRT if available

@@ -452,14 +452,17 @@ class NCAToolkitClient:
 def get_nca_client():
     """Get configured NCA Toolkit client instance"""
     try:
-        # Check if NCA API is enabled in settings
-        if not getattr(settings, 'NCA_API_ENABLED', False):
+        # Check if NCA is enabled in database settings (NOT environment variables)
+        from model import AIProviderSettings
+        settings_obj = AIProviderSettings.objects.first()
+        if not settings_obj or not settings_obj.enable_nca_transcription:
             return None
         
-        # Check if API key is set
+        # Check if API key is set in Django settings (can be from settings.py or environment)
         api_key = getattr(settings, 'NCA_API_KEY', '')
         if not api_key:
-            print("⚠️  NCA_API_KEY not set in settings. NCA Toolkit will not be used.")
+            print("⚠️  NCA_API_KEY not set in Django settings. NCA Toolkit will not be used.")
+            print("  Please set NCA_API_KEY in settings.py or environment variables")
             return None
         
         client = NCAToolkitClient()

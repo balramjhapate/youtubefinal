@@ -11,6 +11,7 @@ from . import whisper_transcribe
 from .nca_toolkit_client import get_nca_client
 from pipeline.utils import extract_audio_from_video, translate_text, _call_gemini_api, _call_openai_api
 from model import AIProviderSettings
+from downloader.websocket_utils import broadcast_video_update
 import os
 import json
 import re
@@ -334,13 +335,21 @@ def transcribe_video_dual(video_download):
     print("STARTING NCA TRANSCRIPTION")
     print("="*60)
     
-    if getattr(settings, 'NCA_API_ENABLED', False):
+    # Check if NCA transcription is enabled in database settings (NOT environment variables)
+    settings_obj = AIProviderSettings.objects.first()
+    nca_enabled = (
+        settings_obj and
+        settings_obj.enable_nca_transcription
+    )
+    
+    if nca_enabled:
         nca_client = get_nca_client()
         if nca_client:
             try:
                 video_download.transcription_status = 'transcribing'
                 video_download.transcript_started_at = timezone.now()
                 video_download.save()
+                broadcast_video_update(video_download.id, video_instance=video_download)
                 
                 print("Attempting NCA transcription...")
                 
@@ -393,6 +402,7 @@ def transcribe_video_dual(video_download):
                     video_download.transcription_status = 'transcribed'
                     video_download.transcript_processed_at = timezone.now()
                     video_download.save()
+                    broadcast_video_update(video_download.id, video_instance=video_download)
                     
                     results['nca_result'] = nca_result
                     print(f"✓ NCA transcription successful: {len(transcript_text)} chars")
@@ -408,17 +418,39 @@ def transcribe_video_dual(video_download):
                 video_download.transcript_error_message = str(e)
                 video_download.save()
     else:
-        print("NCA API disabled, skipping NCA transcription")
+        # Check if NCA is enabled in database settings
+        nca_settings_enabled = settings_obj and settings_obj.enable_nca_transcription
+        
+        if not nca_settings_enabled:
+            print("NCA transcription disabled in provider settings, skipping NCA transcription")
+            print("  To enable NCA, go to Settings > Analysis Provider Settings and enable 'NCA Toolkit Transcription'")
+        else:
+            # NCA is enabled in settings but failed - log the error
+            error_msg = results.get('nca_result', {}).get('error', 'Unknown error')
+            print(f"NCA transcription failed: {error_msg}")
+            print("  Check if NCA Toolkit server is running and NCA_API_URL/NCA_API_KEY are configured in settings.py")
     
     # ========== WHISPER TRANSCRIPTION ==========
     print("\n" + "="*60)
     print("STARTING WHISPER TRANSCRIPTION")
     print("="*60)
     
+    # Check if Whisper transcription is enabled
+    whisper_enabled = (
+        settings_obj and
+        settings_obj.enable_whisper_transcription
+    )
+    
+    if not whisper_enabled:
+        print("Whisper transcription disabled in provider settings, skipping Whisper transcription")
+        results['status'] = 'partial' if results.get('nca_result') else 'failed'
+        return results
+    
     try:
         video_download.whisper_transcription_status = 'transcribing'
         video_download.whisper_transcript_started_at = timezone.now()
         video_download.save()
+        broadcast_video_update(video_download.id, video_instance=video_download)
         
         # Ensure video is downloaded
         if not video_download.is_downloaded or not video_download.local_file:
@@ -449,8 +481,8 @@ def transcribe_video_dual(video_download):
             raise Exception("Failed to extract audio from video")
         
         try:
-            # Get Whisper configuration
-            model_size = getattr(settings, 'WHISPER_MODEL_SIZE', 'base')
+            # Get Whisper configuration (default: 'medium' for Mac Mini M4)
+            model_size = getattr(settings, 'WHISPER_MODEL_SIZE', 'medium')
             confidence_threshold = getattr(settings, 'WHISPER_CONFIDENCE_THRESHOLD', -1.5)
             retry_enabled = getattr(settings, 'WHISPER_RETRY_WITH_LARGER_MODEL', True)
             
@@ -575,78 +607,90 @@ def transcribe_video_dual(video_download):
             print("Attempting visual analysis (optional - will continue if it fails)...")
             
             settings_obj = AIProviderSettings.objects.first()
-            if settings_obj and settings_obj.provider == 'gemini' and settings_obj.api_key:
-                print(f"Using Gemini Vision API for frame analysis...")
-                print(f"Provider: {settings_obj.provider}, API Key configured: {bool(settings_obj.api_key)}")
+            # Check if visual analysis is enabled
+            visual_enabled = (
+                settings_obj and
+                settings_obj.enable_visual_analysis
+            )
+            
+            if not visual_enabled:
+                print("Visual analysis disabled in provider settings, skipping visual analysis")
+                visual_available = False
+            elif settings_obj:
+                # Use the provider selected in settings for visual analysis
+                provider = settings_obj.visual_analysis_provider or 'openai'
+                api_key = settings_obj.get_api_key(provider)
                 
-                # Calculate reasonable frame extraction parameters based on video duration
-                # Use 1 frame per second for reasonable processing time (max 60 frames for speed)
-                if video_download.duration:
-                    # Calculate interval to get approximately 1 frame per second
-                    # But cap at 60 frames total for performance (reduced from 200)
-                    max_frames = min(int(video_download.duration), 60)
-                    # Calculate interval: if we want max_frames frames in duration seconds
-                    # interval = duration / max_frames
-                    interval = video_download.duration / max_frames if max_frames > 0 else 1.0
-                    print(f"Video duration: {video_download.duration}s, extracting {max_frames} frames at {interval:.3f}s intervals")
+                if api_key and api_key.strip():
+                    provider_name = 'OpenAI GPT-4o-mini' if provider == 'openai' else 'Gemini Vision API'
+                    print(f"Using {provider_name} for frame analysis...")
+                    print(f"Provider: {provider}, API Key configured: {bool(api_key)}")
+                    
+                    # Calculate reasonable frame extraction parameters based on video duration
+                    # Use 1 frame per second for reasonable processing time (max 60 frames for speed)
+                    if video_download.duration:
+                        # Calculate interval to get approximately 1 frame per second
+                        # But cap at 60 frames total for performance (reduced from 200)
+                        max_frames = min(int(video_download.duration), 60)
+                        # Calculate interval: if we want max_frames frames in duration seconds
+                        # interval = duration / max_frames
+                        interval = video_download.duration / max_frames if max_frames > 0 else 1.0
+                        print(f"Video duration: {video_download.duration}s, extracting {max_frames} frames at {interval:.3f}s intervals")
+                    else:
+                        # Default: 1 frame per second, max 60 frames
+                        max_frames = 60
+                        interval = 1.0  # 1 frame per second
+                        print(f"Video duration unknown, using default: {max_frames} frames at {interval}s intervals")
+                    
+                    visual_result = visual_analysis.generate_visual_transcript(
+                        video_path=video_path,
+                        api_key=api_key,
+                        interval=interval,  # Adjusted interval for reasonable frame count
+                        max_frames=max_frames  # Limit frames to prevent timeout
+                    )
+                    
+                    if visual_result['status'] == 'success':
+                        # Store visual transcript
+                        video_download.visual_transcript = visual_result['text_with_timestamps']
+                        video_download.visual_transcript_without_timestamps = visual_result['text']
+                        video_download.visual_transcript_segments = visual_result['segments']
+                        
+                        # Translate to Hindi using AI for better quality and meaning preservation
+                        print("Translating visual description to Hindi using AI (preserves meaning)...")
+                        try:
+                            from pipeline.utils import translate_text_with_ai
+                            hindi_translation = translate_text_with_ai(visual_result['text'], target='hi')
+                            video_download.visual_transcript_hindi = hindi_translation
+                        except Exception as trans_error:
+                            print(f"⚠ Hindi translation failed for visual transcript: {trans_error}")
+                        
+                        video_download.save()
+                        
+                        results['visual_result'] = visual_result
+                        visual_available = True
+                        print(f"✓ Visual analysis successful: {len(visual_result['text'])} chars")
+                    else:
+                        error_msg = visual_result.get('error', 'Unknown error')
+                        print(f"⚠ Visual analysis failed (continuing without it): {error_msg[:200]}")
+                        results['visual_error'] = error_msg
+                        visual_available = False
+                        
+                        # Store error message in video model for admin visibility (non-blocking)
+                        if not video_download.transcript_error_message:
+                            video_download.transcript_error_message = f"Visual Analysis (Optional) Failed: {error_msg[:500]}"
+                        else:
+                            video_download.transcript_error_message += f"\nVisual Analysis (Optional) Failed: {error_msg[:500]}"
+                        video_download.save()
+                        print("→ Continuing pipeline with Whisper + NCA only (visual analysis is optional)")
                 else:
-                    # Default: 1 frame per second, max 60 frames
-                    max_frames = 60
-                    interval = 1.0  # 1 frame per second
-                    print(f"Video duration unknown, using default: {max_frames} frames at {interval}s intervals")
-                
-                visual_result = visual_analysis.generate_visual_transcript(
-                    video_path=video_path,
-                    api_key=settings_obj.api_key,
-                    interval=interval,  # Adjusted interval for reasonable frame count
-                    max_frames=max_frames  # Limit frames to prevent timeout
-                )
-                
-                if visual_result['status'] == 'success':
-                    # Store visual transcript
-                    video_download.visual_transcript = visual_result['text_with_timestamps']
-                    video_download.visual_transcript_without_timestamps = visual_result['text']
-                    video_download.visual_transcript_segments = visual_result['segments']
-                    
-                    # Translate to Hindi using AI for better quality and meaning preservation
-                    print("Translating visual description to Hindi using AI (preserves meaning)...")
-                    try:
-                        from pipeline.utils import translate_text_with_ai
-                        hindi_translation = translate_text_with_ai(visual_result['text'], target='hi')
-                        video_download.visual_transcript_hindi = hindi_translation
-                    except Exception as trans_error:
-                        print(f"⚠ Hindi translation failed for visual transcript: {trans_error}")
-                    
-                    video_download.save()
-                    
-                    results['visual_result'] = visual_result
-                    visual_available = True
-                    print(f"✓ Visual analysis successful: {len(visual_result['text'])} chars")
-                else:
-                    error_msg = visual_result.get('error', 'Unknown error')
-                    print(f"⚠ Visual analysis failed (continuing without it): {error_msg[:200]}")
+                    error_msg = "Neither OpenAI nor Gemini API key configured for visual analysis (optional)."
+                    print(f"⚠ {error_msg}")
                     results['visual_error'] = error_msg
                     visual_available = False
-                    
-                    # Store error message in video model for admin visibility (non-blocking)
-                    if not video_download.transcript_error_message:
-                        video_download.transcript_error_message = f"Visual Analysis (Optional) Failed: {error_msg[:500]}"
-                    else:
-                        video_download.transcript_error_message += f"\nVisual Analysis (Optional) Failed: {error_msg[:500]}"
-                    video_download.save()
                     print("→ Continuing pipeline with Whisper + NCA only (visual analysis is optional)")
             else:
-                error_msg = "Gemini API not configured for visual analysis (optional)."
-                if not settings_obj:
-                    error_msg = "AI Provider Settings not found. Visual analysis skipped (optional)."
-                elif settings_obj.provider != 'gemini':
-                    error_msg = f"Visual analysis requires Gemini provider, but current provider is {settings_obj.provider}. Visual analysis skipped (optional)."
-                elif not settings_obj.api_key:
-                    error_msg = "Gemini API key not configured. Visual analysis skipped (optional)."
-                print(f"⚠ {error_msg}")
-                results['visual_error'] = error_msg
+                print("⚠ Video file not found, skipping visual analysis")
                 visual_available = False
-                print("→ Continuing pipeline with Whisper + NCA only (visual analysis is optional)")
     except Exception as e:
         print(f"⚠ Visual analysis error (continuing without it): {e}")
         import traceback
@@ -663,17 +707,19 @@ def transcribe_video_dual(video_download):
     try:
         # Get AI provider settings
         settings_obj = AIProviderSettings.objects.first()
-        if settings_obj and settings_obj.api_key:
-            # Collect segments from all three sources
+        if settings_obj:
+            # Collect segments from enabled sources only
             whisper_segments = []
-            if results.get('whisper_result') and results['whisper_result'].get('segments'):
-                whisper_segments = results['whisper_result']['segments']
-            elif video_download.whisper_transcript_segments:
-                whisper_segments = video_download.whisper_transcript_segments
+            if settings_obj and settings_obj.enable_whisper_transcription:
+                if results.get('whisper_result') and results['whisper_result'].get('segments'):
+                    whisper_segments = results['whisper_result']['segments']
+                elif video_download.whisper_transcript_segments:
+                    whisper_segments = video_download.whisper_transcript_segments
             
             nca_segments = []
-            if results.get('nca_result') and results['nca_result'].get('segments'):
-                nca_segments = results['nca_result']['segments']
+            if settings_obj and settings_obj.enable_nca_transcription:
+                if results.get('nca_result') and results['nca_result'].get('segments'):
+                    nca_segments = results['nca_result']['segments']
             
             # If NCA segments not in results, try to parse from stored transcript
             if not nca_segments and video_download.transcript:
@@ -691,35 +737,53 @@ def transcribe_video_dual(video_download):
                             'timestamp_str': f"{hours:02d}:{minutes:02d}:{seconds:02d}"
                         })
             
-            # Get visual segments from visual_result
+            # Get visual segments from visual_result (only if enabled)
             visual_segments = []
-            if visual_result and visual_result.get('status') == 'success' and visual_result.get('segments'):
-                visual_segments = visual_result['segments']
-            elif video_download.visual_transcript_segments:
-                visual_segments = video_download.visual_transcript_segments
+            if settings_obj.enable_visual_analysis:
+                if visual_result and visual_result.get('status') == 'success' and visual_result.get('segments'):
+                    visual_segments = visual_result['segments']
+                elif video_download.visual_transcript_segments:
+                    visual_segments = video_download.visual_transcript_segments
             
             # Only enhance if we have at least one transcript source (Whisper or NCA required, Visual optional)
             if whisper_segments or nca_segments:
                 # Set AI processing status to 'processing' BEFORE starting AI enhancement
                 # This ensures frontend can see the status update in real-time
                 video_download.ai_processing_status = 'processing'
-                video_download.save(update_fields=['ai_processing_status'])
+                video_download.ai_processing_started_at = timezone.now()
+                video_download.enhanced_transcript_started_at = timezone.now()
+                video_download.save(update_fields=['ai_processing_status', 'ai_processing_started_at', 'enhanced_transcript_started_at'])
+                broadcast_video_update(video_download.id, video_instance=video_download)
                 print(f"✓ AI Processing status set to 'processing' for video {video_download.id} (before AI enhancement)")
                 
-                print(f"Enhancing transcript with AI ({settings_obj.provider})...")
-                print(f"  Whisper segments: {len(whisper_segments)}")
-                print(f"  NCA segments: {len(nca_segments)}")
-                print(f"  Visual segments: {len(visual_segments)} {'(available)' if visual_segments else '(optional - not available)'}")
+                provider = settings_obj.default_provider or settings_obj.provider or 'gemini'
+                api_key = settings_obj.get_api_key(provider)
                 
-                enhanced_result = enhance_transcript_with_ai(
-                    whisper_segments=whisper_segments,
-                    nca_segments=nca_segments,
-                    visual_segments=visual_segments,
-                    api_key=settings_obj.api_key,
-                    provider=settings_obj.provider
-                )
+                print(f"Enhancing transcript with AI ({provider})...")
+                print(f"  Whisper segments: {len(whisper_segments)} {'(enabled)' if settings_obj.enable_whisper_transcription else '(disabled)'}")
+                print(f"  NCA segments: {len(nca_segments)} {'(enabled)' if settings_obj.enable_nca_transcription else '(disabled)'}")
+                print(f"  Visual segments: {len(visual_segments)} {'(enabled)' if (settings_obj.enable_visual_analysis and visual_segments) else '(disabled or not available)'}")
                 
-                if enhanced_result['status'] == 'success':
+                enhanced_result = None
+                if not api_key:
+                    print(f"⚠ No API key found for provider {provider}, skipping AI enhancement")
+                    enhanced_result = {
+                        'status': 'failed',
+                        'enhanced_segments': [],
+                        'enhanced_text': '',
+                        'enhanced_text_with_timestamps': '',
+                        'error': 'No API key found for AI enhancement'
+                    }
+                else:
+                    enhanced_result = enhance_transcript_with_ai(
+                        whisper_segments=whisper_segments,
+                        nca_segments=nca_segments,
+                        visual_segments=visual_segments,
+                        api_key=api_key,
+                        provider=provider
+                    )
+                
+                if enhanced_result and enhanced_result.get('status') == 'success':
                     # Store enhanced transcript AS-IS (no word filtering during transcript generation)
                     # Word filtering will be applied only at final TTS script generation stage
                     print("Storing enhanced transcript (word filtering will be applied at TTS script generation stage)...")
@@ -796,7 +860,10 @@ def transcribe_video_dual(video_download):
                     
                     # Update AI processing status to 'processed' after successful enhancement
                     video_download.ai_processing_status = 'processed'
+                    video_download.ai_processed_at = timezone.now()
+                    video_download.enhanced_transcript_finished_at = timezone.now()
                     video_download.save()
+                    broadcast_video_update(video_download.id, video_instance=video_download)
                     
                     results['enhanced_result'] = enhanced_result
                     print(f"✓ Enhanced transcript generated: {len(enhanced_result['enhanced_text'])} chars")
@@ -828,6 +895,7 @@ def transcribe_video_dual(video_download):
             video_download.ai_processing_status = 'failed'
             video_download.ai_error_message = error_msg
             video_download.save(update_fields=['ai_processing_status', 'ai_error_message'])
+            broadcast_video_update(video_download.id, video_instance=video_download)
             results['enhanced_error'] = error_msg
     except Exception as e:
         print(f"✗ Enhanced transcript generation error: {e}")
