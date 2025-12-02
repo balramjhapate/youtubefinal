@@ -53,10 +53,12 @@ class GeminiTTSService:
         output_path=None,
         temperature=None,
         style_prompt=None,
-        video_duration=None
+        video_duration=None,
+        chunk_size=3000  # Characters per chunk for long videos
     ):
         """
         Generate speech using Gemini TTS API with support for markup tags and style prompts
+        For long videos (>10 minutes), automatically processes in chunks and combines
         
         Args:
             text: Text to synthesize (can include markup tags like [sigh], [laughing], [short pause], etc.)
@@ -66,9 +68,44 @@ class GeminiTTSService:
             temperature: Temperature for generation (optional)
             style_prompt: Style prompt for overall tone (e.g., "You are an engaging explainer speaking in a friendly and energetic tone")
             video_duration: Target duration in seconds (optional). If provided, attempts to adjust speaking rate.
+            chunk_size: Maximum characters per chunk for long videos (default: 3000)
         
         Returns:
             bytes: Audio content if output_path is None, otherwise None (saves to file)
+        """
+        try:
+            # For long videos (>10 minutes) or very long text, use chunked processing
+            use_chunks = (video_duration and video_duration > 600) or len(text) > chunk_size
+            
+            if use_chunks and output_path:
+                logger.info(f"Long video detected (duration: {video_duration}s, text: {len(text)} chars). Processing in chunks...")
+                return self._generate_speech_chunked(
+                    text, language_code, voice_name, output_path, 
+                    temperature, style_prompt, video_duration, chunk_size
+                )
+            
+            # Continue with single request for shorter videos
+            return self._generate_speech_single(
+                text, language_code, voice_name, output_path,
+                temperature, style_prompt, video_duration
+            )
+        except Exception as e:
+            logger.error(f"Gemini TTS generation error: {e}", exc_info=True)
+            raise
+    
+    def _generate_speech_single(
+        self,
+        text,
+        language_code,
+        voice_name,
+        output_path,
+        temperature,
+        style_prompt,
+        video_duration
+    ):
+        """
+        Generate speech for a single request (non-chunked)
+        This is the original implementation extracted for clarity
         """
         try:
             # Calculate target speed if video_duration is provided
@@ -155,10 +192,13 @@ Now read this text with ALL markup tags followed precisely:
             logger.info(f"Text length: {len(text)} characters, estimated duration: {video_duration}s")
             
             # Increase timeout for longer videos/scripts
-            # Base timeout: 60 seconds, add 2 seconds per second of video duration
+            # Base timeout: 60 seconds, add 3 seconds per second of video duration
+            # For very long videos (>10 min), use more generous timeout
             base_timeout = 60
-            duration_timeout = int(video_duration * 2) if video_duration else 0
-            total_timeout = min(base_timeout + duration_timeout, 600)  # Max 10 minutes
+            duration_timeout = int(video_duration * 3) if video_duration else 0
+            # For videos >10 minutes, allow up to 30 minutes timeout
+            max_timeout = 1800 if (video_duration and video_duration > 600) else 600
+            total_timeout = min(base_timeout + duration_timeout, max_timeout)
             
             logger.info(f"Using timeout: {total_timeout} seconds for TTS generation")
             
@@ -522,4 +562,143 @@ Now read this text with ALL markup tags followed precisely:
 - **CRITICAL: When you encounter [short pause], [medium pause], or [long pause] - STOP SPEAKING IMMEDIATELY and remain COMPLETELY SILENT for the specified duration (~250ms, ~500ms, ~1000ms+ respectively). DO NOT SPEAK THROUGH PAUSES.**"""
         
         return enhanced
+    
+    def _generate_speech_chunked(
+        self,
+        text,
+        language_code,
+        voice_name,
+        output_path,
+        temperature,
+        style_prompt,
+        video_duration,
+        chunk_size
+    ):
+        """
+        Generate speech in chunks for long videos and combine the audio files
+        
+        Args:
+            text: Full text to synthesize
+            language_code: Language code
+            voice_name: Voice name
+            output_path: Final output file path
+            temperature: Temperature for generation
+            style_prompt: Style prompt
+            video_duration: Target duration in seconds
+            chunk_size: Maximum characters per chunk
+        
+        Returns:
+            None (saves to output_path)
+        """
+        import re
+        from pipeline.utils import find_ffmpeg
+        import subprocess
+        
+        # Split text into chunks at sentence boundaries (prefer) or word boundaries
+        def split_text_into_chunks(text, max_chars):
+            """Split text into chunks at sentence boundaries when possible"""
+            chunks = []
+            
+            # First, try to split at sentence boundaries (., !, ?, । for Hindi)
+            sentences = re.split(r'([.!?।]\s+)', text)
+            current_chunk = ""
+            
+            for i in range(0, len(sentences), 2):
+                sentence = sentences[i] + (sentences[i+1] if i+1 < len(sentences) else "")
+                
+                # If adding this sentence would exceed chunk size, save current chunk
+                if current_chunk and len(current_chunk) + len(sentence) > max_chars:
+                    chunks.append(current_chunk.strip())
+                    current_chunk = sentence
+                else:
+                    current_chunk += sentence
+                    
+                    # If chunk is getting large, split at word boundaries
+                    if len(current_chunk) > max_chars:
+                        words = current_chunk.split()
+                        temp_chunk = ""
+                        for word in words:
+                            if len(temp_chunk) + len(word) + 1 > max_chars:
+                                if temp_chunk:
+                                    chunks.append(temp_chunk.strip())
+                                temp_chunk = word
+                            else:
+                                temp_chunk += " " + word if temp_chunk else word
+                        current_chunk = temp_chunk
+            
+            if current_chunk.strip():
+                chunks.append(current_chunk.strip())
+            
+            return chunks if chunks else [text]
+        
+        chunks = split_text_into_chunks(text, chunk_size)
+        logger.info(f"Split text into {len(chunks)} chunks for processing")
+        
+        # Generate audio for each chunk
+        temp_audio_files = []
+        try:
+            for i, chunk in enumerate(chunks):
+                logger.info(f"Processing chunk {i+1}/{len(chunks)} ({len(chunk)} chars)...")
+                temp_output = tempfile.NamedTemporaryFile(delete=False, suffix='.mp3')
+                temp_output_path = temp_output.name
+                temp_output.close()
+                temp_audio_files.append(temp_output_path)
+                
+                # Calculate chunk duration estimate for timeout
+                chunk_duration = (video_duration / len(chunks)) if video_duration else None
+                
+                # Generate speech for this chunk (call single method directly to avoid recursion)
+                self._generate_speech_single(
+                    chunk,
+                    language_code,
+                    voice_name,
+                    temp_output_path,
+                    temperature,
+                    style_prompt,
+                    chunk_duration
+                )
+            
+            # Combine all audio chunks using ffmpeg
+            logger.info(f"Combining {len(temp_audio_files)} audio chunks...")
+            ffmpeg_path = find_ffmpeg()
+            if not ffmpeg_path:
+                raise Exception("ffmpeg not found. Cannot combine audio chunks.")
+            
+            # Create concat file for ffmpeg
+            concat_file = tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt')
+            for audio_file in temp_audio_files:
+                concat_file.write(f"file '{audio_file}'\n")
+            concat_file.close()
+            
+            # Combine using ffmpeg concat demuxer
+            cmd = [
+                ffmpeg_path,
+                '-f', 'concat',
+                '-safe', '0',
+                '-i', concat_file.name,
+                '-c', 'copy',  # Copy codec (faster, no re-encoding)
+                '-y',
+                output_path
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            os.unlink(concat_file.name)
+            
+            if result.returncode != 0:
+                error_msg = f"ffmpeg concat failed: {result.stderr[:500] if result.stderr else 'Unknown error'}"
+                logger.error(error_msg)
+                raise Exception(error_msg)
+            
+            logger.info(f"Successfully combined {len(temp_audio_files)} chunks into: {output_path}")
+            
+        finally:
+            # Clean up temp files
+            for temp_file in temp_audio_files:
+                try:
+                    if os.path.exists(temp_file):
+                        os.unlink(temp_file)
+                except Exception as e:
+                    logger.warning(f"Could not delete temp audio file {temp_file}: {e}")
+        
+        return None
 

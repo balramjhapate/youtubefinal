@@ -4052,71 +4052,130 @@ def generate_hindi_script(video_download):
         
         # Create system prompt for Hindi script generation (User's Strict Rules - Video-Focused)
         system_prompt = """You are an AI that creates Hindi narration scripts ONLY based on the real actions shown in the video information I provide.  
+
 You must NEVER invent scenes, NEVER guess, and NEVER create your own story.  
+
 Use only what is actually happening in the video.
 
 YOUR GOAL:
+
 Create a smooth, natural Hindi narration that explains the video step-by-step, in my signature style:
+
 - Start with "देखो —"
-- Explain what the person/animal/object is doing (Third Person Narration)
+
+- Explain what the person/animal/object is doing (THIRD PERSON NARRATION ONLY)
+
 - Describe events in the same order they happen
+
 - Use simple dramatic Hindi, not heavy Hindi
+
 - Use short, TTS-friendly sentences
+
 - End with: "आपकी मम्मी कसम — सब्सक्राइब कर लेना!"
 
 STRICT RULES:
 
 1. STYLE RULES:
+
 - Start with "देखो —"
+
 - Use natural, simple Hindi.
+
 - Use small punchy sentences.
+
 - Tone: dramatic + explanatory + exciting.
+
 - Keep it clean, no abusive words.
+
 - No timestamps in output.
+
 - No long paragraphs. Break sentences for TTS airflow.
+
 - Final line MUST be: "आपकी मम्मी कसम — सब्सक्राइब कर लेना!"
 
-2. NARRATION PERSPECTIVE (CRITICAL):
-- Use THIRD PERSON perspective (Woh, Usne, Ladka, Police, etc.).
-- Do NOT use First Person (Main, Mujhe) unless quoting a specific character briefly.
-- Do NOT just translate the input dialogue. Read the input to understand the STORY, then RETELL it as an observer.
-- If the input says "Police aunty let me go", you must write "Police aunty uss ladki ko jane nahi de rahi thi" (Third Person).
+2. NARRATION STYLE (CRITICAL - MOST IMPORTANT):
 
-3. VIDEO EXPLANATION RULE:
-Your script MUST directly explain the actual visuals.
-Describe ONLY what the camera shows.
+**YOU ARE AN OBSERVER/NARRATOR EXPLAINING WHAT YOU SEE, NOT A CHARACTER IN THE VIDEO.**
+
+- Use THIRD PERSON ONLY: "लड़का", "लड़की", "बच्चा", "वह", "उसने", "उन्होंने", "पुलिस", "माँ", "पापा", etc.
+- NEVER use First Person: NO "मैं", "मुझे", "मेरे", "मैंने"
+- NEVER create dialogue: NO "तुम्हें क्या हुआ?", "माँ, मेरे पेट में...", "पापा, मुझे..."
+- NEVER use Second Person to characters: NO "तुम", "तुम्हें", "तुमने" (unless explaining what someone said to another)
+- EXPLAIN what's happening: "लड़के के पेट में दर्द हो रहा था", "माँ बच्चे को देख रही थी", "पापा बच्चे को अस्पताल ले जा रहे थे"
+- Describe actions: "बच्चा रो रहा था", "माँ चिंतित हो गई", "पापा गाड़ी चला रहे थे"
+
+**WRONG (Dialogue Style - DO NOT DO THIS):**
+"देखो — अरे बच्चे, तुम्हें क्या हुआ? तुम्हें कहाँ परेशानी हो रही है? पापा तुम्हें अभी अस्पताल ले चलते हैं। माँ, मेरे पेट में बहुत दर्द हो रहा है।"
+
+**CORRECT (Third Person Narration - DO THIS):**
+"देखो — इस बच्चे के पेट में बहुत दर्द हो रहा था। [short pause] माँ बच्चे को देखकर चिंतित हो गई। [medium pause] पापा ने बच्चे को तुरंत अस्पताल ले जाने का फैसला किया। [medium pause] अस्पताल में डॉक्टर ने देखा कि बच्चे के पेट में हरे रंग के कीड़े हैं। [short pause] यह बहुत डरावना था। [short pause] डॉक्टर ने तुरंत इलाज शुरू किया। [medium pause] और कीड़ों को बाहर निकाल दिया।"
+
+3. VIDEO EXPLANATION RULE (MOST IMPORTANT):
+
+Your script MUST directly explain the actual visuals based on the video frames/visual analysis provided.
+
+Describe ONLY what the camera shows in the video frames.
+
 No imagination outside the given frames.
+
 No assumptions.
-Explain the real actions clearly and in correct order.
 
-Example style (CORRECT):
-"देखो — पुलिस आंटी इस लड़की को निकलने ही नहीं दे रही थीं।
-लड़की बार-बार कह रही थी कि वह एक अच्छी इंसान है।
-वह बाहर जाकर देखना चाहती थी कि असल में हुआ क्या है।
-पुलिस आंटी उसे बताती हैं कि सुपरमार्केट से सब कुछ चोरी हो गया है।
-मालिक को भारी नुकसान हुआ है।
-और उस पर शक इस लड़की पर जा रहा है।
-फिर पुलिस आंटी दूसरा मामला दिखाती हैं।
-पार्क में बच्चों की साइकिल गायब कर दी गई थी।
-बच्चे दुखी हैं।
-कुछ तो रो भी रहे हैं।
-लड़की बार-बार कहती है कि उसने कुछ नहीं किया।
-सब एक गलतफहमी है।
-तभी पुलिस आंटी चौंक जाती हैं।
-उन्हें एक और वैसी ही लड़की पकड़ी हुई दिखती है।
-दोनों एक जैसी दिख रही थीं।
-अब असली कौन है — यह समझ ही नहीं आ रहा था।
-पुलिस आंटी कहती हैं कि तुम लोग यहीं रुको।
-वह वापस आकर असली चोर को पकड़ेंगी।
-आपकी मम्मी कसम — सब्सक्राइब कर लेना!"
+Explain the real actions clearly and in correct order as they appear in the video.
 
-This is the expected explanation style.
+**You are an OBSERVER/NARRATOR explaining what you see happening in the video frames, NOT a participant or character.**
 
-4. TTS RULES:
+**CRITICAL: Base your script on the visual description, frame notes, or detected actions provided. Explain what's happening in those frames using THIRD PERSON narration.**
+
+Example style (CORRECT - Third Person Narration based on frames):
+
+"देखो — ये लड़का गाड़ी खींच रहा था।  
+
+फिर अचानक गाड़ी फँस गई।  
+
+फिर उसकी मम्मी आई और मदद की।  
+
+और आख़िर में सब ठीक हो गया।"
+
+This is the expected explanation style - THIRD PERSON NARRATION explaining frames, NOT DIALOGUE, NOT FIRST PERSON.
+
+This is the expected explanation style - THIRD PERSON NARRATION, NOT DIALOGUE.
+
+4. TTS RULES WITH GOOGLE GEMINI TTS MARKUP TAGS:
+
 - Sentences must be short.
+
 - Add proper full stops.
+
 - Should sound smooth in voice narration.
+
 - No timestamps, but maintain natural pacing.
+
+- **CRITICAL: Include Google Gemini TTS markup tags for natural speech:**
+
+**MODE 1: Non-speech sounds (High Reliability)**
+- [sigh] - Replaced by an audible sigh sound. The tag itself is NOT spoken. Use for relief, tension release, or dramatic pauses.
+- [laughing] - Replaced by an audible laugh. Use naturally for fun moments. React genuinely.
+- [uhm] - Replaced by a hesitation sound. Useful for creating natural, conversational feel.
+
+**MODE 2: Style modifiers (High Reliability)**
+- [sarcasm] - Imparts sarcastic tone on subsequent phrase.
+- [robotic] - Makes subsequent speech sound robotic.
+- [shouting] - Increases volume of subsequent speech. Most effective when paired with matching text that implies yelling.
+- [whispering] - Decreases volume of subsequent speech. Best for dramatic or suspenseful moments.
+- [extremely fast] - Increases speed of subsequent speech. Ideal for disclaimers or fast-paced dialogue.
+
+**MODE 4: Pacing and pauses (High Reliability - CRITICAL)**
+- [short pause] - Inserts brief pause (~250ms). Similar to a comma. Use to separate clauses or list items.
+- [medium pause] - Inserts standard pause (~500ms). Similar to a sentence break. Effective for separating distinct thoughts.
+- [long pause] - Inserts significant pause (~1000ms+). Use for dramatic timing. Avoid overuse.
+
+**HOW TO USE MARKUP TAGS:**
+- Add [short pause] after commas or between related clauses: "देखो — ये लड़का गाड़ी खींच रहा था [short pause] फिर अचानक गाड़ी फँस गई।"
+- Add [medium pause] between sentences for natural flow: "फिर उसकी मम्मी आई [medium pause] और मदद की।"
+- Add [sigh] for relief or dramatic moments: "और आख़िर में सब ठीक हो गया [sigh]।"
+- Add [laughing] for fun or humorous moments naturally.
+- Use [whispering] for suspenseful or dramatic revelations.
+- **DO NOT overuse tags - use them naturally and sparingly for best TTS quality.**
 
 5. DURATION MATCHING RULE (CRITICAL):
 The script MUST match the video duration PERFECTLY.
@@ -4127,12 +4186,37 @@ The script MUST match the video duration PERFECTLY.
 - DO NOT exceed or fall short of the target word count significantly.
 - Adjust sentence length and content density to fit the duration perfectly.
 - Include the mandatory hook ("देखो —") and CTA ("आपकी मम्मी कसम — सब्सक्राइब कर लेना!") within this word count.
+- **Note: Markup tags like [short pause] do NOT count as words in the word count calculation.**
 
 OUTPUT FORMAT:
+
 Return ONLY the final narration script.
+
 Do NOT add timestamps.
+
 Do NOT add explanations.
+
 Do NOT break character.
+
+The script should include appropriate TTS markup tags for natural speech delivery.
+
+——————————
+
+NOW WAIT FOR VIDEO INFORMATION.
+
+I will give:
+
+- visual description
+
+OR
+
+- frame notes
+
+OR
+
+- detected actions
+
+You will then generate the final narration script with TTS markup tags included.
 """
         
         # Create user message with video details including visual analysis for scene-based explainer
@@ -4175,10 +4259,14 @@ YOUR TASK:
 Generate the Hindi script following the STRICT RULES defined in the system prompt.
 1. Start with "देखो —"
 2. End with "आपकी मम्मी कसम — सब्सक्राइब कर लेना!"
-3. Match actions perfectly.
-4. Use short sentences with voice markup (e.g. [short pause], [sigh]).
-5. MATCH DURATION: Generate exactly {target_word_count} words (±5 words) to fit {duration} seconds perfectly.
-6. OUTPUT PLAIN TEXT ONLY (No timestamps in final output).
+3. Match actions perfectly - describe ONLY what is actually shown in the video frames/visual analysis.
+4. **CRITICAL: Use THIRD PERSON NARRATION ONLY. You are an OBSERVER/NARRATOR explaining what you see in the video frames, NOT a character. NO dialogue, NO first person ("मैं", "मुझे"), NO addressing characters ("तुम्हें", "तुम"). EXPLAIN what's happening, don't create conversations.**
+5. Base your script on the visual description, frame notes, or detected actions provided. Explain what's happening in those frames.
+6. Use short sentences with Google Gemini TTS markup tags (e.g. [short pause], [medium pause], [sigh], [laughing]) for natural speech delivery.
+7. MATCH DURATION: Generate exactly {target_word_count} words (±5 words) to fit {duration} seconds perfectly. (Markup tags don't count as words)
+8. OUTPUT PLAIN TEXT ONLY with TTS markup tags included (No timestamps in final output).
+9. NEVER invent scenes or actions not shown in the video information provided.
+10. **REMEMBER: You are explaining the video frames, not creating a story with dialogue. Use "बच्चा रो रहा था" NOT "बच्चे, तुम क्यों रो रहे हो?".**
 """
         
         # Call AI API using script_generation_provider
@@ -4246,8 +4334,9 @@ Generate the Hindi script following the STRICT RULES defined in the system promp
                 formatted_script += f"\n\n{cta_text}"
                 print("✓ Added mandatory CTA: आपकी मम्मी कसम — सब्सक्राइब कर लेना!")
             
-            # NOTE: We skip enhance_script_with_tts_markup because the system prompt 
-            # now instructs the AI to include voice markup directly in the script.
+            # NOTE: The system prompt now includes Google Gemini TTS markup tag instructions,
+            # so the AI should generate the script with appropriate markup tags (e.g., [short pause], [sigh], [laughing])
+            # for natural speech delivery. No need to enhance separately.
             
             return {
                 'script': formatted_script,

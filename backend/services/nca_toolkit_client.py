@@ -7,6 +7,7 @@ import requests
 import os
 import time
 import logging
+import json
 from urllib.parse import urlparse
 from requests.exceptions import SSLError
 from urllib3.exceptions import InsecureRequestWarning
@@ -59,12 +60,19 @@ class NCAToolkitClient:
         # For localhost connections, disable SSL verification since Docker containers
         # often use self-signed certificates. This handles HTTP->HTTPS redirects gracefully.
         verify_ssl = kwargs.pop('verify', None)
+        parsed_url = urlparse(self.api_url)
+        is_localhost = parsed_url.hostname in ('localhost', '127.0.0.1', '::1') or \
+                      parsed_url.hostname is None
+        
         if verify_ssl is None:
-            # Check if connecting to localhost - disable SSL verification for local development
-            parsed_url = urlparse(self.api_url)
-            is_localhost = parsed_url.hostname in ('localhost', '127.0.0.1', '::1') or \
-                          parsed_url.hostname is None
             verify_ssl = not is_localhost  # Disable SSL verification for localhost
+        
+        # For localhost HTTP connections, prevent redirects to HTTPS (which lose port number)
+        # Instead, try HTTPS directly if HTTP fails
+        allow_redirects = kwargs.pop('allow_redirects', None)
+        if allow_redirects is None:
+            # Only allow redirects for non-localhost or HTTPS URLs
+            allow_redirects = not (is_localhost and parsed_url.scheme == 'http')
         
         try:
             response = requests.request(
@@ -73,18 +81,84 @@ class NCAToolkitClient:
                 headers=headers,
                 timeout=self.timeout,
                 verify=verify_ssl,
-                allow_redirects=True,  # Follow redirects (HTTP -> HTTPS)
+                allow_redirects=allow_redirects,
                 **kwargs
             )
             
+            # Handle redirect response for localhost HTTP (301/302)
+            if response.status_code in (301, 302, 307, 308) and is_localhost and parsed_url.scheme == 'http':
+                location = response.headers.get('Location', '')
+                if location.startswith('https://'):
+                    # Redirect is trying to go to HTTPS, but likely losing port
+                    # Try HTTPS directly with the same port
+                    https_url = f"https://{parsed_url.hostname}:{parsed_url.port or 8080}{endpoint}"
+                    logger.info(f"HTTP redirect detected on localhost, trying HTTPS directly: {https_url}")
+                    try:
+                        response = requests.request(
+                            method,
+                            https_url,
+                            headers=headers,
+                            timeout=self.timeout,
+                            verify=False,  # Disable SSL verification for localhost
+                            allow_redirects=False,
+                            **kwargs
+                        )
+                    except Exception as e:
+                        error_msg = f'HTTP to HTTPS redirect failed on localhost. The API may be configured for HTTPS only. Original error: {str(e)}'
+                        logger.error(f"NCA Toolkit API redirect error: {error_msg}")
+                        return {
+                            'success': False,
+                            'error': error_msg,
+                            'error_type': 'redirect',
+                            'suggestion': 'Try configuring NCA_API_URL to use HTTPS directly: https://localhost:8080'
+                        }
+            
+            # Check content type before parsing JSON
+            content_type = response.headers.get('Content-Type', '').lower()
+            is_json = 'application/json' in content_type or response.text.strip().startswith(('{', '['))
+            
             if response.status_code == 200:
-                return {
-                    'success': True,
-                    'data': response.json() if response.content else {},
-                    'status_code': response.status_code
-                }
+                try:
+                    if response.content:
+                        if is_json:
+                            data = response.json()
+                        else:
+                            # Non-JSON response (HTML, plain text, etc.)
+                            logger.warning(f"NCA Toolkit API returned non-JSON response (Content-Type: {content_type}). Response: {response.text[:200]}")
+                            return {
+                                'success': False,
+                                'error': f'API returned non-JSON response: {response.text[:200]}',
+                                'status_code': response.status_code,
+                                'error_type': 'invalid_response'
+                            }
+                    else:
+                        data = {}
+                    return {
+                        'success': True,
+                        'data': data,
+                        'status_code': response.status_code
+                    }
+                except (ValueError, json.JSONDecodeError) as e:
+                    # JSON parsing error
+                    error_msg = f'Failed to parse JSON response: {str(e)}. Response: {response.text[:200]}'
+                    logger.error(f"NCA Toolkit API JSON parsing error: {error_msg}")
+                    return {
+                        'success': False,
+                        'error': error_msg,
+                        'status_code': response.status_code,
+                        'error_type': 'json_parse'
+                    }
             else:
-                error_msg = response.json().get('error', response.text) if response.content else response.text
+                # Non-200 status code
+                try:
+                    if response.content and is_json:
+                        error_data = response.json()
+                        error_msg = error_data.get('error', response.text)
+                    else:
+                        error_msg = response.text or f'HTTP {response.status_code}'
+                except (ValueError, json.JSONDecodeError):
+                    error_msg = response.text or f'HTTP {response.status_code}'
+                
                 return {
                     'success': False,
                     'error': error_msg,
@@ -411,7 +485,23 @@ class NCAToolkitClient:
         Returns:
             dict: Health status
         """
+        # Try health endpoint first
         response = self._make_request('GET', '/v1/toolkit/health')
+        
+        # If health endpoint returns 404, try test endpoint as fallback
+        if not response.get('success') and response.get('status_code') == 404:
+            logger.info("Health endpoint not found, trying test endpoint...")
+            test_response = self._make_request('GET', '/v1/toolkit/test')
+            if test_response.get('success'):
+                # Test endpoint works, API is healthy
+                return {
+                    'success': True,
+                    'data': {'status': 'healthy', 'endpoint': 'test'},
+                    'status_code': 200
+                }
+            # If test also fails, return original health check error
+            return response
+        
         return response
     
     def remove_audio_from_video(self, video_url, output_format='mp4'):
@@ -522,14 +612,26 @@ def get_nca_client():
         
         client = NCAToolkitClient()
         
-        # Test connection with health check
+        # Test connection with health check (lenient - allow 404 if API is reachable)
         try:
             health = client.health_check()
             if not health.get('success'):
                 error_msg = health.get('error', 'Unknown error')
                 error_type = health.get('error_type', 'unknown')
+                status_code = health.get('status_code', 0)
+                
+                # If we get 404, the API might not have health endpoint but could still work
+                # Try a simple connection test instead
+                if status_code == 404:
+                    logger.info("NCA Toolkit health endpoint not found (404), but API may still be functional. Will attempt to use it.")
+                    # Don't fail completely - allow the client to be used, but log a warning
+                    logger.warning("NCA Toolkit health endpoint not available, but API connection successful. Proceeding with caution.")
+                    print("⚠️  NCA Toolkit health endpoint not found, but API appears reachable. Will attempt to use it.")
+                    return client
+                
+                # For other errors (connection, timeout, etc.), fail
                 suggestion = health.get('suggestion', '')
-                logger.warning(f"NCA Toolkit health check failed: {error_msg} (type: {error_type})")
+                logger.warning(f"NCA Toolkit health check failed: {error_msg} (type: {error_type}, status: {status_code})")
                 if suggestion:
                     logger.info(f"Suggestion: {suggestion}")
                 print(f"⚠️  NCA Toolkit health check failed: {error_msg}. Falling back to Whisper.")
