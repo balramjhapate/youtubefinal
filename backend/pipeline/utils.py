@@ -472,8 +472,17 @@ def perform_extraction(url):
             video_data['source'] = source
             return video_data
 
-        # Priority 2: yt-dlp (Works on local/unblocked IPs)
-        print(f"Seekin API failed. Fallback to yt-dlp: {url}")
+        # Priority 2: Try mu-jie.cc API (Works well for xhslink.com short URLs)
+        if source == 'rednote':
+            print(f"Seekin API failed. Trying mu-jie.cc API: {url}")
+            video_data = extract_video_mujie(url)
+            if video_data:
+                video_data['method'] = 'mujie'
+                video_data['source'] = source
+                return video_data
+
+        # Priority 3: yt-dlp (Works on local/unblocked IPs)
+        print(f"Seekin/MuJie API failed. Fallback to yt-dlp: {url}")
         video_data = extract_video_ytdlp(url)
         if video_data:
             video_data['method'] = 'yt-dlp'
@@ -533,6 +542,49 @@ def extract_video_seekin(url):
         return None
     except Exception as e:
         print(f"Seekin API error: {e}")
+        return None
+
+def extract_video_mujie(url):
+    """Extract video using mu-jie.cc API (fallback for XHS/RedNote)
+    
+    This API works well for xhslink.com short URLs and xiaohongshu.com URLs.
+    API endpoint: https://api.mu-jie.cc/xhs?url={url}
+    """
+    try:
+        api_url = f"https://api.mu-jie.cc/xhs?url={url}"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        
+        response = requests.get(api_url, headers=headers, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+        
+        if data.get("code") == 200 and data.get("data"):
+            video_info = data["data"]
+            video_url = video_info.get("url")
+            
+            if video_url:
+                # Clean up title - remove leading newlines and extra whitespace
+                title = video_info.get("title", "Xiaohongshu Video")
+                if title:
+                    title = title.strip()
+                    # If title starts with hashtags, add author name as prefix
+                    author = video_info.get("author", "")
+                    if title.startswith("#") and author:
+                        title = f"{author}: {title}"
+                
+                return {
+                    "video_url": video_url,
+                    "title": title or "Xiaohongshu Video",
+                    "cover_url": video_info.get("cover"),
+                    "original_title": title or "Xiaohongshu Video",
+                    "original_description": title or ""
+                }
+        
+        return None
+    except Exception as e:
+        print(f"MuJie API error: {e}")
         return None
 
 def extract_video_youtube_direct(url):
