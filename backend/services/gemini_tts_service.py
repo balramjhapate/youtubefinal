@@ -93,6 +93,78 @@ class GeminiTTSService:
             logger.error(f"Gemini TTS generation error: {e}", exc_info=True)
             raise
     
+    def _preprocess_text_for_tts(self, text):
+        """
+        Preprocess text to remove/replace markup tags that Gemini TTS reads literally.
+        
+        Gemini TTS Preview doesn't properly interpret custom markup tags like [short pause],
+        [sigh], [laughing], etc. - it reads them as literal text.
+        
+        This method:
+        - Replaces pause tags with punctuation (commas for short, periods for medium/long)
+        - Removes emotion/sound effect tags entirely
+        - Cleans up any resulting spacing issues
+        
+        Args:
+            text: Text with markup tags
+            
+        Returns:
+            Clean text suitable for TTS
+        """
+        import re
+        
+        # First, log original text for debugging
+        logger.debug(f"TTS preprocessing - Original text length: {len(text)} chars")
+        
+        # Replace pause tags with appropriate punctuation
+        # [short pause] -> comma (,) for brief pause
+        text = re.sub(r'\s*\[short pause\]\s*', ', ', text, flags=re.IGNORECASE)
+        
+        # [medium pause] -> period + space for sentence-like break  
+        text = re.sub(r'\s*\[medium pause\]\s*', '। ', text, flags=re.IGNORECASE)
+        
+        # [long pause] -> double period for dramatic pause
+        text = re.sub(r'\s*\[long pause\]\s*', '।। ', text, flags=re.IGNORECASE)
+        
+        # Remove emotion/sound effect tags entirely (they don't work in current API)
+        # These include: [sigh], [laughing], [uhm], [sarcasm], [robotic], [shouting], 
+        # [whispering], [extremely fast], [scared], [curious], [bored]
+        emotion_tags = [
+            'sigh', 'laughing', 'uhm', 'sarcasm', 'robotic', 'shouting',
+            'whispering', 'extremely fast', 'scared', 'curious', 'bored',
+            'gasping', 'crying', 'excited', 'angry', 'sad', 'happy'
+        ]
+        for tag in emotion_tags:
+            text = re.sub(rf'\s*\[{tag}\]\s*', ' ', text, flags=re.IGNORECASE)
+        
+        # Clean up any remaining bracket tags that might have been missed
+        text = re.sub(r'\s*\[[^\]]*pause[^\]]*\]\s*', ', ', text, flags=re.IGNORECASE)
+        text = re.sub(r'\s*\[[^\]]*\]\s*', ' ', text, flags=re.IGNORECASE)
+        
+        # Clean up punctuation issues
+        # Remove duplicate commas/periods
+        text = re.sub(r',\s*,+', ', ', text)
+        text = re.sub(r'।\s*।+', '।। ', text)
+        text = re.sub(r'\.\s*\.+', '। ', text)
+        
+        # Remove comma at start of sentence
+        text = re.sub(r'^\s*,\s*', '', text)
+        text = re.sub(r'।\s*,\s*', '। ', text)
+        
+        # Clean up multiple spaces
+        text = re.sub(r'\s+', ' ', text)
+        
+        # Fix comma before period
+        text = re.sub(r',\s*।', '।', text)
+        
+        # Trim
+        text = text.strip()
+        
+        logger.info(f"TTS preprocessing - Cleaned text length: {len(text)} chars")
+        logger.debug(f"TTS preprocessing - Cleaned text preview: {text[:200]}...")
+        
+        return text
+    
     def _generate_speech_single(
         self,
         text,
@@ -108,6 +180,8 @@ class GeminiTTSService:
         This is the original implementation extracted for clarity
         """
         try:
+            # CRITICAL: Preprocess text to remove markup tags that TTS reads literally
+            text = self._preprocess_text_for_tts(text)
             # Calculate target speed if video_duration is provided
             speed_instruction = ""
             if video_duration and video_duration > 0:
